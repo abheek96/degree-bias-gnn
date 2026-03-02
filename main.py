@@ -38,7 +38,8 @@ def run(cfg, run_id, device):
     ).to(device)
 
     train_cfg = cfg["train"]
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"], weight_decay=train_cfg["weight_decay"])
+    breakpoint()
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"], weight_decay=float(train_cfg["weight_decay"]))
     criterion = torch.nn.CrossEntropyLoss()
 
     best_val_acc = 0.0

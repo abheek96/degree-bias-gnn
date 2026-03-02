@@ -1,18 +1,38 @@
 seed: 42
 num_runs: 5
+device: 'cuda'
+
+results_dir: ./results
+split: random        # random, public, or custom
+
+plot:
+  acc_vs_degree: true
+  acc_vs_distance: true
+  acc_vs_amp: true
+  acc_vs_dmp: true
+  acc_vs_totoro: true
+  save: true
+  show: false
 
 dataset:
   name: Cora          # Cora, CiteSeer, PubMed, etc.
   root: ./data
+  use_cc: true          # whether to use the largest connected component
+  amp_coeff: 1
+  dmp_coeff: 1
+  num_train_per_class: 20
+  num_val: 500
+  num_test: 1000
+  
 
 model:
   name: GCN           # GCN, GAT, GraphSAGE
-  hidden_dim: 64
+  hidden_dim: 512
   num_layers: 2
   dropout: 0.5
 
 train:
-  lr: 0.01
+  lr: 0.001
   weight_decay: 5e-4
   epochs: 200
-  patience: 20        # early stopping patience (0 to disable)
+  patience: 0      # early stopping patience (0 to disable)
