@@ -29,7 +29,7 @@ model:
   name: GCN           # GCN, GAT, GraphSAGE
   hidden_dim: 512
   num_layers: 2
-  dropout: 0.5
+  dropout: 0.0
 
 train:
   lr: 0.001
