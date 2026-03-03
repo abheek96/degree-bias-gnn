@@ -138,6 +138,7 @@ def main():
 
     val_accs, test_accs = [], []
     deg_acc_results = []
+    run_labels = []
 
     for i in tqdm(range(1, num_runs + 1), desc="Runs"):
         seed = base_seed + i - 1
@@ -155,6 +156,7 @@ def main():
         deg_acc_results.append(
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
         )
+        run_labels.append(run_name)
     breakpoint()
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
@@ -171,6 +173,7 @@ def main():
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
+            run_labels=run_labels,
         )
 
 

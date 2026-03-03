@@ -120,23 +120,60 @@ def _degree_axis(ax, pos, all_degrees):
     ax.set_xticklabels(all_degrees[::step], rotation=55, ha="right", fontsize=8)
 
 
-def _add_trend(ax, all_degrees, pos, accs):
-    """Fit OLS on (degree, accuracy) and overlay as a dashed line.
+def _add_trend(ax, all_degrees, pos, accs, counts=None):
+    """Fit WLS on (degree, accuracy) weighted by node count and overlay as a
+    dashed line with a shaded 95 % confidence band.
 
-    The slope is in units of accuracy-change per unit degree — a positive
-    slope means higher-degree nodes tend to be classified more accurately.
+    Using WLS (rather than plain OLS) down-weights degree buckets that contain
+    very few test nodes, whose accuracy estimates are noisier.  The slope is in
+    units of accuracy-change per unit degree — a positive slope means
+    higher-degree nodes tend to be classified more accurately.
+
+    The 95 % CI band is derived from the standard error of the WLS fit
+    evaluated at each interpolated degree value.
     """
-    pairs = [(d, p, a) for d, p, a in zip(all_degrees, pos, accs)
+    pairs = [(d, p, a, c) for d, p, a, c in
+             zip(all_degrees, pos, accs, counts if counts is not None else [1] * len(all_degrees))
              if not np.isnan(a)]
     if len(pairs) < 2:
         return
-    degs, poss, vals = map(list, zip(*pairs))
-    z     = np.polyfit(degs, vals, 1)
-    x_deg = np.linspace(min(degs), max(degs), 200)
+    degs, poss, vals, wts = map(list, zip(*pairs))
+    degs = np.array(degs, dtype=float)
+    vals = np.array(vals, dtype=float)
+    wts  = np.array(wts,  dtype=float)
+
+    # WLS via weighted polyfit
+    z = np.polyfit(degs, vals, 1, w=wts)
+
+    # Residual standard error for the confidence band
+    y_hat = np.polyval(z, degs)
+    resid = vals - y_hat
+    # Weighted residual sum of squares
+    wrss  = np.sum(wts * resid ** 2)
+    dof   = max(len(degs) - 2, 1)
+    s2    = wrss / dof
+
+    x_deg = np.linspace(degs.min(), degs.max(), 200)
     x_pos = np.interp(x_deg, degs, poss)
-    ax.plot(x_pos, np.polyval(z, x_deg),
+    y_fit = np.polyval(z, x_deg)
+
+    # Leverage for each interpolated point: var(ŷ) = s² * x'(X'WX)⁻¹x
+    W   = np.diag(wts)
+    X   = np.column_stack([degs, np.ones_like(degs)])
+    XtW = X.T @ W
+    try:
+        cov = np.linalg.inv(XtW @ X) * s2
+        X_new = np.column_stack([x_deg, np.ones_like(x_deg)])
+        se_fit = np.sqrt(np.einsum("ij,jk,ik->i", X_new, cov, X_new))
+        ci = 1.96 * se_fit
+        ax.fill_between(x_pos, y_fit - ci, y_fit + ci,
+                        color="black", alpha=0.10, zorder=4)
+    except np.linalg.LinAlgError:
+        pass  # skip CI if matrix is singular
+
+    ax.plot(x_pos, y_fit,
             color="black", lw=1.5, ls="--", zorder=5,
-            label=f"OLS trend  ({z[0]:+.4f} acc / degree)")
+            label=f"WLS trend  ({z[0]:+.4f} acc / degree)")
 
 
 def _count_bars(ax_main, pos, counts):
@@ -172,24 +209,27 @@ def _diff_subplot(ax, pos, accs, overall):
 
 # ── public entry point ─────────────────────────────────────────────────────────
 
-def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
+def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False,
+                       run_labels=None):
     """Plot test-node accuracy vs. node degree.
 
     Single run
         Scatter plot (bubble size ∝ number of test nodes with that degree)
-        with an OLS trend line, an overall-accuracy reference, and a Δ-from-
-        mean subplot below — making it easy to see whether higher-degree nodes
-        are classified better or worse.
+        with a WLS trend line and 95 % CI band, an overall-accuracy reference,
+        and a Δ-from-mean subplot below.
 
     Multiple runs
         Figure 1 – *across-runs*: one box per degree (neutral colour) showing
-        how the per-run mean accuracy varies across seeds, with an OLS trend
+        how the per-run mean accuracy varies across seeds, with a WLS trend
         through the medians, count bars on a secondary axis, and the same Δ
         subplot.  No degree-based colour grading.
 
-        Figure 2 – *per-run*: grouped boxes with one box per run per degree
-        (tab10 colours), count bars on a secondary axis.  Lets you verify that
-        the degree-bias direction is consistent across individual runs.
+        Figure 2 – *per-run grouped*: grouped boxes with one box per run per
+        degree (tab10 colours), count bars on a secondary axis.  Lets you
+        verify that the degree-bias direction is consistent across runs.
+
+        Figures 3…N – *per-run scatter*: one scatter plot per run, identical
+        in style to the single-run plot, disambiguated by run label.
 
     Parameters
     ----------
@@ -199,9 +239,12 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
     cfg : dict
         Experiment config — used for axis labels, titles, and filenames.
     save_dir : str or None
-        Directory to write PDF figures.  Skipped when None.
+        Directory to write PNG figures.  Skipped when None.
     show : bool
         Call ``plt.show()`` after each figure.
+    run_labels : list[str] or None
+        Human-readable label for each run (e.g. ``["run01_seed42", ...]``).
+        Defaults to ``run01``, ``run02``, … when None.
     """
     n_runs      = len(run_results)
     all_degrees, deg_data = _collect(run_results)
@@ -215,6 +258,8 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
     else:
         _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show)
         _plot_per_run(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show)
+        _plot_per_run_scatter(all_degrees, pos, deg_data, n_runs, run_labels,
+                              subtitle, prefix, save_dir, show)
 
 
 # ── single run: scatter + OLS trend + Δ subplot ────────────────────────────────
@@ -254,7 +299,7 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
 
     ax_main.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                     label=f"Mean test acc ({overall:.1%})", zorder=2)
-    _add_trend(ax_main, all_degrees, pos, mean_acc)
+    _add_trend(ax_main, all_degrees, pos, mean_acc, counts=counts)
 
     ax_main.set_ylabel("Accuracy  (test nodes)", fontsize=11)
     ax_main.set_ylim(-0.05, 1.10)
@@ -304,7 +349,7 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
     _count_bars(ax_main, pos, counts)
     ax_main.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                     label=f"Mean test acc ({overall:.1%})", zorder=2)
-    _add_trend(ax_main, all_degrees, pos, median_accs)
+    _add_trend(ax_main, all_degrees, pos, median_accs, counts=counts)
 
     ax_main.set_ylabel(f"Mean accuracy per run  ({n_runs} seeds)", fontsize=11)
     ax_main.set_ylim(-0.05, 1.10)
@@ -363,3 +408,77 @@ def _plot_per_run(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_degree_per_run.png", show)
+
+
+# ── multiple runs: one scatter per run ─────────────────────────────────────────
+
+def _plot_per_run_scatter(all_degrees, pos, deg_data, n_runs, run_labels,
+                          subtitle, prefix, save_dir, show):
+    """One scatter plot per run — same style as the single-run scatter.
+
+    Each figure shows degree vs. accuracy for the test nodes in that run,
+    with bubble sizes proportional to node count, a WLS trend, and a Δ subplot.
+    Filenames are disambiguated by the run label (e.g. run01_seed42).
+    """
+    for run_idx in range(n_runs):
+        label = run_labels[run_idx] if run_labels else f"run{run_idx + 1:02d}"
+
+        counts = []
+        mean_acc = []
+        for d in all_degrees:
+            arr = deg_data[d][run_idx]
+            if len(arr) > 0:
+                counts.append(len(arr))
+                mean_acc.append(float(arr.mean()))
+            else:
+                counts.append(0)
+                mean_acc.append(np.nan)
+
+        n_test = sum(counts)
+        if n_test == 0:
+            continue
+        overall = (sum(a * c for a, c in zip(mean_acc, counts) if not np.isnan(a))
+                   / n_test)
+
+        max_count   = max(counts) or 1
+        bubble_size = [max(30, 700 * c / max_count) for c in counts]
+
+        fig, (ax_main, ax_diff) = plt.subplots(
+            2, 1,
+            figsize=(_fig_w(len(all_degrees)), 7),
+            gridspec_kw={"height_ratios": [3, 1]},
+            sharex=True,
+        )
+        fig.subplots_adjust(hspace=0.08)
+
+        ax_main.scatter(pos, mean_acc,
+                        s=bubble_size, c="#3498db", alpha=0.78,
+                        edgecolors="white", linewidths=0.6, zorder=3)
+
+        ref_counts = sorted({min(c for c in counts if c > 0),
+                              int(np.median([c for c in counts if c > 0])),
+                              max(counts)})
+        for rc in ref_counts:
+            ax_main.scatter([], [], s=max(30, 700 * rc / max_count),
+                            c="#3498db", alpha=0.65, edgecolors="white",
+                            label=f"n = {rc}")
+
+        ax_main.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+                        label=f"Mean test acc ({overall:.1%})", zorder=2)
+        _add_trend(ax_main, all_degrees, pos, mean_acc, counts=counts)
+
+        ax_main.set_ylabel("Accuracy  (test nodes)", fontsize=11)
+        ax_main.set_ylim(-0.05, 1.10)
+        ax_main.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_main.legend(loc="upper left", fontsize=8, framealpha=0.85,
+                       title="Node count", title_fontsize=8)
+        ax_main.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+        ax_main.set_title(
+            f"Accuracy vs. Node Degree  —  {label}\n{subtitle}", fontsize=11
+        )
+
+        _diff_subplot(ax_diff, pos, mean_acc, overall)
+        _degree_axis(ax_diff, pos, all_degrees)
+
+        fig.tight_layout()
+        _save(fig, save_dir, f"{prefix}_acc_vs_degree_{label}.png", show)
