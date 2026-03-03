@@ -1,4 +1,5 @@
 import argparse
+import copy
 import logging
 import os
 import random
@@ -8,10 +9,12 @@ import numpy as np
 import torch
 import yaml
 from tqdm import tqdm
+from torch_geometric.utils import degree as graph_degree
 
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree
 from train import train
 from test import evaluate
 
@@ -56,6 +59,7 @@ def run(data, cfg, run_id, device):
 
     best_val_acc = 0.0
     best_test_acc = 0.0
+    best_state = copy.deepcopy(model.state_dict())
     patience_counter = 0
     patience = train_cfg.get("patience", 0)
 
@@ -67,6 +71,7 @@ def run(data, cfg, run_id, device):
         if results["val"] > best_val_acc:
             best_val_acc = results["val"]
             best_test_acc = results["test"]
+            best_state = copy.deepcopy(model.state_dict())
             patience_counter = 0
         else:
             patience_counter += 1
@@ -78,7 +83,13 @@ def run(data, cfg, run_id, device):
             log.info("  [Run %d] Early stopping at epoch %d", run_id, epoch)
             break
 
-    return best_val_acc, best_test_acc
+    # Restore best checkpoint and produce predictions for the full graph
+    model.load_state_dict(best_state)
+    model.eval()
+    with torch.no_grad():
+        pred = model(data.x, data.edge_index).argmax(dim=1)
+
+    return best_val_acc, best_test_acc, pred
 
 
 def main():
@@ -122,7 +133,11 @@ def main():
     data = apply_split(data, split, cfg["dataset"])
     data = data.to(device)
 
+    # Degree is a fixed property of the graph — compute once for test nodes
+    test_deg = graph_degree(data.edge_index[1], data.num_nodes)[data.test_mask].cpu()
+
     val_accs, test_accs = [], []
+    deg_acc_results = []
 
     for i in tqdm(range(1, num_runs + 1), desc="Runs"):
         seed = base_seed + i - 1
@@ -132,11 +147,15 @@ def main():
         log.info("Experiment: %s", exec_name)
         log.info("Config: %s", cfg)
         log.info("=== Run %d/%d (seed=%d) ===", i, num_runs, seed)
-        val_acc, test_acc = run(data, cfg, i, device)
+        val_acc, test_acc, pred = run(data, cfg, i, device)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
         log.info("Best Val: %.4f  Test: %.4f", val_acc, test_acc)
 
+        deg_acc_results.append(
+            get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
+        )
+    breakpoint()
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
 
@@ -144,6 +163,15 @@ def main():
     log.info("Results over %d runs:", num_runs)
     log.info("  Val:  %.4f +/- %.4f", val_mean, val_std)
     log.info("  Test: %.4f +/- %.4f", test_mean, test_std)
+
+    plot_cfg = cfg.get("plot", {})
+    if plot_cfg.get("acc_vs_degree", False):
+        plot_acc_vs_degree(
+            deg_acc_results,
+            cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
 
 
 if __name__ == "__main__":

@@ -53,6 +53,15 @@ def _exp_label(cfg):
     return f"{dataset} | {model} | {split} | {cc}"
 
 
+def _fname_prefix(cfg):
+    """Filename-safe experiment prefix, e.g. 'Cora_GCN_random_CC'."""
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+    split   = cfg.get("split", "random")
+    cc      = "CC" if cfg["dataset"].get("use_cc", False) else "noCC"
+    return f"{dataset}_{model}_{split}_{cc}"
+
+
 def _collect(run_results):
     """Convert per-run get_accuracy_deg dicts into a degree-keyed structure.
 
@@ -134,19 +143,20 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
     """
     n_runs = len(run_results)
     all_degrees, deg_data = _collect(run_results)
-    pos = list(range(len(all_degrees)))
-    label = _exp_label(cfg)
+    pos    = list(range(len(all_degrees)))
+    label  = _exp_label(cfg)
+    prefix = _fname_prefix(cfg)
 
     if n_runs == 1:
-        _plot_single(all_degrees, pos, deg_data, label, save_dir, show)
+        _plot_single(all_degrees, pos, deg_data, label, prefix, save_dir, show)
     else:
-        _plot_across_runs(all_degrees, pos, deg_data, n_runs, label, save_dir, show)
-        _plot_per_run(all_degrees, pos, deg_data, n_runs, label, save_dir, show)
+        _plot_across_runs(all_degrees, pos, deg_data, n_runs, label, prefix, save_dir, show)
+        _plot_per_run(all_degrees, pos, deg_data, n_runs, label, prefix, save_dir, show)
 
 
 # ── single run ─────────────────────────────────────────────────────────────────
 
-def _plot_single(all_degrees, pos, deg_data, label, save_dir, show):
+def _plot_single(all_degrees, pos, deg_data, label, prefix, save_dir, show):
     data = [
         deg_data[d][0] if len(deg_data[d][0]) > 0 else np.array([np.nan])
         for d in all_degrees
@@ -173,12 +183,12 @@ def _plot_single(all_degrees, pos, deg_data, label, save_dir, show):
     fig.colorbar(sm, ax=ax, label="Node degree", pad=0.02, fraction=0.025)
 
     fig.tight_layout()
-    _save(fig, save_dir, "acc_vs_degree_single_run.pdf", show)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_single_run.pdf", show)
 
 
 # ── multiple runs: distribution of per-run means across seeds ─────────────────
 
-def _plot_across_runs(all_degrees, pos, deg_data, n_runs, label, save_dir, show):
+def _plot_across_runs(all_degrees, pos, deg_data, n_runs, label, prefix, save_dir, show):
     data = []
     for d in all_degrees:
         means = [a.mean() for a in deg_data[d] if len(a) > 0]
@@ -209,12 +219,12 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, label, save_dir, show)
     fig.colorbar(sm, ax=ax, label="Node degree", pad=0.02, fraction=0.025)
 
     fig.tight_layout()
-    _save(fig, save_dir, "acc_vs_degree_across_runs.pdf", show)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_across_runs.pdf", show)
 
 
 # ── multiple runs: per-run node-level distribution, grouped by degree ──────────
 
-def _plot_per_run(all_degrees, pos, deg_data, n_runs, label, save_dir, show):
+def _plot_per_run(all_degrees, pos, deg_data, n_runs, label, prefix, save_dir, show):
     run_colors = [plt.cm.tab10(i / 10) for i in range(min(n_runs, 10))]
     box_w = 0.82 / n_runs
 
@@ -251,7 +261,7 @@ def _plot_per_run(all_degrees, pos, deg_data, n_runs, label, save_dir, show):
     ax.grid(axis="y", linestyle="--", linewidth=0.6, alpha=0.5)
 
     fig.tight_layout()
-    _save(fig, save_dir, "acc_vs_degree_per_run.pdf", show)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_per_run.pdf", show)
 
 
 # ── axis helpers ───────────────────────────────────────────────────────────────
