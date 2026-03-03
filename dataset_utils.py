@@ -28,7 +28,6 @@ def apply_split(data, split, dataset_cfg):
 
     num_nodes = data.num_nodes
     num_classes = int(data.y.max().item()) + 1
-    breakpoint()
     num_train_per_class = dataset_cfg.get("num_train_per_class", 20)
     num_val = dataset_cfg.get("num_val", 500)
     num_test = dataset_cfg.get("num_test", 1000)

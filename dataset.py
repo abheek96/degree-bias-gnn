@@ -27,7 +27,7 @@ def load_dataset(dataset_cfg):
 
     dataset = DATASET_REGISTRY[name](root)
     data = dataset[0]
-
+    
     if dataset_cfg.get("use_cc", False):
         data = LargestConnectedComponents()(data)
         log.info("Filtered to largest connected component: %d nodes", data.num_nodes)

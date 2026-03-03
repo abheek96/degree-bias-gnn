@@ -9,7 +9,8 @@ import torch
 import yaml
 from tqdm import tqdm
 
-from dataset import load_dataset, apply_split
+from dataset import load_dataset
+from dataset_utils import apply_split
 from logger import setup_logger
 from train import train
 from test import evaluate
@@ -50,7 +51,6 @@ def run(data, cfg, run_id, device):
     ).to(device)
 
     train_cfg = cfg["train"]
-    breakpoint()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"], weight_decay=float(train_cfg["weight_decay"]))
     criterion = torch.nn.CrossEntropyLoss()
 
@@ -116,6 +116,7 @@ def main():
     # so all runs share the same train/val/test nodes. For public splits with
     # use_cc=True, apply_split logs the surviving mask counts after CC filtering.
     data = load_dataset(cfg["dataset"])
+
     if split == "random":
         set_seed(base_seed)
     data = apply_split(data, split, cfg["dataset"])
