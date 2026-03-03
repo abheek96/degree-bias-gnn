@@ -104,7 +104,7 @@ def _save(fig, save_dir, filename, show):
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
         path = os.path.join(save_dir, filename)
-        fig.savefig(path, dpi=150, bbox_inches="tight")
+        fig.savefig(path, dpi=300, bbox_inches="tight")
         log.info("Saved %s", path)
     if show:
         plt.show()
@@ -270,7 +270,7 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
     _degree_axis(ax_diff, pos, all_degrees)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_single_run.pdf", show)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_single_run.png", show)
 
 
 # ── multiple runs: seed-to-seed variability per degree ─────────────────────────
@@ -319,7 +319,7 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
     _degree_axis(ax_diff, pos, all_degrees)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_across_runs.pdf", show)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_across_runs.png", show)
 
 
 # ── multiple runs: per-run node-level distributions ────────────────────────────
@@ -362,4 +362,4 @@ def _plot_per_run(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir
     _degree_axis(ax_main, pos, all_degrees)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_per_run.pdf", show)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_per_run.png", show)
