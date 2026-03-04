@@ -569,23 +569,27 @@ def plot_dist_vs_degree(dist_deg_data, cfg, save_dir=None, show=False):
 
 def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
                             save_dir=None, show=False, run_labels=None):
-    """Single-panel dual-axis figure: accuracy and hop-distances vs node degree.
+    """Two-panel figure: accuracy (top) and hop-distances (bottom) vs degree.
 
-    Left y-axis  — Accuracy per degree: scatter (1 run) or median line + IQR
-                   band (multi-run), plus a WLS trend and overall-mean hline.
-    Right y-axis — Hop distances per degree: median line + IQR shading for
-                   (a) dist to any training node and (b) dist to same-class
-                   training node, plus a dashed hline at model depth.
+    Both panels share the x-axis so trends can be compared directly.
 
-    Using median ± IQR rather than boxplots lets all three signals coexist
-    without visual clutter, while still conveying the per-degree distribution.
+    Top panel — Accuracy per degree.
+        Single run : scatter dots connected by a thin line.
+        Multi-run  : median line with IQR band across seeds.
+        A dotted grey line marks the overall mean test accuracy.
+
+    Bottom panel — Hop distances per degree (both in the same unit: hops).
+        Orange : median distance to the nearest training node (any class).
+        Green  : median distance to the nearest same-class training node.
+        IQR shading is shown for both.
+        A red dashed line marks the model's receptive field (num_layers).
 
     Parameters
     ----------
     run_results : list[dict]
         One entry per run; output of ``get_accuracy_deg``.
     dist_deg_data : dict
-        Output of ``utils.get_distance_deg`` (graph-fixed, one set for all runs).
+        Output of ``utils.get_distance_deg``.
     cfg : dict
     save_dir : str or None
     show : bool
@@ -595,7 +599,6 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     n_runs = len(run_results)
     all_degrees, deg_data = _collect(run_results)
 
-    # Keep only degrees present in both accuracy and distance data
     all_degrees = sorted(set(all_degrees) & set(dist_deg_data.keys()))
     pos    = list(range(len(all_degrees)))
     counts = [len(deg_data[d][0]) for d in all_degrees]
@@ -619,13 +622,13 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
         acc_lo  = np.array([float(np.percentile(m, 25)) for m in per_run_means])
         acc_hi  = np.array([float(np.percentile(m, 75)) for m in per_run_means])
 
-    overall = (sum(a * c for a, c in zip(acc_med, counts) if not np.isnan(a)) / n_test)
+    overall = sum(a * c for a, c in zip(acc_med, counts) if not np.isnan(a)) / n_test
 
-    # ── Distance signals (median ± IQR per degree, NaN-safe) ──────────────────
+    # ── Distance signals (median ± IQR, NaN-safe) ─────────────────────────────
     def _dist_stats(key):
         med, lo, hi = [], [], []
         for d in all_degrees:
-            arr = dist_deg_data[d][key]
+            arr   = dist_deg_data[d][key]
             clean = arr[~np.isnan(arr)]
             if len(clean) == 0:
                 med.append(np.nan); lo.append(np.nan); hi.append(np.nan)
@@ -635,67 +638,44 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
                 hi.append(float(np.percentile(clean, 75)))
         return np.array(med), np.array(lo), np.array(hi)
 
-    d_tr_med,   d_tr_lo,   d_tr_hi   = _dist_stats("dist_to_train")
-    d_sc_med,   d_sc_lo,   d_sc_hi   = _dist_stats("dist_to_same_class")
+    d_tr_med, d_tr_lo, d_tr_hi = _dist_stats("dist_to_train")
+    d_sc_med, d_sc_lo, d_sc_hi = _dist_stats("dist_to_same_class")
 
-    # ── Figure ─────────────────────────────────────────────────────────────────
-    fig, ax_acc = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
-    ax_dist = ax_acc.twinx()
+    # ── Figure: 2 rows, shared x-axis ─────────────────────────────────────────
+    fig, (ax_acc, ax_dist) = plt.subplots(
+        2, 1,
+        figsize=(_fig_w(len(all_degrees)), 7),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3, 2]},
+    )
+    fig.subplots_adjust(hspace=0.06)
 
-    # Accuracy — left axis (blue)
+    # ── Top: Accuracy ──────────────────────────────────────────────────────────
     if n_runs == 1:
-        ax_acc.scatter(pos, acc_med, s=55, c="#3498db", alpha=0.85,
+        ax_acc.scatter(pos, acc_med, s=45, c="#3498db", alpha=0.9,
                        edgecolors="white", linewidths=0.5, zorder=4)
-        ax_acc.plot(pos, acc_med, color="#3498db", lw=1.4, alpha=0.55,
-                    zorder=3, label="Accuracy (test nodes)")
+        ax_acc.plot(pos, acc_med, color="#3498db", lw=1.2, alpha=0.5, zorder=3)
+        acc_label = "Accuracy"
     else:
-        ax_acc.plot(pos, acc_med, color="#3498db", lw=2.0, zorder=4,
-                    label=f"Accuracy — median  ({n_runs} runs)")
-        if acc_lo is not None:
-            ax_acc.fill_between(pos, acc_lo, acc_hi,
-                                color="#3498db", alpha=0.15, zorder=2,
-                                label="Accuracy IQR")
+        ax_acc.plot(pos, acc_med, color="#3498db", lw=2.2, zorder=4)
+        ax_acc.fill_between(pos, acc_lo, acc_hi,
+                            color="#3498db", alpha=0.15, zorder=2)
+        acc_label = f"Accuracy  (median ± IQR,  {n_runs} runs)"
 
-    ax_acc.axhline(overall, color="dimgrey", lw=1.0, ls=":",
-                   label=f"Mean test acc ({overall:.1%})", zorder=2)
-    _add_trend(ax_acc, all_degrees, pos, acc_med.tolist(), counts=counts)
+    ax_acc.axhline(overall, color="dimgrey", lw=1.1, ls=":",
+                   label=f"Mean test acc  {overall:.1%}", zorder=2)
 
-    ax_acc.set_ylabel("Accuracy  (test nodes)", fontsize=10, color="#2980b9")
+    # Invisible proxy for the accuracy line in the legend
+    acc_proxy = plt.Line2D([0], [0], color="#3498db", lw=2, label=acc_label)
+    ax_acc.legend(handles=[acc_proxy,
+                            plt.Line2D([0], [0], color="dimgrey", lw=1.1,
+                                       ls=":", label=f"Mean  {overall:.1%}")],
+                  loc="lower right", fontsize=9, framealpha=0.85)
+
+    ax_acc.set_ylabel("Accuracy", fontsize=10)
     ax_acc.set_ylim(-0.05, 1.10)
     ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_acc.tick_params(axis="y", colors="#2980b9", labelsize=8)
-    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.35, zorder=0)
-
-    # Distance to any train node — right axis (orange)
-    ax_dist.plot(pos, d_tr_med, color="#e67e22", lw=2.0, zorder=4,
-                 label="Dist → nearest train node (median)")
-    ax_dist.fill_between(pos, d_tr_lo, d_tr_hi,
-                         color="#e67e22", alpha=0.15, zorder=2, label="IQR")
-
-    # Distance to same-class train node — right axis (green)
-    ax_dist.plot(pos, d_sc_med, color="#27ae60", lw=2.0, zorder=4,
-                 label="Dist → same-class train node (median)")
-    ax_dist.fill_between(pos, d_sc_lo, d_sc_hi,
-                         color="#27ae60", alpha=0.15, zorder=2, label="IQR")
-
-    # Model depth hline — right axis
-    ax_dist.axhline(num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
-                    label=f"Model depth  ({num_layers} layers)")
-
-    ymax = max(np.nanmax(d_sc_hi) if not np.all(np.isnan(d_sc_hi)) else num_layers,
-               num_layers) * 1.25
-    ax_dist.set_ylim(0, ymax)
-    ax_dist.set_ylabel("Hop distance", fontsize=10, color="#27ae60")
-    ax_dist.tick_params(axis="y", colors="#555", labelsize=8)
-    ax_dist.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-
-    # Combined legend
-    h_acc,  l_acc  = ax_acc.get_legend_handles_labels()
-    h_dist, l_dist = ax_dist.get_legend_handles_labels()
-    ax_acc.legend(h_acc + h_dist, l_acc + l_dist,
-                  loc="upper left", fontsize=8, framealpha=0.88,
-                  ncol=2)
-
+    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     run_tag = (run_labels[0] if (n_runs == 1 and run_labels) else
                f"{n_runs} runs" if n_runs > 1 else "single run")
     ax_acc.set_title(
@@ -703,7 +683,30 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
         f"\n{subtitle}",
         fontsize=11,
     )
-    _degree_axis(ax_acc, pos, all_degrees)
+
+    # ── Bottom: Distances ──────────────────────────────────────────────────────
+    ax_dist.plot(pos, d_tr_med, color="#e67e22", lw=2.2, zorder=4,
+                 label="Nearest train node")
+    ax_dist.fill_between(pos, d_tr_lo, d_tr_hi,
+                         color="#e67e22", alpha=0.15, zorder=2)
+
+    ax_dist.plot(pos, d_sc_med, color="#27ae60", lw=2.2, zorder=4,
+                 label="Nearest same-class train node")
+    ax_dist.fill_between(pos, d_sc_lo, d_sc_hi,
+                         color="#27ae60", alpha=0.15, zorder=2)
+
+    ax_dist.axhline(num_layers, color="#e74c3c", lw=1.6, ls="--", zorder=6,
+                    label=f"Model depth  ({num_layers} layers)")
+
+    ymax = max(np.nanmax(d_sc_hi) if not np.all(np.isnan(d_sc_hi)) else num_layers,
+               num_layers) * 1.25
+    ax_dist.set_ylim(0, ymax)
+    ax_dist.set_ylabel("Hop distance", fontsize=10)
+    ax_dist.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_dist.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+    ax_dist.legend(loc="upper right", fontsize=9, framealpha=0.85)
+
+    _degree_axis(ax_dist, pos, all_degrees)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_combined_vs_degree.png", show)
