@@ -14,7 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree
+from utils import compute_distances_to_train, get_distance_deg
 from train import train
 from test import evaluate
 
@@ -136,6 +137,12 @@ def main():
     # Degree is a fixed property of the graph — compute once for test nodes
     test_deg = graph_degree(data.edge_index[1], data.num_nodes)[data.test_mask].cpu()
 
+    # Structural distances are graph-fixed — compute once before the run loop
+    dist_to_train, dist_to_same_class = compute_distances_to_train(data)
+    dist_deg_data = get_distance_deg(
+        test_deg, dist_to_train, dist_to_same_class, num_nodes=data.num_nodes
+    )
+
     val_accs, test_accs = [], []
     deg_acc_results = []
     run_labels = []
@@ -174,6 +181,14 @@ def main():
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
             run_labels=run_labels,
+        )
+
+    if plot_cfg.get("acc_vs_distance", False):
+        plot_dist_vs_degree(
+            dist_deg_data,
+            cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
         )
 
 

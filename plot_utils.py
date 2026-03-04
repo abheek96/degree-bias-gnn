@@ -482,3 +482,84 @@ def _plot_per_run_scatter(all_degrees, pos, deg_data, n_runs, run_labels,
 
         fig.tight_layout()
         _save(fig, save_dir, f"{prefix}_acc_vs_degree_{label}.png", show)
+
+
+# ── distance-to-train vs degree ────────────────────────────────────────────────
+
+def plot_dist_vs_degree(dist_deg_data, cfg, save_dir=None, show=False):
+    """Plot hop-distance distributions per degree group.
+
+    Two stacked subplots, sharing the x-axis (node degree):
+      • Top    – dist to *any* training node   (blue boxes)
+      • Bottom – dist to *same-class* training node (green boxes)
+
+    A horizontal dashed red line marks the model's receptive field
+    (``cfg['model']['num_layers']`` hops).  NaN entries (unreachable nodes)
+    are silently omitted from each boxplot.
+
+    Parameters
+    ----------
+    dist_deg_data : dict
+        Output of ``utils.get_distance_deg``.
+    cfg : dict
+        Experiment config (used for ``num_layers``, titles, filenames).
+    save_dir : str or None
+    show : bool
+    """
+    num_layers  = cfg["model"]["num_layers"]
+    all_degrees = sorted(dist_deg_data.keys())
+    pos         = list(range(len(all_degrees)))
+    counts      = [dist_deg_data[d]["count"] for d in all_degrees]
+    n_test      = sum(counts)
+    prefix      = _fname_prefix(cfg)
+    subtitle    = _subtitle(cfg, n_test, len(all_degrees))
+
+    def _clean(arr):
+        """Drop NaN, return at least [NaN] so boxplot doesn't crash."""
+        a = arr[~np.isnan(arr)]
+        return a if len(a) > 0 else np.array([np.nan])
+
+    data_train = [_clean(dist_deg_data[d]["dist_to_train"])     for d in all_degrees]
+    data_same  = [_clean(dist_deg_data[d]["dist_to_same_class"]) for d in all_degrees]
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1,
+        figsize=(_fig_w(len(all_degrees)), 8),
+        sharex=True,
+        gridspec_kw={"height_ratios": [1, 1]},
+    )
+    fig.subplots_adjust(hspace=0.08)
+
+    # ── top: dist to any train node ──
+    bp1 = ax_top.boxplot(data_train, positions=pos, widths=0.6, **_BP_KWARGS)
+    for patch in bp1["boxes"]:
+        patch.set_facecolor("#5b9bd5")
+        patch.set_alpha(0.72)
+    _count_bars(ax_top, pos, counts)
+    ax_top.axhline(
+        num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
+        label=f"Model receptive field  ({num_layers} layers)",
+    )
+    ax_top.set_ylabel("Hops to nearest\ntraining node", fontsize=10)
+    ax_top.legend(loc="upper left", fontsize=9, framealpha=0.85)
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(
+        f"Distance to Training Node vs. Node Degree\n{subtitle}", fontsize=11
+    )
+
+    # ── bottom: dist to same-class train node ──
+    bp2 = ax_bot.boxplot(data_same, positions=pos, widths=0.6, **_BP_KWARGS)
+    for patch in bp2["boxes"]:
+        patch.set_facecolor("#27ae60")
+        patch.set_alpha(0.72)
+    ax_bot.axhline(
+        num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
+        label=f"Model receptive field  ({num_layers} layers)",
+    )
+    ax_bot.set_ylabel("Hops to nearest\nsame-class training node", fontsize=10)
+    ax_bot.legend(loc="upper left", fontsize=9, framealpha=0.85)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    _degree_axis(ax_bot, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, save_dir, f"{prefix}_dist_vs_degree.png", show)
