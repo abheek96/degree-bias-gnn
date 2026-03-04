@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree
 from utils import compute_distances_to_train, get_distance_deg
 from train import train
 from test import evaluate
@@ -184,11 +184,13 @@ def main():
         )
 
     if plot_cfg.get("acc_vs_distance", False):
-        plot_dist_vs_degree(
+        plot_combined_vs_degree(
+            deg_acc_results,
             dist_deg_data,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
+            run_labels=run_labels,
         )
 
 

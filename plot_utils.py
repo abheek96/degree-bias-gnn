@@ -563,3 +563,135 @@ def plot_dist_vs_degree(dist_deg_data, cfg, save_dir=None, show=False):
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_dist_vs_degree.png", show)
+
+
+# ── combined accuracy + distance vs degree ─────────────────────────────────────
+
+def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
+                            save_dir=None, show=False, run_labels=None):
+    """Three-panel figure: accuracy and hop-distances vs node degree.
+
+    Panels (shared x-axis, all test nodes):
+      1. Accuracy      — scatter (1 run) or boxplot of per-run means (multi-run),
+                         with WLS trend line and overall-mean reference.
+      2. Dist to any training node          (blue boxes)  + model-depth hline.
+      3. Dist to same-class training node   (green boxes) + model-depth hline.
+
+    Parameters
+    ----------
+    run_results : list[dict]
+        One entry per run; output of ``get_accuracy_deg``.
+    dist_deg_data : dict
+        Output of ``utils.get_distance_deg`` (graph-fixed, one set for all runs).
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    run_labels : list[str] or None
+    """
+    num_layers = cfg["model"]["num_layers"]
+    n_runs = len(run_results)
+    all_degrees, deg_data = _collect(run_results)
+
+    # Keep only degrees present in both accuracy and distance data
+    all_degrees = sorted(set(all_degrees) & set(dist_deg_data.keys()))
+    pos = list(range(len(all_degrees)))
+    counts = [len(deg_data[d][0]) for d in all_degrees]
+    n_test = sum(counts)
+    prefix = _fname_prefix(cfg)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+
+    def _clean(arr):
+        a = arr[~np.isnan(arr)]
+        return a if len(a) > 0 else np.array([np.nan])
+
+    data_train = [_clean(dist_deg_data[d]["dist_to_train"])      for d in all_degrees]
+    data_same  = [_clean(dist_deg_data[d]["dist_to_same_class"])  for d in all_degrees]
+
+    fig, (ax_acc, ax_train, ax_same) = plt.subplots(
+        3, 1,
+        figsize=(_fig_w(len(all_degrees)), 12),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3, 2, 2]},
+    )
+    fig.subplots_adjust(hspace=0.08)
+
+    # ── Panel 1: Accuracy ──────────────────────────────────────────────────────
+    if n_runs == 1:
+        mean_acc = [
+            float(deg_data[d][0].mean()) if len(deg_data[d][0]) > 0 else np.nan
+            for d in all_degrees
+        ]
+        overall = (sum(a * c for a, c in zip(mean_acc, counts) if not np.isnan(a))
+                   / n_test)
+        max_count   = max(counts) or 1
+        bubble_size = [max(30, 700 * c / max_count) for c in counts]
+
+        ax_acc.scatter(pos, mean_acc, s=bubble_size, c="#3498db", alpha=0.78,
+                       edgecolors="white", linewidths=0.6, zorder=3)
+        ref_counts = sorted({min(counts), int(np.median(counts)), max(counts)})
+        for rc in ref_counts:
+            ax_acc.scatter([], [], s=max(30, 700 * rc / max_count),
+                           c="#3498db", alpha=0.65, edgecolors="white",
+                           label=f"n = {rc}")
+        ax_acc.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+                       label=f"Mean test acc ({overall:.1%})", zorder=2)
+        _add_trend(ax_acc, all_degrees, pos, mean_acc, counts=counts)
+        ax_acc.legend(loc="upper left", fontsize=8, framealpha=0.85,
+                      title="Node count", title_fontsize=8)
+        run_tag = run_labels[0] if run_labels else "single run"
+        acc_title = f"Accuracy vs. Node Degree  —  {run_tag}"
+    else:
+        per_run_means = []
+        for d in all_degrees:
+            means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+            per_run_means.append(means if means else [np.nan])
+        median_accs = [float(np.median(m)) for m in per_run_means]
+        overall = (sum(a * c for a, c in zip(median_accs, counts) if not np.isnan(a))
+                   / n_test)
+
+        bp = ax_acc.boxplot(per_run_means, positions=pos, widths=0.6, **_BP_KWARGS)
+        for patch in bp["boxes"]:
+            patch.set_facecolor("#5b9bd5")
+            patch.set_alpha(0.72)
+        _count_bars(ax_acc, pos, counts)
+        ax_acc.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+                       label=f"Mean test acc ({overall:.1%})", zorder=2)
+        _add_trend(ax_acc, all_degrees, pos, median_accs, counts=counts)
+        ax_acc.legend(loc="upper left", fontsize=8, framealpha=0.85)
+        acc_title = f"Accuracy vs. Node Degree  —  {n_runs} runs"
+
+    ax_acc.set_ylabel("Accuracy  (test nodes)", fontsize=10)
+    ax_acc.set_ylim(-0.05, 1.10)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_acc.set_title(f"{acc_title}\n{subtitle}", fontsize=11)
+
+    # ── Panel 2: Dist to any training node ────────────────────────────────────
+    bp1 = ax_train.boxplot(data_train, positions=pos, widths=0.6, **_BP_KWARGS)
+    for patch in bp1["boxes"]:
+        patch.set_facecolor("#5b9bd5")
+        patch.set_alpha(0.72)
+    ax_train.axhline(
+        num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
+        label=f"Model depth  ({num_layers} layers)",
+    )
+    ax_train.set_ylabel("Hops to nearest\ntraining node", fontsize=10)
+    ax_train.legend(loc="upper left", fontsize=9, framealpha=0.85)
+    ax_train.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    # ── Panel 3: Dist to same-class training node ──────────────────────────────
+    bp2 = ax_same.boxplot(data_same, positions=pos, widths=0.6, **_BP_KWARGS)
+    for patch in bp2["boxes"]:
+        patch.set_facecolor("#27ae60")
+        patch.set_alpha(0.72)
+    ax_same.axhline(
+        num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
+        label=f"Model depth  ({num_layers} layers)",
+    )
+    ax_same.set_ylabel("Hops to nearest\nsame-class train node", fontsize=10)
+    ax_same.legend(loc="upper left", fontsize=9, framealpha=0.85)
+    ax_same.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    _degree_axis(ax_same, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, save_dir, f"{prefix}_combined_vs_degree.png", show)
