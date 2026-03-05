@@ -19,6 +19,7 @@ dataset:
   root: ./data
   use_cc: true          # whether to use the largest connected component
   amp_coeff: 1
+  amp_threshold: 0.5
   dmp_coeff: 1
   num_train_per_class: 20
   num_val: 500

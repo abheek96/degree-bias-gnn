@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree
-from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group
+from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups
 from train import train
 from test import evaluate
 
@@ -160,6 +160,16 @@ def main():
     node_dmp_k = (dist_to_same_class > dmp_coeff).numpy()
     dmp_deg_data = get_dmp_deg(test_deg, node_dmp_k)
 
+    # AMP × DMP group membership — fixed for all runs
+    amp_threshold = cfg["dataset"].get("amp_threshold", 0.5)
+    test_het = node_het[data.test_mask.cpu()]              # FloatTensor [num_test]
+    group_labels, group_names = get_amp_dmp_groups(
+        test_het, node_dmp_k, amp_threshold=amp_threshold
+    )
+    group_counts = [int((group_labels == g).sum()) for g in range(4)]
+    # Per-run accuracy per group: group_acc_per_run[g] = [acc_run1, acc_run2, ...]
+    group_acc_per_run = [[] for _ in range(4)]
+
     val_accs, test_accs = [], []
     deg_acc_results = []
     run_labels = []
@@ -181,6 +191,16 @@ def main():
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
         )
         run_labels.append(run_name)
+
+        # Per-group accuracy for this run
+        test_pred  = pred[data.test_mask].cpu()
+        test_true  = data.y[data.test_mask].cpu()
+        correct    = (test_pred == test_true).float().numpy()
+        for g in range(4):
+            mask = group_labels == g
+            group_acc_per_run[g].append(
+                float(correct[mask].mean()) if mask.any() else float("nan")
+            )
 
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
@@ -213,6 +233,14 @@ def main():
         plot_amp_dmp_vs_degree(
             amp_deg_data,
             dmp_deg_data,
+            cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+        plot_acc_by_amp_dmp_group(
+            group_acc_per_run,
+            group_names,
+            group_counts,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),

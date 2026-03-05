@@ -650,3 +650,107 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.24, wspace=0.45)
     _save(fig, save_dir, f"{prefix}_amp_dmp_vs_degree.png", show)
+
+
+# ── accuracy by AMP × DMP group ────────────────────────────────────────────────
+
+def plot_acc_by_amp_dmp_group(group_acc_per_run, group_names, group_counts,
+                               cfg, save_dir=None, show=False):
+    """Compare classification accuracy across four AMP × DMP groups.
+
+    Groups (x-axis, left to right):
+      0 – Low AMP + No DMP   (structurally easy nodes)
+      1 – Low AMP + DMP
+      2 – High AMP + No DMP
+      3 – High AMP + DMP     (structurally hard nodes)
+
+    Single run  — horizontal bar per group, annotated with node count.
+    Multi-run   — boxplot per group (distribution across seeds), with node
+                  count shown below each box.
+
+    The two extreme groups (0 and 3) are highlighted to make the easy vs
+    hard comparison immediately visible.
+
+    Parameters
+    ----------
+    group_acc_per_run : list[list[float]]
+        Outer list: one entry per group (4 total).
+        Inner list: one accuracy value per run.
+    group_names : list[str]
+        Human-readable label for each group (4 total).
+    group_counts : list[int]
+        Number of test nodes per group.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    """
+    n_runs   = len(group_acc_per_run[0])
+    prefix   = _fname_prefix(cfg)
+    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+    amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
+
+    # Colours: highlight groups 0 (easy, green) and 3 (hard, red); others grey
+    GROUP_COLORS = ["#27ae60", "#95a5a6", "#95a5a6", "#e74c3c"]
+    GROUP_EDGE   = ["#1e8449", "#7f8c8d", "#7f8c8d", "#c0392b"]
+
+    n_test   = sum(group_counts)
+    subtitle = (f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+                f"{cfg.get('split','random')} · "
+                f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+                f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop"
+                f"   |   {n_test:,} test nodes")
+
+    pos = list(range(4))
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    if n_runs == 1:
+        accs = [vals[0] for vals in group_acc_per_run]
+        bars = ax.bar(pos, accs, color=GROUP_COLORS, edgecolor=GROUP_EDGE,
+                      linewidth=1.2, alpha=0.85, zorder=3)
+        for bar, acc, cnt in zip(bars, accs, group_counts):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.015,
+                    f"{acc:.1%}", ha="center", va="bottom", fontsize=9,
+                    fontweight="bold")
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    -0.04, f"n={cnt}", ha="center", va="top",
+                    fontsize=8, color="dimgrey")
+    else:
+        bp = ax.boxplot(group_acc_per_run, positions=pos, widths=0.55,
+                        **_BP_KWARGS)
+        for patch, color in zip(bp["boxes"], GROUP_COLORS):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.80)
+        for cnt, x in zip(group_counts, pos):
+            ax.text(x, -0.06, f"n={cnt}", ha="center", va="top",
+                    fontsize=8, color="dimgrey",
+                    transform=ax.get_xaxis_transform())
+
+    # Annotate the two extremes
+    ax.annotate("← easy nodes", xy=(0, 0.02), xycoords=("data", "axes fraction"),
+                fontsize=8, color="#1e8449", ha="center")
+    ax.annotate("hard nodes →", xy=(3, 0.02), xycoords=("data", "axes fraction"),
+                fontsize=8, color="#c0392b", ha="center")
+
+    overall = (sum(a[0] * c for a, c in zip(group_acc_per_run, group_counts))
+               / n_test)
+    ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+               label=f"Overall test acc  {overall:.1%}", zorder=2)
+
+    ax.set_xticks(pos)
+    ax.set_xticklabels(group_names, fontsize=10)
+    ax.set_ylabel("Accuracy", fontsize=11)
+    ax.set_ylim(-0.05, 1.15)
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
+    ax.set_title(
+        f"Accuracy by AMP × DMP Group  "
+        f"({'single run' if n_runs == 1 else f'{n_runs} seeds'})\n{subtitle}",
+        fontsize=10,
+    )
+
+    fig.tight_layout()
+    _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group.png", show)

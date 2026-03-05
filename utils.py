@@ -329,6 +329,55 @@ def get_node_het(data, k: int = 1) -> torch.Tensor:
     return get_node_neighbor_het_rate(data.y, adj)
 
 
+def get_amp_dmp_groups(node_het, node_dmp_k, amp_threshold: float = 0.5):
+    """Assign each test node to one of four AMP × DMP groups.
+
+    Groups
+    ------
+    0 : Low AMP  + No DMP  (het ≤ threshold, dist_to_same_class ≤ dmp_coeff)
+    1 : Low AMP  + DMP
+    2 : High AMP + No DMP
+    3 : High AMP + DMP     (het > threshold, dist_to_same_class > dmp_coeff)
+
+    Parameters
+    ----------
+    node_het : FloatTensor or numpy array, shape [num_test_nodes]
+        Neighbor-heterogeneity ratio for each test node.
+    node_dmp_k : bool array, shape [num_test_nodes]
+        DMP flag for each test node (True = DMP node).
+    amp_threshold : float
+        Threshold that separates low / high AMP.
+
+    Returns
+    -------
+    group_labels : int numpy array, shape [num_test_nodes]
+        Values in {0, 1, 2, 3}.
+    group_names : list[str]
+        Human-readable name for each group index.
+    """
+    if torch.is_tensor(node_het):
+        node_het = node_het.float().cpu().numpy()
+    else:
+        node_het = np.array(node_het, dtype=np.float32)
+
+    if torch.is_tensor(node_dmp_k):
+        node_dmp_k = node_dmp_k.bool().cpu().numpy()
+    else:
+        node_dmp_k = np.asarray(node_dmp_k, dtype=bool)
+
+    high_amp = node_het > amp_threshold   # bool array
+    group_labels = (high_amp.astype(int) * 2) + node_dmp_k.astype(int)
+    # 0 = (0,0)=low+nodmp  1 = (0,1)=low+dmp  2 = (1,0)=high+nodmp  3 = (1,1)=high+dmp
+
+    group_names = [
+        f"Low AMP\nNo DMP",
+        f"Low AMP\nDMP",
+        f"High AMP\nNo DMP",
+        f"High AMP\nDMP",
+    ]
+    return group_labels, group_names
+
+
 def get_amp_deg(deg: torch.Tensor, node_het) -> dict:
     """Group per-test-node heterogeneity values by node degree.
 
