@@ -112,6 +112,53 @@ def _save(fig, save_dir, filename, show):
 
 
 
+def _make_degree_bins(all_degrees, counts, n_bins=6):
+    """Bin degree values into n_bins groups each containing roughly equal numbers
+    of test nodes (equal-count / quantile binning).
+
+    Parameters
+    ----------
+    all_degrees : sorted list[int]
+    counts      : list[int], test-node count for each degree (same order)
+    n_bins      : target number of bins
+
+    Returns
+    -------
+    bin_of_degree : dict {degree -> bin_index}
+    bin_labels    : list[str] – human-readable ranges, e.g. "1", "2–3", "≥16"
+    n_actual      : int – actual number of bins produced
+    """
+    arr  = np.array(all_degrees, dtype=int)
+    cnts = np.array(counts, dtype=float)
+
+    if len(arr) <= n_bins:
+        return ({int(d): i for i, d in enumerate(arr)},
+                [str(d) for d in arr],
+                len(arr))
+
+    # Find degree boundaries that split the cumulative node count equally
+    cum     = np.cumsum(cnts)
+    targets = np.linspace(0, cum[-1], n_bins + 1)[1:-1]   # interior splits
+    bounds  = sorted({int(arr[min(int(np.searchsorted(cum, t)), len(arr) - 1)])
+                      for t in targets})
+
+    bin_of_degree = {int(d): int(np.searchsorted(bounds, d, side="right"))
+                     for d in arr}
+
+    n_actual = max(bin_of_degree.values()) + 1
+    bin_labels = []
+    for b in range(n_actual):
+        in_b = sorted(d for d, bi in bin_of_degree.items() if bi == b)
+        lo, hi = in_b[0], in_b[-1]
+        if lo == hi:
+            bin_labels.append(str(lo))
+        elif b == n_actual - 1:
+            bin_labels.append(f"≥{lo}")
+        else:
+            bin_labels.append(f"{lo}–{hi}")
+    return bin_of_degree, bin_labels, n_actual
+
+
 def _degree_axis(ax, pos, all_degrees):
     """Set x-axis label and ticks; thin labels when there are many degrees."""
     ax.set_xlabel("Node degree", fontsize=11)
@@ -560,95 +607,127 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 
 def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
                            save_dir=None, show=False):
-    """Two-panel figure showing AMP and DMP distributions per node degree.
+    """Two-panel figure: AMP heterogeneity and DMP rate vs degree bins.
 
-    Left panel  — Boxplot of neighbor-heterogeneity ratios per degree bucket
-                  (AMP: Ambivalent Message Passing).  Each box shows the spread
-                  of het values across test nodes at that degree.
+    Degrees are grouped into equal-count bins so each bucket is wide enough
+    to read clearly.
 
-    Right panel — Stacked bar chart of DMP node counts per degree bucket
-                  (DMP: Distant Message Passing).  Green = non-DMP (label match),
-                  purple = DMP (label mismatch with nearest training node).
+    Left  — Boxplot of neighbour-heterogeneity ratios per degree bin.
+            Shows whether high-degree nodes tend to have more ambivalent
+            message-passing environments.  A dashed line marks the AMP
+            threshold (het > threshold ⇒ labelled AMP).
 
-    Both plots are graph-fixed (independent of training seed / run).
-
-    Parameters
-    ----------
-    amp_deg_data : dict
-        Output of ``utils.get_amp_deg`` — per-degree het_values arrays.
-    dmp_deg_data : dict
-        Output of ``utils.get_dmp_deg`` — per-degree count_0 / count_1.
-    cfg : dict
-    save_dir : str or None
-    show : bool
+    Right — Line chart of DMP rate (% of nodes lacking a same-class training
+            node within dmp_coeff hops) per degree bin.  Using a rate rather
+            than raw counts makes the trend legible independent of how many
+            nodes exist at each degree.
     """
     all_degrees = sorted(set(amp_deg_data.keys()) & set(dmp_deg_data.keys()))
-    pos    = list(range(len(all_degrees)))
-    counts = [amp_deg_data[d]["count"] for d in all_degrees]
-    n_test = sum(counts)
-    prefix   = _fname_prefix(cfg)
-    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+    raw_counts  = [amp_deg_data[d]["count"] for d in all_degrees]
+    n_test      = sum(raw_counts)
+    prefix      = _fname_prefix(cfg)
+    amp_coeff   = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff   = cfg["dataset"].get("dmp_coeff", 1)
+    amp_thr     = cfg["dataset"].get("amp_threshold", 0.5)
+    subtitle    = _subtitle(cfg, n_test, len(all_degrees))
 
-    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
-    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+    # ── Degree binning ─────────────────────────────────────────────────────────
+    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
+    pos = list(range(n_bins))
 
-    fw = max(_fig_w(len(all_degrees)), 12)
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5))
-    fig.suptitle(
-        f"AMP ({amp_coeff}-hop) Heterogeneity Distribution  &  "
-        f"DMP ({dmp_coeff}-hop) Counts vs. Node Degree"
-        f"\n{subtitle}",
-        fontsize=11, y=1.02,
-    )
+    def _bin_count(b):
+        return sum(amp_deg_data[d]["count"]
+                   for d in all_degrees if bin_of_deg[d] == b)
 
-    # ── Left: boxplot of het values per degree ─────────────────────────────────
+    bin_counts = [_bin_count(b) for b in range(n_bins)]
+
+    # Aggregate het values per bin
     def _clean(arr):
         a = arr[~np.isnan(arr)]
         return a if len(a) > 0 else np.array([np.nan])
 
-    het_data = [_clean(amp_deg_data[d]["het_values"]) for d in all_degrees]
+    het_per_bin = []
+    for b in range(n_bins):
+        arrays = [amp_deg_data[d]["het_values"]
+                  for d in all_degrees if bin_of_deg[d] == b]
+        het_per_bin.append(_clean(np.concatenate(arrays)) if arrays
+                           else np.array([np.nan]))
 
-    bp = ax_l.boxplot(het_data, positions=pos, widths=0.6, **_BP_KWARGS)
+    # Aggregate DMP rate per bin
+    dmp_rate = []
+    for b in range(n_bins):
+        c0 = sum(dmp_deg_data[d]["count_0"] for d in all_degrees if bin_of_deg[d] == b)
+        c1 = sum(dmp_deg_data[d]["count_1"] for d in all_degrees if bin_of_deg[d] == b)
+        total = c0 + c1
+        dmp_rate.append(c1 / total if total > 0 else np.nan)
+    dmp_rate = np.array(dmp_rate)
+
+    # ── Figure ─────────────────────────────────────────────────────────────────
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(max(10, n_bins * 1.4 + 4), 5))
+    fig.suptitle(
+        f"AMP ({amp_coeff}-hop) Heterogeneity  &  DMP ({dmp_coeff}-hop) Rate  vs. Degree\n"
+        f"{subtitle}",
+        fontsize=11, y=1.02,
+    )
+
+    # Left — boxplot of het values per bin
+    bp = ax_l.boxplot(het_per_bin, positions=pos, widths=0.55, **_BP_KWARGS)
     for patch in bp["boxes"]:
         patch.set_facecolor("#e67e22")
-        patch.set_alpha(0.72)
-    _count_bars(ax_l, pos, counts)
-    ax_l.set_ylabel("Neighbor heterogeneity ratio", fontsize=10)
+        patch.set_alpha(0.80)
+
+    ax_l.axhline(amp_thr, color="#c0392b", lw=1.4, ls="--", zorder=6,
+                 label=f"AMP threshold  ({amp_thr:.0%})")
+    ax_l.set_ylabel("Neighbour heterogeneity ratio", fontsize=10)
     ax_l.set_ylim(-0.05, 1.10)
     ax_l.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax_l.tick_params(axis="y", labelsize=8)
     ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_l.set_title("AMP: Heterogeneity Distribution\n(higher = more ambivalent neighbours)",
+    ax_l.set_title("AMP: how ambivalent are node neighbourhoods?\n"
+                   "(box = IQR, centre line = median, dots = outliers)",
                    fontsize=10, pad=6)
-    handles_l = [
-        plt.Rectangle((0, 0), 1, 1, facecolor="#e67e22", alpha=0.72,
-                       label="Het ratio (box = IQR, line = median)"),
-        plt.Rectangle((0, 0), 1, 1, facecolor="lightgrey", alpha=0.55,
-                       label="# test nodes  (right axis)"),
-    ]
-    ax_l.legend(handles=handles_l, loc="upper center",
-                bbox_to_anchor=(0.5, -0.18), ncol=2,
-                fontsize=8.5, framealpha=0.9, borderpad=0.8)
-    _degree_axis(ax_l, pos, all_degrees)
 
-    # ── Right: stacked bar of DMP counts per degree ────────────────────────────
-    cnt0 = np.array([dmp_deg_data[d]["count_0"] for d in all_degrees])
-    cnt1 = np.array([dmp_deg_data[d]["count_1"] for d in all_degrees])
+    # Annotate bin node counts below each box
+    for b, n in enumerate(bin_counts):
+        ax_l.text(b, -0.08, f"n={n}", ha="center", va="top",
+                  fontsize=7.5, color="dimgrey",
+                  transform=ax_l.get_xaxis_transform())
 
-    ax_r.bar(pos, cnt0, width=0.6, color="#27ae60", alpha=0.82, label="Non-DMP  (label match)",  zorder=3)
-    ax_r.bar(pos, cnt1, width=0.6, color="#8e44ad", alpha=0.82, label="DMP  (label mismatch)",
-             bottom=cnt0, zorder=3)
-    ax_r.set_ylabel("# test nodes", fontsize=10)
+    ax_l.set_xticks(pos)
+    ax_l.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
+    ax_l.set_xlabel("Node degree (binned)", fontsize=10)
+    ax_l.legend(loc="upper left", fontsize=9, framealpha=0.85)
+
+    # Right — DMP rate line per bin
+    ax_r.plot(pos, dmp_rate, color="#8e44ad", lw=2.2, marker="o",
+              markersize=7, zorder=4)
+    ax_r.fill_between(pos, 0, dmp_rate, color="#8e44ad", alpha=0.15, zorder=2)
+
+    # Annotate each point with its rate value
+    for b, rate in enumerate(dmp_rate):
+        if not np.isnan(rate):
+            ax_r.text(b, rate + 0.03, f"{rate:.0%}", ha="center", va="bottom",
+                      fontsize=8.5, color="#6c3483", fontweight="bold")
+
+    # Annotate bin node counts below axis
+    for b, n in enumerate(bin_counts):
+        ax_r.text(b, -0.08, f"n={n}", ha="center", va="top",
+                  fontsize=7.5, color="dimgrey",
+                  transform=ax_r.get_xaxis_transform())
+
+    ax_r.set_ylim(0, 1.10)
+    ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax_r.tick_params(axis="y", labelsize=8)
+    ax_r.set_ylabel("% of nodes with DMP", fontsize=10)
     ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_r.set_title("DMP: Node Counts per Degree\n(purple = nearest train label mismatches true label)",
+    ax_r.set_title("DMP: what fraction of nodes lack a nearby\nsame-class training node?",
                    fontsize=10, pad=6)
-    ax_r.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
-                ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
-    _degree_axis(ax_r, pos, all_degrees)
+    ax_r.set_xticks(pos)
+    ax_r.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
+    ax_r.set_xlabel("Node degree (binned)", fontsize=10)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.24, wspace=0.45)
+    fig.subplots_adjust(bottom=0.20, wspace=0.45)
     _save(fig, save_dir, f"{prefix}_amp_dmp_vs_degree.png", show)
 
 
@@ -760,32 +839,19 @@ def plot_acc_by_amp_dmp_group(group_acc_per_run, group_names, group_counts,
 
 def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
                                          save_dir=None, show=False):
-    """Compare AMP × DMP group accuracy across node degrees on one set of axes.
+    """Accuracy per AMP × DMP group vs binned node degree — 4 overlaid lines.
 
-    Draws four lines (one per group) overlaid on the same panel:
-      - x-axis : node degree
-      - y-axis : accuracy
-      - Single run  : scatter + connecting line per group
-      - Multi-run   : mean line with ±1 std shaded band per group
+    Degrees are binned into equal-count buckets so each point on the x-axis
+    represents a comparable number of nodes.  For multi-run experiments each
+    line shows the cross-seed mean with a ±1σ shaded band.
 
-    This reveals whether the group ranking (Low AMP + No DMP > … > High AMP +
-    DMP) is consistent across all degree values or inverts/collapses at certain
-    degrees.  Degree buckets with fewer than 2 nodes in a group are omitted
-    (NaN) to avoid misleading single-node accuracy values.
-
-    Parameters
-    ----------
-    group_deg_acc : dict {group_id (int) -> {degree (int) -> list[float]}}
-        Per-run accuracy for each (group, degree) cell.  Inner list length
-        equals the number of runs.
-    group_names : list[str]
-        Human-readable label for each of the 4 groups.
-    cfg : dict
-    save_dir : str or None
-    show : bool
+    Answers: does the group ranking (Low AMP + No DMP best, High AMP + DMP
+    worst) hold consistently at every degree, or does it collapse/reverse for
+    very low- or very high-degree nodes?
     """
     GROUP_COLORS  = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
     GROUP_MARKERS = ["o", "s", "^", "D"]
+    GROUP_LS      = ["-", "--", "-.", ":"]
 
     prefix    = _fname_prefix(cfg)
     amp_coeff = cfg["dataset"].get("amp_coeff", 1)
@@ -796,64 +862,80 @@ def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
     split     = cfg.get("split", "random")
     cc        = "CC" if cfg["dataset"].get("use_cc") else "noCC"
 
-    # Collect all degrees present in any group
     all_degrees = sorted({d for g in range(4) for d in group_deg_acc[g]})
-    pos = list(range(len(all_degrees)))
-    deg_to_pos = {d: p for d, p in zip(all_degrees, pos)}
+    if not all_degrees:
+        return
 
-    n_runs = max(len(v) for g in range(4)
-                 for v in group_deg_acc[g].values()) if all_degrees else 1
+    # Use total node count across all groups for degree binning
+    deg_total = {}
+    for d in all_degrees:
+        deg_total[d] = sum(len(group_deg_acc[g].get(d, [])) for g in range(4))
+    raw_counts  = [deg_total[d] for d in all_degrees]
+    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
+    pos = list(range(n_bins))
 
-    fw = max(_fig_w(len(all_degrees)), 12)
-    fig, ax = plt.subplots(figsize=(fw, 5))
+    n_runs = max((len(v) for g in range(4) for v in group_deg_acc[g].values()),
+                 default=1)
 
-    for g, (color, marker, name) in enumerate(
-        zip(GROUP_COLORS, GROUP_MARKERS, group_names)
+    # Aggregate per-run accuracy into bins: mean over degrees in each bin
+    fig, ax = plt.subplots(figsize=(max(10, n_bins * 1.5 + 3), 5))
+
+    for g, (color, marker, ls, name) in enumerate(
+        zip(GROUP_COLORS, GROUP_MARKERS, GROUP_LS, group_names)
     ):
-        # Build mean and std across runs for each degree
-        means, stds, xs = [], [], []
-        for d in all_degrees:
-            vals = group_deg_acc[g].get(d, [])
-            valid = [v for v in vals if not np.isnan(v)]
-            if len(valid) < 1:
-                continue
-            xs.append(deg_to_pos[d])
-            means.append(float(np.mean(valid)))
-            stds.append(float(np.std(valid)) if len(valid) > 1 else 0.0)
+        bin_means, bin_stds = [], []
+        for b in range(n_bins):
+            degs_in_bin = [d for d in all_degrees if bin_of_deg[d] == b]
+            # Collect all per-run accuracy values for this (group, bin)
+            run_accs = []
+            for run_i in range(n_runs):
+                vals = [group_deg_acc[g][d][run_i]
+                        for d in degs_in_bin
+                        if d in group_deg_acc[g] and run_i < len(group_deg_acc[g][d])
+                        and not np.isnan(group_deg_acc[g][d][run_i])]
+                if vals:
+                    run_accs.append(float(np.mean(vals)))
+            if run_accs:
+                bin_means.append(float(np.mean(run_accs)))
+                bin_stds.append(float(np.std(run_accs)))
+            else:
+                bin_means.append(np.nan)
+                bin_stds.append(np.nan)
 
-        if not xs:
-            continue
-
-        xs    = np.array(xs)
-        means = np.array(means)
-        stds  = np.array(stds)
+        xs    = np.array(pos, dtype=float)
+        means = np.array(bin_means)
+        stds  = np.array(bin_stds)
         label = name.replace("\n", " ")
 
-        ax.plot(xs, means, color=color, lw=2.0, marker=marker,
-                markersize=5, zorder=4, label=label)
+        valid = ~np.isnan(means)
+        ax.plot(xs[valid], means[valid], color=color, lw=2.2, ls=ls,
+                marker=marker, markersize=7, zorder=4, label=label)
         if n_runs > 1:
-            ax.fill_between(xs, means - stds, means + stds,
-                            color=color, alpha=0.15, zorder=2)
+            ax.fill_between(xs[valid],
+                            (means - stds)[valid], (means + stds)[valid],
+                            color=color, alpha=0.13, zorder=2)
 
     ax.set_ylabel("Accuracy", fontsize=11)
     ax.set_ylim(-0.05, 1.10)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    _degree_axis(ax, pos, all_degrees)
-
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
-              ncol=4, fontsize=9, framealpha=0.9, borderpad=0.8)
+    ax.set_xticks(pos)
+    ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
+    ax.set_xlabel("Node degree (binned)", fontsize=10)
 
     run_str = "single run" if n_runs == 1 else f"{n_runs} seeds  (mean ± 1σ)"
     ax.set_title(
-        f"Accuracy by AMP × DMP Group vs. Node Degree  —  {run_str}\n"
+        f"Does the accuracy gap between AMP × DMP groups persist across degrees?  "
+        f"—  {run_str}\n"
         f"{dataset} · {model} · {split} · {cc}"
         f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop",
         fontsize=10,
     )
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
+              ncol=4, fontsize=9.5, framealpha=0.9, borderpad=0.8)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.22)
+    fig.subplots_adjust(bottom=0.24)
     _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group_vs_degree.png", show)
 
 
@@ -862,42 +944,33 @@ def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
 def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
                                          group_names, cfg,
                                          save_dir=None, show=False):
-    """Two-panel figure: group cardinality and hop distances per degree bucket.
+    """Two-panel figure: AMP × DMP group composition and hop distances vs degree.
 
-    Left panel — Stacked bar chart showing how many test nodes at each degree
-                 fall into each AMP × DMP group.  Reveals which structural
-                 regime dominates at low vs high degrees.
+    Degrees are grouped into equal-count bins.
 
-    Right panel — Median ± IQR lines for dist_to_train (orange) and
-                  dist_to_same_class (green) per degree, with a red dashed
-                  reference line at ``num_layers`` (model receptive field).
+    Left  — 100 % normalised stacked bar showing the *proportion* of nodes in
+            each AMP × DMP group at each degree bin.  Using proportions (not
+            raw counts) makes the composition shift across degrees immediately
+            visible regardless of how many nodes are in each bin.  The total
+            node count is annotated on top of each bar for context.
 
-    Both panels share no axis — they are sized independently so each panel
-    is easy to read on its own.
-
-    Parameters
-    ----------
-    group_deg_counts : dict {degree (int) -> {group (int): count (int)}}
-        Output of ``utils.get_group_deg_counts``.
-    dist_deg_data : dict
-        Output of ``utils.get_distance_deg``.
-    group_names : list[str]
-        Human-readable labels for groups 0-3.
-    cfg : dict
-    save_dir : str or None
-    show : bool
+    Right — Median ± IQR lines for dist_to_train (orange) and
+            dist_to_same_class (green) per bin.  A red dashed line marks the
+            model's receptive field (num_layers hops) — nodes whose nearest
+            same-class training node is above this line cannot receive correct
+            label signal within the model's reach.
     """
     GROUP_COLORS = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
 
-    num_layers  = cfg["model"]["num_layers"]
-    amp_coeff   = cfg["dataset"].get("amp_coeff", 1)
-    dmp_coeff   = cfg["dataset"].get("dmp_coeff", 1)
-    amp_thr     = cfg["dataset"].get("amp_threshold", 0.5)
-    prefix      = _fname_prefix(cfg)
+    num_layers = cfg["model"]["num_layers"]
+    amp_coeff  = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff  = cfg["dataset"].get("dmp_coeff", 1)
+    amp_thr    = cfg["dataset"].get("amp_threshold", 0.5)
+    prefix     = _fname_prefix(cfg)
 
     all_degrees = sorted(set(group_deg_counts) & set(dist_deg_data))
-    pos         = list(range(len(all_degrees)))
-    n_test      = sum(sum(group_deg_counts[d].values()) for d in all_degrees)
+    raw_counts  = [sum(group_deg_counts[d].values()) for d in all_degrees]
+    n_test      = sum(raw_counts)
     subtitle    = (
         f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
         f"{cfg.get('split','random')} · "
@@ -906,37 +979,31 @@ def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
         f"   |   {n_test:,} test nodes"
     )
 
-    fw = max(_fig_w(len(all_degrees)), 14)
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5))
-    fig.suptitle(
-        f"AMP × DMP Group Cardinality & Hop Distances vs. Node Degree\n{subtitle}",
-        fontsize=11, y=1.02,
-    )
+    # ── Degree binning ─────────────────────────────────────────────────────────
+    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
+    pos = list(range(n_bins))
 
-    # ── Left: stacked bar of group counts per degree ────────────────────────────
-    bottoms = np.zeros(len(all_degrees))
-    for g in range(4):
-        counts_g = np.array([group_deg_counts[d].get(g, 0) for d in all_degrees],
-                             dtype=float)
-        ax_l.bar(pos, counts_g, bottom=bottoms, width=0.7,
-                 color=GROUP_COLORS[g], alpha=0.85, zorder=3,
-                 label=group_names[g].replace("\n", " "))
-        bottoms += counts_g
+    # Per-bin node count and group counts
+    bin_total   = np.zeros(n_bins)
+    bin_g_count = np.zeros((4, n_bins))
+    for d in all_degrees:
+        b = bin_of_deg[d]
+        for g in range(4):
+            cnt = group_deg_counts[d].get(g, 0)
+            bin_g_count[g, b] += cnt
+            bin_total[b]      += cnt
 
-    ax_l.set_ylabel("# test nodes", fontsize=10)
-    ax_l.tick_params(axis="y", labelsize=8)
-    ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_l.set_title("Group Cardinality per Degree Bucket", fontsize=10, pad=6)
-    ax_l.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
-                ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
-    _degree_axis(ax_l, pos, all_degrees)
-
-    # ── Right: distance medians + IQR bands per degree ─────────────────────────
-    def _dist_stats(key):
+    # Per-bin distance stats (aggregate raw arrays across degrees in bin)
+    def _bin_dist_stats(key):
         med, lo, hi = [], [], []
-        for d in all_degrees:
-            arr   = dist_deg_data[d][key]
-            clean = arr[~np.isnan(arr)]
+        for b in range(n_bins):
+            arrays = [dist_deg_data[d][key]
+                      for d in all_degrees if bin_of_deg[d] == b]
+            if arrays:
+                arr   = np.concatenate(arrays)
+                clean = arr[~np.isnan(arr)]
+            else:
+                clean = np.array([])
             if len(clean) == 0:
                 med.append(np.nan); lo.append(np.nan); hi.append(np.nan)
             else:
@@ -945,34 +1012,82 @@ def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
                 hi.append(float(np.percentile(clean, 75)))
         return np.array(med), np.array(lo), np.array(hi)
 
-    d_tr_med, d_tr_lo, d_tr_hi = _dist_stats("dist_to_train")
-    d_sc_med, d_sc_lo, d_sc_hi = _dist_stats("dist_to_same_class")
+    d_tr_med, d_tr_lo, d_tr_hi = _bin_dist_stats("dist_to_train")
+    d_sc_med, d_sc_lo, d_sc_hi = _bin_dist_stats("dist_to_same_class")
 
+    # ── Figure ─────────────────────────────────────────────────────────────────
+    fw = max(10, n_bins * 1.4 + 4)
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5))
+    fig.suptitle(
+        f"AMP × DMP Group Composition  &  Hop Distances to Training Nodes  "
+        f"vs. Node Degree\n{subtitle}",
+        fontsize=11, y=1.02,
+    )
+
+    # Left — 100 % normalised stacked bar (composition per bin)
+    safe_total = np.where(bin_total > 0, bin_total, 1)
+    bottoms = np.zeros(n_bins)
+    for g in range(4):
+        props = bin_g_count[g] / safe_total * 100
+        ax_l.bar(pos, props, bottom=bottoms, width=0.65,
+                 color=GROUP_COLORS[g], alpha=0.88, zorder=3,
+                 label=group_names[g].replace("\n", " "))
+        # Label each section if it's large enough to read
+        for b in range(n_bins):
+            if props[b] >= 8:
+                ax_l.text(b, bottoms[b] + props[b] / 2,
+                          f"{props[b]:.0f}%", ha="center", va="center",
+                          fontsize=7.5, color="white", fontweight="bold")
+        bottoms += props
+
+    # Annotate total n= on top of each bar
+    for b, n in enumerate(bin_total):
+        ax_l.text(b, 101, f"n={int(n)}", ha="center", va="bottom",
+                  fontsize=7.5, color="dimgrey")
+
+    ax_l.set_ylim(0, 115)
+    ax_l.set_ylabel("% of test nodes in degree bin", fontsize=10)
+    ax_l.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:.0f}%"))
+    ax_l.tick_params(axis="y", labelsize=8)
+    ax_l.set_title("Which structural regime dominates at each degree?\n"
+                   "(green = easy: Low AMP + No DMP  ·  red = hard: High AMP + DMP)",
+                   fontsize=10, pad=6)
+    ax_l.set_xticks(pos)
+    ax_l.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
+    ax_l.set_xlabel("Node degree (binned)", fontsize=10)
+    ax_l.legend(loc="upper center", bbox_to_anchor=(0.5, -0.20),
+                ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
+
+    # Right — distance lines + IQR bands per bin
     ax_r.plot(pos, d_tr_med, color="#e67e22", lw=2.2, marker="o",
-              markersize=4, zorder=4, label="Nearest train node  (any class)")
-    ax_r.fill_between(pos, d_tr_lo, d_tr_hi, color="#e67e22", alpha=0.18, zorder=2)
+              markersize=6, zorder=4, label="Any training node  (median)")
+    ax_r.fill_between(pos, d_tr_lo, d_tr_hi,
+                      color="#e67e22", alpha=0.18, zorder=2, label="IQR")
 
-    ax_r.plot(pos, d_sc_med, color="#27ae60", lw=2.2, marker="s",
-              markersize=4, zorder=4, label="Nearest same-class train node")
-    ax_r.fill_between(pos, d_sc_lo, d_sc_hi, color="#27ae60", alpha=0.18, zorder=2)
+    ax_r.plot(pos, d_sc_med, color="#2980b9", lw=2.2, marker="s",
+              markersize=6, zorder=4, label="Same-class training node  (median)")
+    ax_r.fill_between(pos, d_sc_lo, d_sc_hi,
+                      color="#2980b9", alpha=0.18, zorder=2)
 
-    ax_r.axhline(num_layers, color="#e74c3c", lw=1.5, ls="--", zorder=6,
-                 label=f"Model depth  ({num_layers} layers)")
+    ax_r.axhline(num_layers, color="#e74c3c", lw=1.6, ls="--", zorder=6,
+                 label=f"Model receptive field  ({num_layers} hops)")
 
-    ymax = max(
-        np.nanmax(d_sc_hi) if not np.all(np.isnan(d_sc_hi)) else num_layers,
-        num_layers
-    ) * 1.25
+    ymax = max(np.nanmax(d_sc_hi) if not np.all(np.isnan(d_sc_hi)) else num_layers,
+               num_layers) * 1.3
     ax_r.set_ylim(0, ymax)
-    ax_r.set_ylabel("Hop distance  (median ± IQR)", fontsize=10)
     ax_r.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     ax_r.tick_params(axis="y", labelsize=8)
+    ax_r.set_ylabel("Hop distance  (median ± IQR)", fontsize=10)
     ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_r.set_title("Hop Distances to Training Nodes per Degree", fontsize=10, pad=6)
-    ax_r.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+    ax_r.set_title("How far is the nearest (same-class) training node?\n"
+                   "Nodes above the red line cannot be reached by the model",
+                   fontsize=10, pad=6)
+    ax_r.set_xticks(pos)
+    ax_r.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
+    ax_r.set_xlabel("Node degree (binned)", fontsize=10)
+    ax_r.legend(loc="upper center", bbox_to_anchor=(0.5, -0.20),
                 ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
-    _degree_axis(ax_r, pos, all_degrees)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.24, wspace=0.45)
+    fig.subplots_adjust(bottom=0.22, wspace=0.42)
     _save(fig, save_dir, f"{prefix}_group_cardinality_and_distance.png", show)
