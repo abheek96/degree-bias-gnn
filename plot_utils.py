@@ -754,3 +754,104 @@ def plot_acc_by_amp_dmp_group(group_acc_per_run, group_names, group_counts,
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group.png", show)
+
+
+# ── accuracy by AMP × DMP group, stratified by degree ──────────────────────────
+
+def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
+                                         save_dir=None, show=False):
+    """Compare AMP × DMP group accuracy across node degrees on one set of axes.
+
+    Draws four lines (one per group) overlaid on the same panel:
+      - x-axis : node degree
+      - y-axis : accuracy
+      - Single run  : scatter + connecting line per group
+      - Multi-run   : mean line with ±1 std shaded band per group
+
+    This reveals whether the group ranking (Low AMP + No DMP > … > High AMP +
+    DMP) is consistent across all degree values or inverts/collapses at certain
+    degrees.  Degree buckets with fewer than 2 nodes in a group are omitted
+    (NaN) to avoid misleading single-node accuracy values.
+
+    Parameters
+    ----------
+    group_deg_acc : dict {group_id (int) -> {degree (int) -> list[float]}}
+        Per-run accuracy for each (group, degree) cell.  Inner list length
+        equals the number of runs.
+    group_names : list[str]
+        Human-readable label for each of the 4 groups.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    """
+    GROUP_COLORS  = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
+    GROUP_MARKERS = ["o", "s", "^", "D"]
+
+    prefix    = _fname_prefix(cfg)
+    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+    amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
+    dataset   = cfg["dataset"]["name"]
+    model     = cfg["model"]["name"]
+    split     = cfg.get("split", "random")
+    cc        = "CC" if cfg["dataset"].get("use_cc") else "noCC"
+
+    # Collect all degrees present in any group
+    all_degrees = sorted({d for g in range(4) for d in group_deg_acc[g]})
+    pos = list(range(len(all_degrees)))
+    deg_to_pos = {d: p for d, p in zip(all_degrees, pos)}
+
+    n_runs = max(len(v) for g in range(4)
+                 for v in group_deg_acc[g].values()) if all_degrees else 1
+
+    fw = max(_fig_w(len(all_degrees)), 12)
+    fig, ax = plt.subplots(figsize=(fw, 5))
+
+    for g, (color, marker, name) in enumerate(
+        zip(GROUP_COLORS, GROUP_MARKERS, group_names)
+    ):
+        # Build mean and std across runs for each degree
+        means, stds, xs = [], [], []
+        for d in all_degrees:
+            vals = group_deg_acc[g].get(d, [])
+            valid = [v for v in vals if not np.isnan(v)]
+            if len(valid) < 1:
+                continue
+            xs.append(deg_to_pos[d])
+            means.append(float(np.mean(valid)))
+            stds.append(float(np.std(valid)) if len(valid) > 1 else 0.0)
+
+        if not xs:
+            continue
+
+        xs    = np.array(xs)
+        means = np.array(means)
+        stds  = np.array(stds)
+        label = name.replace("\n", " ")
+
+        ax.plot(xs, means, color=color, lw=2.0, marker=marker,
+                markersize=5, zorder=4, label=label)
+        if n_runs > 1:
+            ax.fill_between(xs, means - stds, means + stds,
+                            color=color, alpha=0.15, zorder=2)
+
+    ax.set_ylabel("Accuracy", fontsize=11)
+    ax.set_ylim(-0.05, 1.10)
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    _degree_axis(ax, pos, all_degrees)
+
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+              ncol=4, fontsize=9, framealpha=0.9, borderpad=0.8)
+
+    run_str = "single run" if n_runs == 1 else f"{n_runs} seeds  (mean ± 1σ)"
+    ax.set_title(
+        f"Accuracy by AMP × DMP Group vs. Node Degree  —  {run_str}\n"
+        f"{dataset} · {model} · {split} · {cc}"
+        f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop",
+        fontsize=10,
+    )
+
+    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.22)
+    _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group_vs_degree.png", show)
