@@ -39,7 +39,7 @@ def get_node_neighbor_het_rate(y, adj):
     node_ngb_het = 1 - node_ngb_consis
     return node_ngb_het
 
-def get_node_amp(data, threshold=0.3, verbose=False):
+def get_node_amp(data, threshold=0.5, verbose=False):
     adj = index_to_adj(data.x, data.edge_index, add_self_loop=False)
     node_het = get_node_neighbor_het_rate(data.y, adj)
     node_amp = node_het > threshold
@@ -290,34 +290,54 @@ def get_distance_deg(
     return result
 
 
-def get_amp_deg(deg: torch.Tensor, node_amp) -> dict:
-    """Group per-test-node AMP flags by node degree.
+def get_node_het(data) -> torch.Tensor:
+    """Return the raw neighbor-heterogeneity ratio for every node.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data
+        Graph with attributes: x, edge_index, y.
+
+    Returns
+    -------
+    node_het : FloatTensor, shape [num_nodes]
+        Fraction of each node's neighbors whose label differs from the node's
+        own label.  Isolated nodes (degree 0) receive 0.
+    """
+    adj = index_to_adj(data.x, data.edge_index, add_self_loop=False)
+    return get_node_neighbor_het_rate(data.y, adj)
+
+
+def get_amp_deg(deg: torch.Tensor, node_het) -> dict:
+    """Group per-test-node heterogeneity values by node degree.
 
     Parameters
     ----------
     deg : LongTensor, shape [num_test_nodes]
         Degree of each test node.
-    node_amp : BoolTensor or numpy bool array, shape [num_test_nodes]
-        AMP flag for each test node (True = ambivalent message passing node).
+    node_het : FloatTensor or numpy float array, shape [num_test_nodes]
+        Raw neighbor-heterogeneity ratio for each test node (output of
+        ``get_node_het`` indexed to test nodes).
 
     Returns
     -------
     dict mapping degree (int) -> {
-        'amp_rate' : float, fraction of AMP nodes at that degree,
-        'count'    : int, number of test nodes with that degree,
+        'het_values' : float32 numpy array of per-node het ratios,
+        'count'      : int, number of test nodes with that degree,
     }
     """
-    if not torch.is_tensor(node_amp):
-        node_amp = torch.tensor(node_amp)
-    node_amp = node_amp.bool().cpu()
+    if torch.is_tensor(node_het):
+        node_het = node_het.float().cpu().numpy()
+    else:
+        node_het = np.array(node_het, dtype=np.float32)
     deg = deg.cpu()
 
     result = {}
     for d in deg.unique():
-        idx = (deg == d).nonzero(as_tuple=False).view(-1)
+        idx = (deg == d).nonzero(as_tuple=False).view(-1).numpy()
         result[d.item()] = {
-            "amp_rate": node_amp[idx].float().mean().item(),
-            "count":    idx.numel(),
+            "het_values": node_het[idx],
+            "count":      int(idx.size),
         }
     return result
 
@@ -335,8 +355,9 @@ def get_dmp_deg(deg: torch.Tensor, node_dmp) -> dict:
     Returns
     -------
     dict mapping degree (int) -> {
-        'dmp_rate' : float, fraction of DMP nodes at that degree,
-        'count'    : int, number of test nodes with that degree,
+        'count_0' : int, number of non-DMP nodes at that degree,
+        'count_1' : int, number of DMP nodes at that degree,
+        'count'   : int, total number of test nodes with that degree,
     }
     """
     if not torch.is_tensor(node_dmp):
@@ -347,37 +368,10 @@ def get_dmp_deg(deg: torch.Tensor, node_dmp) -> dict:
     result = {}
     for d in deg.unique():
         idx = (deg == d).nonzero(as_tuple=False).view(-1)
+        flags = node_dmp[idx]
         result[d.item()] = {
-            "dmp_rate": node_dmp[idx].float().mean().item(),
-            "count":    idx.numel(),
+            "count_0": int((~flags).sum().item()),
+            "count_1": int(flags.sum().item()),
+            "count":   idx.numel(),
         }
     return result
-
-
-def get_node_amp(data, threshold=0.3):
-    """
-    Compute node amplification (AMP) based on neighbor heterogeneity.
-
-    Parameters
-    ----------
-    data : torch_geometric.data.Data
-        Graph with attributes: x, edge_index, y.
-    threshold : float
-        Heterogeneity threshold for identifying high-AMP nodes.
-
-    Returns
-    -------
-    node_amp : BoolTensor
-        Boolean tensor indicating which nodes have neighbor heterogeneity > threshold.
-
-    Notes
-    -----
-    - index_to_adj() converts edge_index (COO format) into a dense boolean adjacency matrix.
-    - get_node_neighbor_het_rate(y, adj) computes for each node the fraction of neighbors
-      with a different label: heterogeneity = (# neighbors with label != y[i]) / (total neighbors).
-    - A node is high-AMP if its neighbor heterogeneity > threshold.
-    """
-    adj = index_to_adj(data.x, data.edge_index, add_self_loop=False)
-    node_het = get_node_neighbor_het_rate(data.y, adj)
-    node_amp = node_het > threshold
-    return node_amp
