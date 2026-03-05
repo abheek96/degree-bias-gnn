@@ -1091,3 +1091,183 @@ def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.22, wspace=0.42)
     _save(fig, save_dir, f"{prefix}_group_cardinality_and_distance.png", show)
+
+
+# ── accuracy by Totoro neighbourhood group ──────────────────────────────────────
+
+def plot_acc_by_totoro_group(group_acc_per_run, group_names, group_counts,
+                              neighborhood_stats, cfg,
+                              save_dir=None, show=False):
+    """Two-panel figure comparing accuracy across Totoro neighbourhood groups.
+
+    Test nodes are grouped by how their k-hop training neighbourhood compares
+    along two dimensions — count and mean Totoro score of same-class vs
+    different-class training neighbours.
+
+    Left panel  — Accuracy per group (bars for single run, boxplots for
+                  multi-run).  Group 0 (same class wins both) is coloured
+                  green; group 3 (diff class wins / no same-class) is red.
+                  Node counts and group definitions are annotated.
+
+    Right panel — For each group, side-by-side bars showing the mean Totoro
+                  score of same-class (blue) vs different-class (red) training
+                  neighbours and mean neighbour counts (overlaid line).
+                  Makes the neighbourhood imbalance that defines each group
+                  directly visible.
+
+    Parameters
+    ----------
+    group_acc_per_run : list[list[float]]
+        Per-run accuracy for each group (4 groups, n_runs values each).
+    group_names : list[str]
+    group_counts : list[int]
+        Total test nodes per group.
+    neighborhood_stats : dict
+        Output of ``utils.get_totoro_neighborhood_groups`` — per-test-node
+        arrays: same_count, diff_count, same_totoro, diff_totoro.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    """
+    GROUP_COLORS = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
+    GROUP_EDGE   = ["#1e8449", "#4a5568", "#6c3483", "#c0392b"]
+
+    n_runs  = len(group_acc_per_run[0])
+    prefix  = _fname_prefix(cfg)
+    n_test  = sum(group_counts)
+    k       = cfg["dataset"].get("amp_coeff", 2)   # reuse or default to 2
+    subtitle = (
+        f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+        f"{cfg.get('split','random')} · "
+        f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+        f"   |   {n_test:,} test nodes  ·  {k}-hop neighbourhood"
+    )
+
+    pos = list(range(4))
+    g_labels = [n.replace("\n", " ") for n in group_names]
+
+    # ── Per-group neighbourhood stats (mean across test nodes in each group) ──
+    group_labels_arr = np.concatenate([
+        np.full(group_counts[g], g) for g in range(4)
+    ])
+    same_tot  = neighborhood_stats["same_totoro"]
+    diff_tot  = neighborhood_stats["diff_totoro"]
+    same_cnt  = neighborhood_stats["same_count"]
+    diff_cnt  = neighborhood_stats["diff_count"]
+
+    mean_same_tot = [same_tot[group_labels_arr == g].mean() if group_counts[g] > 0
+                     else 0.0 for g in range(4)]
+    mean_diff_tot = [diff_tot[group_labels_arr == g].mean() if group_counts[g] > 0
+                     else 0.0 for g in range(4)]
+    mean_same_cnt = [same_cnt[group_labels_arr == g].mean() if group_counts[g] > 0
+                     else 0.0 for g in range(4)]
+    mean_diff_cnt = [diff_cnt[group_labels_arr == g].mean() if group_counts[g] > 0
+                     else 0.0 for g in range(4)]
+
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(
+        f"Accuracy by Totoro Neighbourhood Group\n{subtitle}",
+        fontsize=11, y=1.02,
+    )
+
+    # ── Left: accuracy per group ───────────────────────────────────────────────
+    if n_runs == 1:
+        accs = [vals[0] for vals in group_acc_per_run]
+        bars = ax_l.bar(pos, accs, color=GROUP_COLORS, edgecolor=GROUP_EDGE,
+                        linewidth=1.2, alpha=0.87, zorder=3, width=0.6)
+        for bar, acc, cnt in zip(bars, accs, group_counts):
+            ax_l.text(bar.get_x() + bar.get_width() / 2,
+                      bar.get_height() + 0.015,
+                      f"{acc:.1%}", ha="center", va="bottom",
+                      fontsize=9.5, fontweight="bold")
+            ax_l.text(bar.get_x() + bar.get_width() / 2,
+                      -0.06, f"n={cnt}", ha="center", va="top",
+                      fontsize=8, color="dimgrey",
+                      transform=ax_l.get_xaxis_transform())
+    else:
+        bp = ax_l.boxplot(group_acc_per_run, positions=pos, widths=0.55,
+                          **_BP_KWARGS)
+        for patch, color in zip(bp["boxes"], GROUP_COLORS):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.82)
+        for cnt, x in zip(group_counts, pos):
+            ax_l.text(x, -0.06, f"n={cnt}", ha="center", va="top",
+                      fontsize=8, color="dimgrey",
+                      transform=ax_l.get_xaxis_transform())
+
+    overall = (sum(a[0] * c for a, c in zip(group_acc_per_run, group_counts)
+                   if not np.isnan(a[0])) / n_test)
+    ax_l.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+                 label=f"Overall acc  {overall:.1%}", zorder=2)
+
+    ax_l.annotate("← easiest", xy=(0, 0.02), xycoords=("data","axes fraction"),
+                  fontsize=8, color="#1e8449", ha="center")
+    ax_l.annotate("hardest →", xy=(3, 0.02), xycoords=("data","axes fraction"),
+                  fontsize=8, color="#c0392b", ha="center")
+
+    ax_l.set_xticks(pos)
+    ax_l.set_xticklabels(g_labels, fontsize=9)
+    ax_l.set_ylabel("Accuracy", fontsize=11)
+    ax_l.set_ylim(-0.05, 1.15)
+    ax_l.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_l.legend(loc="upper right", fontsize=9, framealpha=0.85)
+    ax_l.set_title(
+        f"Accuracy per group\n({'single run' if n_runs == 1 else f'{n_runs} seeds'})",
+        fontsize=10, pad=6,
+    )
+
+    # ── Right: mean same vs diff Totoro score + count per group ───────────────
+    bw = 0.3
+    xs = np.array(pos, dtype=float)
+
+    ax_r.bar(xs - bw / 2, mean_same_tot, width=bw, color="#2980b9",
+             alpha=0.85, label="Same-class train neighbours  (Totoro)", zorder=3)
+    ax_r.bar(xs + bw / 2, mean_diff_tot, width=bw, color="#e74c3c",
+             alpha=0.85, label="Diff-class train neighbours  (Totoro)", zorder=3)
+
+    # Annotate Totoro values
+    for x, sv, dv in zip(xs, mean_same_tot, mean_diff_tot):
+        ax_r.text(x - bw / 2, sv + 0.002, f"{sv:.3f}",
+                  ha="center", va="bottom", fontsize=7.5, color="#1a5276")
+        ax_r.text(x + bw / 2, dv + 0.002, f"{dv:.3f}",
+                  ha="center", va="bottom", fontsize=7.5, color="#922b21")
+
+    ax_r.set_ylabel("Mean Totoro score", fontsize=10)
+    ax_r.tick_params(axis="y", labelsize=8)
+    ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    # Overlay mean neighbour counts as a twin axis line
+    ax_r2 = ax_r.twinx()
+    ax_r2.plot(xs, mean_same_cnt, color="#2980b9", lw=1.8, ls="--",
+               marker="o", markersize=5, alpha=0.7, label="Same-class count")
+    ax_r2.plot(xs, mean_diff_cnt, color="#e74c3c", lw=1.8, ls="--",
+               marker="s", markersize=5, alpha=0.7, label="Diff-class count")
+    ax_r2.set_ylabel("Mean # training neighbours", fontsize=9, color="dimgrey")
+    ax_r2.tick_params(axis="y", labelsize=7, colors="dimgrey")
+    ax_r2.spines["right"].set_color("lightgrey")
+
+    ax_r.set_xticks(pos)
+    ax_r.set_xticklabels(g_labels, fontsize=9)
+    ax_r.set_title(
+        "Neighbourhood profile per group\n"
+        "(bars = Totoro scores · dashed lines = neighbour counts)",
+        fontsize=10, pad=6,
+    )
+
+    # Combined legend below right panel
+    handles_bar  = [plt.Rectangle((0,0),1,1, color="#2980b9", alpha=0.85,
+                                  label="Same-class Totoro (bar)"),
+                    plt.Rectangle((0,0),1,1, color="#e74c3c", alpha=0.85,
+                                  label="Diff-class Totoro (bar)")]
+    handles_line = [plt.Line2D([0],[0], color="#2980b9", lw=1.8, ls="--",
+                               marker="o", markersize=5, label="Same-class count (line)"),
+                    plt.Line2D([0],[0], color="#e74c3c", lw=1.8, ls="--",
+                               marker="s", markersize=5, label="Diff-class count (line)")]
+    ax_r.legend(handles=handles_bar + handles_line,
+                loc="upper center", bbox_to_anchor=(0.5, -0.16),
+                ncol=2, fontsize=8, framealpha=0.9)
+
+    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20, wspace=0.52)
+    _save(fig, save_dir, f"{prefix}_acc_by_totoro_group.png", show)

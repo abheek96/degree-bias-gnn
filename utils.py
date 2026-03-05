@@ -474,6 +474,99 @@ def get_dmp_deg(deg: torch.Tensor, node_dmp) -> dict:
     return result
 
 
+def get_totoro_neighborhood_groups(data, totoro_values, k: int = 2):
+    """Characterise each test node's k-hop training neighbourhood by comparing
+    same-class vs different-class training nodes on two dimensions:
+
+    1. **Count** — does the same-class have more training neighbours?
+    2. **Totoro** — do same-class training neighbours have a higher mean
+       Totoro score (i.e. do they carry a stronger, if more confused, signal)?
+
+    Groups
+    ------
+    0 : Same class wins both count and Totoro  → most advantaged
+    1 : Same class wins count only
+    2 : Same class wins Totoro only
+    3 : Diff class wins both / no same-class neighbours → most disadvantaged
+
+    Parameters
+    ----------
+    data : PyG Data
+        Graph with edge_index, y, train_mask, test_mask, num_nodes.
+    totoro_values : FloatTensor, shape [num_nodes]
+        Output of ``get_totoro_values``.
+    k : int
+        Neighbourhood radius in hops.
+
+    Returns
+    -------
+    group_labels : int numpy array, shape [num_test_nodes]
+    group_names  : list[str]
+    stats        : dict with per-test-node arrays:
+                   same_count, diff_count, same_totoro, diff_totoro
+    """
+    from torch_geometric.utils import k_hop_subgraph
+
+    y_cpu      = data.y.cpu()
+    train_cpu  = data.train_mask.cpu()
+    test_nodes = data.test_mask.nonzero(as_tuple=True)[0].tolist()
+    tot_cpu    = totoro_values.cpu()
+
+    group_labels                      = []
+    same_counts, diff_counts          = [], []
+    same_totoro_means, diff_totoro_means = [], []
+
+    for node in test_nodes:
+        node_label = int(y_cpu[node])
+
+        nbs, _, _, _ = k_hop_subgraph(
+            node_idx=int(node), num_hops=k,
+            edge_index=data.edge_index, num_nodes=data.num_nodes,
+        )
+        # Exclude the node itself; keep only training neighbours
+        nbs_set    = set(nbs.cpu().tolist()) - {node}
+        same_train = [n for n in nbs_set
+                      if train_cpu[n] and int(y_cpu[n]) == node_label]
+        diff_train = [n for n in nbs_set
+                      if train_cpu[n] and int(y_cpu[n]) != node_label]
+
+        same_count  = len(same_train)
+        diff_count  = len(diff_train)
+        same_totoro = float(tot_cpu[same_train].mean()) if same_count > 0 else 0.0
+        diff_totoro = float(tot_cpu[diff_train].mean()) if diff_count > 0 else 0.0
+
+        same_counts.append(same_count)
+        diff_counts.append(diff_count)
+        same_totoro_means.append(same_totoro)
+        diff_totoro_means.append(diff_totoro)
+
+        if same_count == 0:
+            g = 3   # no same-class training signal at all → most disadvantaged
+        elif diff_count == 0:
+            g = 0   # only same-class signal → most advantaged
+        else:
+            count_dom  = same_count  >= diff_count
+            totoro_dom = same_totoro >= diff_totoro
+            # 0: both, 1: count only, 2: totoro only, 3: neither
+            g = (1 - int(count_dom)) * 2 + (1 - int(totoro_dom))
+
+        group_labels.append(g)
+
+    group_names = [
+        "Same wins\nboth",
+        "Same wins\ncount only",
+        "Same wins\nTotoro only",
+        "Diff wins\nboth / no same",
+    ]
+    stats = {
+        "same_count":  np.array(same_counts,        dtype=float),
+        "diff_count":  np.array(diff_counts,        dtype=float),
+        "same_totoro": np.array(same_totoro_means,  dtype=float),
+        "diff_totoro": np.array(diff_totoro_means,  dtype=float),
+    }
+    return np.array(group_labels, dtype=int), group_names, stats
+
+
 def get_totoro_values(data, cfg) -> torch.Tensor:
     """Compute per-node Totoro influence scores via Personalized PageRank (PPR).
 
