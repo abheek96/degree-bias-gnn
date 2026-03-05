@@ -4,7 +4,6 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
-from scipy.stats import spearmanr
 
 log = logging.getLogger(__name__)
 
@@ -111,34 +110,6 @@ def _save(fig, save_dir, filename, show):
         plt.show()
     plt.close(fig)
 
-
-def _annotate_spearman(ax, x, y):
-    """Compute Spearman ρ between x and y (NaN pairs dropped) and place a
-    stat box in the upper-left corner of *ax*.
-
-    The annotation reads:
-        Spearman ρ = −0.72
-        p = 0.001
-    and uses a light grey background so it never blends into the data.
-    """
-    mask = ~(np.isnan(x) | np.isnan(y))
-    x_c, y_c = x[mask], y[mask]
-    if len(x_c) < 3:
-        return
-    r, p = spearmanr(x_c, y_c)
-
-    p_str = f"{p:.3f}" if p >= 0.001 else "< 0.001"
-    text  = f"Spearman ρ = {r:+.2f}\np = {p_str}"
-
-    ax.text(
-        0.03, 0.97, text,
-        transform=ax.transAxes,
-        va="top", ha="left",
-        fontsize=8.5,
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="#f0f0f0",
-                  edgecolor="#aaaaaa", alpha=0.9),
-        zorder=10,
-    )
 
 
 def _degree_axis(ax, pos, all_degrees):
@@ -459,15 +430,17 @@ def plot_dist_vs_degree(dist_deg_data, cfg, save_dir=None, show=False):
 
 def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
                             save_dir=None, show=False, run_labels=None):
-    """Two side-by-side panels, each pairing accuracy with one distance signal.
+    """One combined figure per run: accuracy scatter paired with distances.
 
-    Left panel  — Accuracy (blue, left axis) + dist to any train node
-                  (orange, right axis).
-    Right panel — Accuracy (blue, left axis) + dist to same-class train node
-                  (green, right axis).
+    Each figure has two side-by-side panels sharing the x-axis (node degree):
+      Left  — Accuracy scatter (blue, left axis) + dist to any train node
+               (orange, right axis, median ± IQR).
+      Right — Accuracy scatter (blue, left axis) + dist to same-class train
+               node (green, right axis, median ± IQR).
 
-    Both panels share the x-axis (node degree).  Legends are anchored below
-    each panel so they never overlap the data.
+    Distance signals are graph-fixed (identical across runs).  Legends are
+    anchored below each panel to avoid overlapping the data.  Files are named
+    per run label, e.g. ``{prefix}_combined_vs_degree_run01_seed42.png``.
 
     Parameters
     ----------
@@ -491,27 +464,7 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
 
-    # ── Accuracy signal ────────────────────────────────────────────────────────
-    if n_runs == 1:
-        acc_med = np.array([
-            float(deg_data[d][0].mean()) if len(deg_data[d][0]) > 0 else np.nan
-            for d in all_degrees
-        ])
-        acc_lo = acc_hi = None
-        acc_label = "Accuracy"
-    else:
-        per_run_means = []
-        for d in all_degrees:
-            means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
-            per_run_means.append(means if means else [np.nan])
-        acc_med = np.array([float(np.median(m)) for m in per_run_means])
-        acc_lo  = np.array([float(np.percentile(m, 25)) for m in per_run_means])
-        acc_hi  = np.array([float(np.percentile(m, 75)) for m in per_run_means])
-        acc_label = f"Accuracy  (median ± IQR,  {n_runs} runs)"
-
-    overall = sum(a * c for a, c in zip(acc_med, counts) if not np.isnan(a)) / n_test
-
-    # ── Distance signals (median ± IQR, NaN-safe) ─────────────────────────────
+    # ── Distance signals — computed once, reused for every run ────────────────
     def _dist_stats(key):
         med, lo, hi = [], [], []
         for d in all_degrees:
@@ -528,35 +481,7 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     d_tr_med, d_tr_lo, d_tr_hi = _dist_stats("dist_to_train")
     d_sc_med, d_sc_lo, d_sc_hi = _dist_stats("dist_to_same_class")
 
-    # ── Figure: 2 columns, shared x-axis ──────────────────────────────────────
-    fw = max(_fig_w(len(all_degrees)), 12)
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5), sharex=True)
-
-    run_tag = (run_labels[0] if (n_runs == 1 and run_labels) else
-               f"{n_runs} runs" if n_runs > 1 else "single run")
-    fig.suptitle(
-        f"Accuracy & Hop Distance to Training Nodes vs. Node Degree  —  {run_tag}"
-        f"\n{subtitle}",
-        fontsize=11, y=1.02,
-    )
-
-    # ── Shared drawing helpers ─────────────────────────────────────────────────
-    def _draw_accuracy(ax):
-        if n_runs == 1:
-            ax.scatter(pos, acc_med, s=40, c="#3498db", alpha=0.9,
-                       edgecolors="white", linewidths=0.5, zorder=4)
-            ax.plot(pos, acc_med, color="#3498db", lw=1.3, alpha=0.5, zorder=3)
-        else:
-            ax.plot(pos, acc_med, color="#3498db", lw=2.2, zorder=4)
-            ax.fill_between(pos, acc_lo, acc_hi,
-                            color="#3498db", alpha=0.18, zorder=2)
-        ax.axhline(overall, color="dimgrey", lw=1.0, ls=":", zorder=2)
-        ax.set_ylim(-0.05, 1.10)
-        ax.set_ylabel("Accuracy", fontsize=10)
-        ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-        ax.tick_params(axis="y", labelsize=8)
-        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-
+    # ── Drawing helpers ────────────────────────────────────────────────────────
     def _draw_distance(ax, d_med, d_lo, d_hi, color):
         ax_d = ax.twinx()
         ax_d.plot(pos, d_med, color=color, lw=2.2, zorder=4)
@@ -568,38 +493,64 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
         ax_d.set_ylabel("Hop distance", fontsize=10)
         ax_d.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
         ax_d.tick_params(axis="y", labelsize=8)
-        return ax_d
 
-    def _below_legend(ax, dist_color, dist_label):
-        handles = [
-            plt.Line2D([0], [0], color="#3498db", lw=2.0, label=acc_label),
-            plt.Line2D([0], [0], color="dimgrey",  lw=1.0, ls=":",
-                       label=f"Mean acc  {overall:.1%}"),
-            plt.Line2D([0], [0], color=dist_color, lw=2.0, label=dist_label),
-            plt.Line2D([0], [0], color="#e74c3c",  lw=1.5, ls="--",
-                       label=f"Model depth  ({num_layers} layers)"),
-        ]
-        ax.legend(handles=handles, loc="upper center",
-                  bbox_to_anchor=(0.5, -0.22),
-                  ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
+    # ── One figure per run ─────────────────────────────────────────────────────
+    fw = max(_fig_w(len(all_degrees)), 12)
 
-    # ── Left panel: accuracy + dist to any train node ─────────────────────────
-    _draw_accuracy(ax_l)
-    _draw_distance(ax_l, d_tr_med, d_tr_lo, d_tr_hi, "#e67e22")
-    _annotate_spearman(ax_l, acc_med, d_tr_med)
-    ax_l.set_title("vs. Nearest Training Node  (any class)", fontsize=10, pad=6)
-    _below_legend(ax_l, "#e67e22", "Dist to nearest train node  (median ± IQR)")
-    _degree_axis(ax_l, pos, all_degrees)
+    for run_idx in range(n_runs):
+        label   = run_labels[run_idx] if run_labels else f"run{run_idx + 1:02d}"
+        acc     = np.array([
+            float(deg_data[d][run_idx].mean()) if len(deg_data[d][run_idx]) > 0
+            else np.nan
+            for d in all_degrees
+        ])
+        overall = sum(a * c for a, c in zip(acc, counts) if not np.isnan(a)) / n_test
 
-    # ── Right panel: accuracy + dist to same-class train node ─────────────────
-    _draw_accuracy(ax_r)
-    _draw_distance(ax_r, d_sc_med, d_sc_lo, d_sc_hi, "#27ae60")
-    _annotate_spearman(ax_r, acc_med, d_sc_med)
-    ax_r.set_title("vs. Nearest Same-Class Training Node", fontsize=10, pad=6)
-    _below_legend(ax_r, "#27ae60",
-                  "Dist to nearest same-class train node  (median ± IQR)")
-    _degree_axis(ax_r, pos, all_degrees)
+        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5), sharex=True)
+        fig.suptitle(
+            f"Accuracy & Hop Distance to Training Nodes vs. Node Degree  —  {label}"
+            f"\n{subtitle}",
+            fontsize=11, y=1.02,
+        )
 
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=0.26, wspace=0.5)
-    _save(fig, save_dir, f"{prefix}_combined_vs_degree.png", show)
+        def _draw_accuracy(ax, _acc=acc, _overall=overall):
+            ax.scatter(pos, _acc, s=40, c="#3498db", alpha=0.9,
+                       edgecolors="white", linewidths=0.5, zorder=4)
+            ax.plot(pos, _acc, color="#3498db", lw=1.3, alpha=0.5, zorder=3)
+            ax.axhline(_overall, color="dimgrey", lw=1.0, ls=":", zorder=2)
+            ax.set_ylim(-0.05, 1.10)
+            ax.set_ylabel("Accuracy", fontsize=10)
+            ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+            ax.tick_params(axis="y", labelsize=8)
+            ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+        def _below_legend(ax, dist_color, dist_label, _overall=overall):
+            handles = [
+                plt.Line2D([0], [0], color="#3498db", lw=2.0,
+                           label="Accuracy  (per-degree mean)"),
+                plt.Line2D([0], [0], color="dimgrey",  lw=1.0, ls=":",
+                           label=f"Mean acc  {_overall:.1%}"),
+                plt.Line2D([0], [0], color=dist_color, lw=2.0, label=dist_label),
+                plt.Line2D([0], [0], color="#e74c3c",  lw=1.5, ls="--",
+                           label=f"Model depth  ({num_layers} layers)"),
+            ]
+            ax.legend(handles=handles, loc="upper center",
+                      bbox_to_anchor=(0.5, -0.22),
+                      ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
+
+        _draw_accuracy(ax_l)
+        _draw_distance(ax_l, d_tr_med, d_tr_lo, d_tr_hi, "#e67e22")
+        ax_l.set_title("vs. Nearest Training Node  (any class)", fontsize=10, pad=6)
+        _below_legend(ax_l, "#e67e22", "Dist to nearest train node  (median ± IQR)")
+        _degree_axis(ax_l, pos, all_degrees)
+
+        _draw_accuracy(ax_r)
+        _draw_distance(ax_r, d_sc_med, d_sc_lo, d_sc_hi, "#27ae60")
+        ax_r.set_title("vs. Nearest Same-Class Training Node", fontsize=10, pad=6)
+        _below_legend(ax_r, "#27ae60",
+                      "Dist to nearest same-class train node  (median ± IQR)")
+        _degree_axis(ax_r, pos, all_degrees)
+
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.26, wspace=0.5)
+        _save(fig, save_dir, f"{prefix}_combined_vs_degree_{label}.png", show)
