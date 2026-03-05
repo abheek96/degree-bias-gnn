@@ -39,6 +39,15 @@ def get_node_neighbor_het_rate(y, adj):
     node_ngb_het = 1 - node_ngb_consis
     return node_ngb_het
 
+def get_node_amp(data, threshold=0.3, verbose=False):
+    adj = index_to_adj(data.x, data.edge_index, add_self_loop=False)
+    node_het = get_node_neighbor_het_rate(data.y, adj)
+    node_amp = node_het > threshold
+    if verbose:
+        print(f"Avg Node Heterogeneity: {node_het.mean()}")
+        print(f"Threrhold: {threshold}")
+        print(f"Counts Node AMP: {torch.tensor(node_amp).unique(return_counts=True)}")
+    return node_amp
 
 
 def get_node_dmp(data, train_mask, verbose=False):
@@ -277,6 +286,70 @@ def get_distance_deg(
             "dist_to_train":     d_train[idx].numpy(),
             "dist_to_same_class": d_same[idx].numpy(),
             "count":             idx.numel(),
+        }
+    return result
+
+
+def get_amp_deg(deg: torch.Tensor, node_amp) -> dict:
+    """Group per-test-node AMP flags by node degree.
+
+    Parameters
+    ----------
+    deg : LongTensor, shape [num_test_nodes]
+        Degree of each test node.
+    node_amp : BoolTensor or numpy bool array, shape [num_test_nodes]
+        AMP flag for each test node (True = ambivalent message passing node).
+
+    Returns
+    -------
+    dict mapping degree (int) -> {
+        'amp_rate' : float, fraction of AMP nodes at that degree,
+        'count'    : int, number of test nodes with that degree,
+    }
+    """
+    if not torch.is_tensor(node_amp):
+        node_amp = torch.tensor(node_amp)
+    node_amp = node_amp.bool().cpu()
+    deg = deg.cpu()
+
+    result = {}
+    for d in deg.unique():
+        idx = (deg == d).nonzero(as_tuple=False).view(-1)
+        result[d.item()] = {
+            "amp_rate": node_amp[idx].float().mean().item(),
+            "count":    idx.numel(),
+        }
+    return result
+
+
+def get_dmp_deg(deg: torch.Tensor, node_dmp) -> dict:
+    """Group per-test-node DMP flags by node degree.
+
+    Parameters
+    ----------
+    deg : LongTensor, shape [num_test_nodes]
+        Degree of each test node.
+    node_dmp : BoolTensor or numpy bool array, shape [num_test_nodes]
+        DMP flag for each test node (True = distant message passing node).
+
+    Returns
+    -------
+    dict mapping degree (int) -> {
+        'dmp_rate' : float, fraction of DMP nodes at that degree,
+        'count'    : int, number of test nodes with that degree,
+    }
+    """
+    if not torch.is_tensor(node_dmp):
+        node_dmp = torch.tensor(node_dmp)
+    node_dmp = node_dmp.bool().cpu()
+    deg = deg.cpu()
+
+    result = {}
+    for d in deg.unique():
+        idx = (deg == d).nonzero(as_tuple=False).view(-1)
+        result[d.item()] = {
+            "dmp_rate": node_dmp[idx].float().mean().item(),
+            "count":    idx.numel(),
         }
     return result
 

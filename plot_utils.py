@@ -554,3 +554,115 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
         fig.tight_layout()
         fig.subplots_adjust(bottom=0.26, wspace=0.5)
         _save(fig, save_dir, f"{prefix}_combined_vs_degree_{label}.png", show)
+
+
+# ── accuracy + AMP/DMP rate vs degree ──────────────────────────────────────────
+
+def plot_acc_vs_amp_dmp(run_results, amp_deg_data, dmp_deg_data, cfg,
+                        save_dir=None, show=False, run_labels=None):
+    """One combined figure per run: accuracy paired with AMP and DMP rates.
+
+    Each figure has two side-by-side panels sharing the x-axis (node degree):
+      Left  — Accuracy scatter (blue, left axis) + AMP rate (orange, right axis).
+      Right — Accuracy scatter (blue, left axis) + DMP rate (purple, right axis).
+
+    AMP (Ambivalent Message Passing): fraction of nodes per degree whose
+    neighbor labels are heterogeneous (> threshold).
+    DMP (Distant Message Passing): fraction of nodes per degree whose nearest
+    training node has a mismatched label.
+
+    Parameters
+    ----------
+    run_results : list[dict]
+        One entry per run; output of ``get_accuracy_deg``.
+    amp_deg_data : dict
+        Output of ``utils.get_amp_deg``.
+    dmp_deg_data : dict
+        Output of ``utils.get_dmp_deg``.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    run_labels : list[str] or None
+    """
+    n_runs = len(run_results)
+    all_degrees, deg_data = _collect(run_results)
+
+    # Restrict to degrees present in all three dicts
+    all_degrees = sorted(
+        set(all_degrees) & set(amp_deg_data.keys()) & set(dmp_deg_data.keys())
+    )
+    pos    = list(range(len(all_degrees)))
+    counts = [len(deg_data[d][0]) for d in all_degrees]
+    n_test = sum(counts)
+    prefix   = _fname_prefix(cfg)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+
+    amp_rates = np.array([amp_deg_data[d]["amp_rate"] for d in all_degrees])
+    dmp_rates = np.array([dmp_deg_data[d]["dmp_rate"] for d in all_degrees])
+
+    fw = max(_fig_w(len(all_degrees)), 12)
+
+    for run_idx in range(n_runs):
+        label = run_labels[run_idx] if run_labels else f"run{run_idx + 1:02d}"
+        acc   = np.array([
+            float(deg_data[d][run_idx].mean()) if len(deg_data[d][run_idx]) > 0
+            else np.nan
+            for d in all_degrees
+        ])
+        overall = (sum(a * c for a, c in zip(acc, counts) if not np.isnan(a))
+                   / n_test)
+
+        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5), sharex=True)
+        fig.suptitle(
+            f"Accuracy & AMP/DMP Rate vs. Node Degree  —  {label}"
+            f"\n{subtitle}",
+            fontsize=11, y=1.02,
+        )
+
+        def _draw_acc(ax, _acc=acc, _overall=overall):
+            ax.scatter(pos, _acc, s=40, c="#3498db", alpha=0.9,
+                       edgecolors="white", linewidths=0.5, zorder=4)
+            ax.plot(pos, _acc, color="#3498db", lw=1.3, alpha=0.5, zorder=3)
+            ax.axhline(_overall, color="dimgrey", lw=1.0, ls=":", zorder=2)
+            ax.set_ylim(-0.05, 1.10)
+            ax.set_ylabel("Accuracy", fontsize=10)
+            ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+            ax.tick_params(axis="y", labelsize=8)
+            ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+        def _draw_rate(ax, rates, color):
+            ax_r2 = ax.twinx()
+            ax_r2.plot(pos, rates, color=color, lw=2.2, zorder=4)
+            ax_r2.fill_between(pos, 0, rates, color=color, alpha=0.15, zorder=2)
+            ax_r2.set_ylim(0, 1.05)
+            ax_r2.set_ylabel("Fraction of nodes", fontsize=10)
+            ax_r2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+            ax_r2.tick_params(axis="y", labelsize=8)
+
+        def _legend_below(ax, rate_color, rate_label, _overall=overall):
+            handles = [
+                plt.Line2D([0], [0], color="#3498db", lw=2.0,
+                           label="Accuracy  (per-degree mean)"),
+                plt.Line2D([0], [0], color="dimgrey",  lw=1.0, ls=":",
+                           label=f"Mean acc  {_overall:.1%}"),
+                plt.Line2D([0], [0], color=rate_color, lw=2.0, label=rate_label),
+            ]
+            ax.legend(handles=handles, loc="upper center",
+                      bbox_to_anchor=(0.5, -0.22),
+                      ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
+
+        _draw_acc(ax_l)
+        _draw_rate(ax_l, amp_rates, "#e67e22")
+        ax_l.set_title("Accuracy vs. AMP Rate\n(Ambivalent Message Passing)", fontsize=10, pad=6)
+        _legend_below(ax_l, "#e67e22", "AMP rate per degree")
+        _degree_axis(ax_l, pos, all_degrees)
+
+        _draw_acc(ax_r)
+        _draw_rate(ax_r, dmp_rates, "#8e44ad")
+        ax_r.set_title("Accuracy vs. DMP Rate\n(Distant Message Passing)", fontsize=10, pad=6)
+        _legend_below(ax_r, "#8e44ad", "DMP rate per degree")
+        _degree_axis(ax_r, pos, all_degrees)
+
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.26, wspace=0.5)
+        _save(fig, save_dir, f"{prefix}_acc_vs_amp_dmp_{label}.png", show)

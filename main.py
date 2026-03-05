@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree
-from utils import compute_distances_to_train, get_distance_deg
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_acc_vs_amp_dmp
+from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_amp, get_node_dmp
 from train import train
 from test import evaluate
 
@@ -143,6 +143,12 @@ def main():
         test_deg, dist_to_train, dist_to_same_class, num_nodes=data.num_nodes
     )
 
+    # AMP and DMP are graph-fixed — compute once before the run loop
+    node_amp = get_node_amp(data)                          # BoolTensor [num_nodes]
+    node_dmp = get_node_dmp(data, data.train_mask)         # numpy bool [num_nodes]
+    amp_deg_data = get_amp_deg(test_deg, node_amp[data.test_mask.cpu()])
+    dmp_deg_data = get_dmp_deg(test_deg, node_dmp[data.test_mask.cpu().numpy()])
+
     val_accs, test_accs = [], []
     deg_acc_results = []
     run_labels = []
@@ -186,6 +192,17 @@ def main():
         plot_combined_vs_degree(
             deg_acc_results,
             dist_deg_data,
+            cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+            run_labels=run_labels,
+        )
+
+    if plot_cfg.get("acc_vs_amp", False) or plot_cfg.get("acc_vs_dmp", False):
+        plot_acc_vs_amp_dmp(
+            deg_acc_results,
+            amp_deg_data,
+            dmp_deg_data,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
