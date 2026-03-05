@@ -30,7 +30,27 @@ def apply_split(data, split, dataset_cfg):
     num_classes = int(data.y.max().item()) + 1
     num_train_per_class = dataset_cfg.get("num_train_per_class", 20)
     num_val = dataset_cfg.get("num_val", 500)
-    num_test = dataset_cfg.get("num_test", 1000)
+
+    # Match num_test to the public split when available.
+    #
+    # Datasets like Planetoid (Cora, CiteSeer, PubMed) ship with a built-in
+    # test_mask.  If use_cc=True, LargestConnectedComponents has already
+    # filtered that mask in-place, so its sum reflects the post-CC test count
+    # (e.g. 915 for Cora+CC instead of the nominal 1 000).  Using that same
+    # count for the random split keeps the two split types on equal footing:
+    # both evaluate on the same number of test nodes, making accuracy numbers
+    # directly comparable.
+    #
+    # For datasets without a built-in 1-D test mask (Amazon, Coauthor, …) the
+    # condition is False and we fall back to the value in config.yaml.
+    if (hasattr(data, "test_mask")
+            and data.test_mask is not None
+            and data.test_mask.dim() == 1):
+        num_test = int(data.test_mask.sum().item())
+        log.info("num_test set to %d to match public split (post-CC if applicable)",
+                 num_test)
+    else:
+        num_test = dataset_cfg.get("num_test", 1000)
 
     train_mask = torch.zeros(num_nodes, dtype=torch.bool)
     val_mask = torch.zeros(num_nodes, dtype=torch.bool)
