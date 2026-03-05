@@ -5,45 +5,167 @@ Each function takes a PyG Data object (with train_mask, test_mask, y, edge_index
 and returns a tensor aligned to the *test* nodes (same order as data.test_mask.nonzero()).
 """
 
-from collections import deque
+from collections import defaultdict
 
 import numpy as np
 import torch
 
+def index_to_adj(
+    x, edge_index, add_self_loop=False, remove_self_loop=False, sparse=False
+):
+    from torch_geometric.utils import to_dense_adj
 
-def _build_adj(num_nodes: int, edge_index: torch.Tensor) -> list[list[int]]:
-    """Build an undirected adjacency list from a COO edge_index."""
-    row = torch.cat([edge_index[0], edge_index[1]])
-    col = torch.cat([edge_index[1], edge_index[0]])
-    adj: list[list[int]] = [[] for _ in range(num_nodes)]
-    for u, v in zip(row.tolist(), col.tolist()):
-        adj[u].append(v)
+    assert not (add_self_loop == True and remove_self_loop == True)
+    num_nodes = len(x)
+    adj = to_dense_adj(edge_index, max_num_nodes=num_nodes)[0].bool()
+    if add_self_loop:
+        adj.fill_diagonal_(True)
+    if remove_self_loop:
+        adj.fill_diagonal_(False)
+    if sparse:
+        adj = adj.to_sparse()
     return adj
 
 
-def _multisource_bfs(sources: list[int], adj: list[list[int]], num_nodes: int) -> list[int]:
-    """
-    BFS from multiple source nodes simultaneously.
-    Returns a list of length num_nodes where entry i is the shortest-hop
-    distance from node i to the nearest source, or -1 if unreachable.
-    """
-    dist = [-1] * num_nodes
-    queue: deque[int] = deque()
-    for src in sources:
-        dist[src] = 0
-        queue.append(src)
-    while queue:
-        u = queue.popleft()
-        for v in adj[u]:
-            if dist[v] == -1:
-                dist[v] = dist[u] + 1
-                queue.append(v)
-    return dist
+def get_node_neighbor_het_rate(y, adj):
+    if not torch.is_tensor(y):
+        y = torch.tensor(y)
+    y = y.to(adj.device)
+    y_tile = torch.tile(y, (len(y), 1))
+    ngb_label_mat = (adj * y_tile).float()
+    ngb_label_mat[adj == 0] = torch.nan
+    node_ngb_consis = (ngb_label_mat == y_tile.T).sum(axis=1) / adj.sum(axis=1)
+    node_ngb_consis = node_ngb_consis.nan_to_num(0)  # handle 0 degree nodes
+    node_ngb_het = 1 - node_ngb_consis
+    return node_ngb_het
+
+
+
+def get_node_dmp(data, train_mask, verbose=False):
+    from torch_geometric.utils import k_hop_subgraph, mask_to_index, index_to_mask
+
+    y = data.y.cpu().numpy()
+    label_idx = mask_to_index(train_mask).cpu().numpy()
+
+    node_nearest_label = np.full(len(y), -1)
+    node_nearest_label[label_idx] = y[label_idx]
+
+    n_update = len(label_idx)
+
+    for num_hop in range(1, 10):
+        for node in label_idx:
+            nbs, _, _, _ = k_hop_subgraph(
+                node_idx=int(node),
+                num_hops=num_hop,
+                edge_index=data.edge_index,
+                num_nodes=data.num_nodes,
+            )
+            nbs = nbs.cpu().numpy()
+            nb_mask = (
+                index_to_mask(torch.tensor(nbs), size=data.num_nodes).cpu().numpy()
+            )
+
+            unvisit_mask = node_nearest_label == -1
+            node_nearest_label[unvisit_mask & nb_mask] = y[node]
+
+            n_update += unvisit_mask.sum()
+
+    node_dmp = node_nearest_label != y
+    if verbose:
+        print(torch.tensor(node_nearest_label).unique(return_counts=True))
+        print(torch.tensor(node_dmp).unique(return_counts=True))
+
+    return node_dmp
+
+
+def get_node_dmp_dist(data, train_mask, verbose=False):
+    from torch_geometric.utils import k_hop_subgraph, mask_to_index, index_to_mask
+
+    y = data.y.cpu().numpy()
+    label_idx = mask_to_index(train_mask).cpu().numpy()
+
+    node_nearest_label = np.full(len(y), -1)
+    node_nearest_label[label_idx] = y[label_idx]
+
+    n_update = len(label_idx)
+
+    for num_hop in range(1, 10):
+        for node in label_idx:
+            nbs, _, _, _ = k_hop_subgraph(
+                node_idx=int(node),
+                num_hops=num_hop,
+                edge_index=data.edge_index,
+                num_nodes=data.num_nodes,
+            )
+            nbs = nbs.cpu().numpy()
+            nb_mask = (
+                index_to_mask(torch.tensor(nbs), size=data.num_nodes).cpu().numpy()
+            )
+
+            unvisit_mask = node_nearest_label == -1
+            node_nearest_label[unvisit_mask & nb_mask] = num_hop
+
+            n_update += unvisit_mask.sum()
+
+    node_dmp = node_nearest_label > 3
+    if verbose:
+        print(torch.tensor(node_nearest_label).unique(return_counts=True))
+        print(torch.tensor(node_dmp).unique(return_counts=True))
+
+    return node_dmp
+
+
+def compute_hops_to_nearest_labeled_nodes(data, train_mask):
+    from torch_geometric.utils import k_hop_subgraph, mask_to_index
+
+    y = data.y.cpu().numpy()
+    label_idx = mask_to_index(train_mask).cpu().numpy()
+    num_hops = np.zeros(data.num_nodes).astype(int)
+    for node in tqdm(
+        range(data.num_nodes), desc="Computing hops to nearest labeled node"
+    ):
+        node_label = y[node]
+        num_hop = 0
+        while True:
+            nbs, _, _, _ = k_hop_subgraph(
+                node, num_hop, data.edge_index, num_nodes=data.num_nodes
+            )
+            labeled_nbs = set(nbs.cpu().numpy()).intersection(set(label_idx))
+            if len(labeled_nbs) > 0 or num_hop >= 10:
+                ngb_labels = y[list(labeled_nbs)]
+                label_correct = node_label in ngb_labels
+                if label_correct or num_hop >= 10:
+                    # print (f'Node {node} label {node_label} hop {num_hop} n_ngb {len(nbs)} labeled_ngb {labeled_nbs} ngb_label {ngb_labels} isin {isin}')
+                    break
+            num_hop += 1
+        num_hops[node] = num_hop
+    return num_hops
 
 
 def compute_distances_to_train(data) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Compute hop-distance features for every test node.
+    """Compute hop-distance features for every test node via k-hop expansion.
+
+    Mirrors the logic of ``compute_hops_to_nearest_labeled_nodes``: for each
+    test node the k-hop subgraph is expanded one hop at a time until both
+    distances are resolved or ``MAX_HOP`` is reached.
+
+    For each test node, two distances are recorded:
+
+    dist_to_train
+        The first hop ``k`` at which ``k_hop_subgraph(node, k)`` contains
+        *any* training node — i.e. the shortest path to the nearest labeled
+        node regardless of class.
+
+    dist_to_same_class_train
+        The first hop ``k`` at which ``k_hop_subgraph(node, k)`` contains a
+        training node whose label matches the test node's true label — i.e.
+        the shortest path to a correctly labeled training node.
+
+    Both distances follow the same expansion strategy as
+    ``compute_hops_to_nearest_labeled_nodes``: start at hop 0 (just the node
+    itself), grow by one hop each iteration, and stop as soon as the target
+    condition is satisfied.  Nodes for which no qualifying training node is
+    found within MAX_HOP hops receive the sentinel value ``num_nodes + 1``.
 
     Parameters
     ----------
@@ -53,59 +175,61 @@ def compute_distances_to_train(data) -> tuple[torch.Tensor, torch.Tensor]:
     Returns
     -------
     dist_to_train : LongTensor, shape [num_test_nodes]
-        Minimum hop distance to the nearest training node (any class).
-        Unreachable nodes get value num_nodes + 1.
-
     dist_to_same_class_train : LongTensor, shape [num_test_nodes]
-        Minimum hop distance to the nearest training node whose label matches
-        the test node's true label.
-        Unreachable nodes (or classes with no training example) get num_nodes + 1.
     """
-    num_nodes = data.num_nodes
-    INF = num_nodes + 1
+    from torch_geometric.utils import k_hop_subgraph, mask_to_index
 
-    adj = _build_adj(num_nodes, data.edge_index)
+    MAX_HOP = 10
+    INF = data.num_nodes + 1  # sentinel for "not found within MAX_HOP hops"
 
-    train_indices = data.train_mask.nonzero(as_tuple=True)[0]  # LongTensor
-    test_indices = data.test_mask.nonzero(as_tuple=True)[0]    # LongTensor
-    train_nodes = train_indices.tolist()
-    test_nodes = test_indices.tolist()
-    test_labels = data.y[data.test_mask].tolist()
+    y            = data.y.cpu().numpy()
+    train_idx    = mask_to_index(data.train_mask).cpu().numpy()
+    label_set    = set(train_idx.tolist())
 
-    # ------------------------------------------------------------------
-    # 1. Distance to nearest training node (all classes)
-    # ------------------------------------------------------------------
-    dist_all = _multisource_bfs(train_nodes, adj, num_nodes)
-    dist_to_train = torch.tensor(
-        [dist_all[n] if dist_all[n] != -1 else INF for n in test_nodes],
-        dtype=torch.long,
+    # Pre-group training indices by class for O(1) same-class lookup
+    class_sets: dict[int, set[int]] = defaultdict(set)
+    for idx in train_idx:
+        class_sets[int(y[idx])].add(int(idx))
+
+    test_nodes = data.test_mask.nonzero(as_tuple=True)[0].tolist()
+
+    dist_any_list  = []
+    dist_same_list = []
+
+    for node in test_nodes:
+        node_label = int(y[node])
+        found_any  = INF
+        found_same = INF
+
+        for num_hop in range(MAX_HOP + 1):
+            nbs, _, _, _ = k_hop_subgraph(
+                node_idx=int(node),
+                num_hops=num_hop,
+                edge_index=data.edge_index,
+                num_nodes=data.num_nodes,
+            )
+            nbs_set     = set(nbs.cpu().numpy().tolist())
+            labeled_nbs = nbs_set & label_set
+
+            # First hop that reaches any training node
+            if found_any == INF and labeled_nbs:
+                found_any = num_hop
+
+            # First hop that reaches a same-class training node
+            if found_same == INF and (labeled_nbs & class_sets[node_label]):
+                found_same = num_hop
+
+            # Both resolved — no need to expand further
+            if found_any != INF and found_same != INF:
+                break
+
+        dist_any_list.append(found_any)
+        dist_same_list.append(found_same)
+
+    return (
+        torch.tensor(dist_any_list,  dtype=torch.long),
+        torch.tensor(dist_same_list, dtype=torch.long),
     )
-
-    # ------------------------------------------------------------------
-    # 2. Distance to nearest same-class training node
-    # ------------------------------------------------------------------
-    train_labels = data.y[data.train_mask]
-    unique_classes = train_labels.unique().tolist()
-
-    # BFS per class → dict: class_id -> per-node distances
-    class_dist: dict[int, list[int]] = {}
-    for cls in unique_classes:
-        cls = int(cls)
-        cls_sources = train_indices[train_labels == cls].tolist()
-        class_dist[cls] = _multisource_bfs(cls_sources, adj, num_nodes)
-
-    dist_to_same_class: list[int] = []
-    for node, lbl in zip(test_nodes, test_labels):
-        lbl = int(lbl)
-        if lbl in class_dist:
-            d = class_dist[lbl][node]
-            dist_to_same_class.append(d if d != -1 else INF)
-        else:
-            dist_to_same_class.append(INF)
-
-    dist_to_same_class_train = torch.tensor(dist_to_same_class, dtype=torch.long)
-
-    return dist_to_train, dist_to_same_class_train
 
 
 def get_distance_deg(
@@ -155,3 +279,32 @@ def get_distance_deg(
             "count":             idx.numel(),
         }
     return result
+
+
+def get_node_amp(data, threshold=0.3):
+    """
+    Compute node amplification (AMP) based on neighbor heterogeneity.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data
+        Graph with attributes: x, edge_index, y.
+    threshold : float
+        Heterogeneity threshold for identifying high-AMP nodes.
+
+    Returns
+    -------
+    node_amp : BoolTensor
+        Boolean tensor indicating which nodes have neighbor heterogeneity > threshold.
+
+    Notes
+    -----
+    - index_to_adj() converts edge_index (COO format) into a dense boolean adjacency matrix.
+    - get_node_neighbor_het_rate(y, adj) computes for each node the fraction of neighbors
+      with a different label: heterogeneity = (# neighbors with label != y[i]) / (total neighbors).
+    - A node is high-AMP if its neighbor heterogeneity > threshold.
+    """
+    adj = index_to_adj(data.x, data.edge_index, add_self_loop=False)
+    node_het = get_node_neighbor_het_rate(data.y, adj)
+    node_amp = node_het > threshold
+    return node_amp
