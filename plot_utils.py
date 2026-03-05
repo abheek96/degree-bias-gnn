@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
+from scipy.stats import spearmanr
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +110,35 @@ def _save(fig, save_dir, filename, show):
     if show:
         plt.show()
     plt.close(fig)
+
+
+def _annotate_spearman(ax, x, y):
+    """Compute Spearman ρ between x and y (NaN pairs dropped) and place a
+    stat box in the upper-left corner of *ax*.
+
+    The annotation reads:
+        Spearman ρ = −0.72
+        p = 0.001
+    and uses a light grey background so it never blends into the data.
+    """
+    mask = ~(np.isnan(x) | np.isnan(y))
+    x_c, y_c = x[mask], y[mask]
+    if len(x_c) < 3:
+        return
+    r, p = spearmanr(x_c, y_c)
+
+    p_str = f"{p:.3f}" if p >= 0.001 else "< 0.001"
+    text  = f"Spearman ρ = {r:+.2f}\np = {p_str}"
+
+    ax.text(
+        0.03, 0.97, text,
+        transform=ax.transAxes,
+        va="top", ha="left",
+        fontsize=8.5,
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#f0f0f0",
+                  edgecolor="#aaaaaa", alpha=0.9),
+        zorder=10,
+    )
 
 
 def _degree_axis(ax, pos, all_degrees):
@@ -556,6 +586,7 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     # ── Left panel: accuracy + dist to any train node ─────────────────────────
     _draw_accuracy(ax_l)
     _draw_distance(ax_l, d_tr_med, d_tr_lo, d_tr_hi, "#e67e22")
+    _annotate_spearman(ax_l, acc_med, d_tr_med)
     ax_l.set_title("vs. Nearest Training Node  (any class)", fontsize=10, pad=6)
     _below_legend(ax_l, "#e67e22", "Dist to nearest train node  (median ± IQR)")
     _degree_axis(ax_l, pos, all_degrees)
@@ -563,6 +594,7 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     # ── Right panel: accuracy + dist to same-class train node ─────────────────
     _draw_accuracy(ax_r)
     _draw_distance(ax_r, d_sc_med, d_sc_lo, d_sc_hi, "#27ae60")
+    _annotate_spearman(ax_r, acc_med, d_sc_med)
     ax_r.set_title("vs. Nearest Same-Class Training Node", fontsize=10, pad=6)
     _below_legend(ax_r, "#27ae60",
                   "Dist to nearest same-class train node  (median ± IQR)")
