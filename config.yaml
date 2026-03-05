@@ -21,6 +21,9 @@ dataset:
   amp_coeff: 1
   amp_threshold: 0.5
   dmp_coeff: 1
+  pagerank_prob: 0.85   # prob of following an edge in PPR (restart = 1 - pagerank_prob)
+  rn_base_weight: 0.5   # ReNode cosine weight floor
+  rn_scale_weight: 1.0  # ReNode cosine weight amplitude
   num_train_per_class: 20
   num_val: 500
   num_test: 1000

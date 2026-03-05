@@ -472,3 +472,125 @@ def get_dmp_deg(deg: torch.Tensor, node_dmp) -> dict:
             "count":   idx.numel(),
         }
     return result
+
+
+def get_totoro_values(data, cfg) -> torch.Tensor:
+    """Compute per-node Totoro influence scores via Personalized PageRank (PPR).
+
+    Each node's Totoro score measures the total PPR-weighted influence it
+    receives from training nodes of a *different* class — a structural source
+    of misclassification that is distinct from node degree.
+
+    PPR is computed in closed form:
+        Pi = alpha * (I - (1 - alpha) * Â)^{-1}
+    where alpha = 1 - pagerank_prob is the restart probability and Â is the
+    symmetrically normalised adjacency with self-loops added.
+
+    The class-level influence (GPR) gpr[v, c] is the mean PPR contribution
+    from all training nodes of class c toward node v. The Totoro score for
+    node v is the total influence it receives from training nodes of classes
+    OTHER than its own true label — higher means more cross-class confusion.
+
+    Note: matrix inversion is O(N³). Feasible for the small citation graphs
+    (Cora ~2 700 nodes, CiteSeer ~3 300) used in this project; will be slow
+    for larger datasets.
+
+    Parameters
+    ----------
+    data : PyG Data
+        Graph with edge_index, y, train_mask, num_nodes. May be on any device;
+        computation is performed on CPU.
+    cfg : dict
+        cfg["dataset"]["pagerank_prob"] — probability of following an edge
+        (restart probability = 1 − pagerank_prob). Default 0.85.
+
+    Returns
+    -------
+    totoro_values : FloatTensor, shape [num_nodes]
+    """
+    import math as _math
+    import torch.nn.functional as F
+    from torch_geometric.utils import to_dense_adj
+
+    pagerank_prob = cfg["dataset"].get("pagerank_prob", 0.85)
+    alpha         = 1.0 - pagerank_prob   # restart probability
+
+    N           = data.num_nodes
+    num_classes = int(data.y.max().item()) + 1
+    y_cpu       = data.y.cpu()
+    train_cpu   = data.train_mask.cpu()
+
+    # Symmetrically normalised adjacency with self-loops (on CPU)
+    A     = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0).cpu().float()
+    A_hat = A + torch.eye(N)
+    d_inv_sqrt = A_hat.sum(dim=1).pow(-0.5)
+    A_hat = d_inv_sqrt.unsqueeze(1) * A_hat * d_inv_sqrt.unsqueeze(0)
+
+    # Closed-form PPR matrix  [N, N]
+    Pi = alpha * torch.inverse(torch.eye(N) - (1.0 - alpha) * A_hat)
+
+    # Class-level GPR: mean PPR row over training nodes in each class  [N, num_classes]
+    gpr_cols = []
+    for c in range(num_classes):
+        idx = ((y_cpu == c) & train_cpu).nonzero(as_tuple=True)[0]
+        gpr_cols.append(Pi[idx].mean(dim=0) if len(idx) > 0 else torch.zeros(N))
+    gpr = torch.stack(gpr_cols, dim=1)   # [N, num_classes]
+
+    # Cross-class influence: total GPR minus same-class GPR  [N, num_classes]
+    gpr_other = gpr.sum(dim=1, keepdim=True) - gpr
+    influence  = Pi @ gpr_other                        # [N, num_classes]
+
+    # Extract each node's own-class component
+    label_oh      = F.one_hot(y_cpu, num_classes).float()   # [N, num_classes]
+    totoro_values = (influence * label_oh).sum(dim=1)        # [N]
+
+    return totoro_values
+
+
+def get_renode_weight(data, cfg, totoro_values=None) -> torch.Tensor:
+    """Compute per-training-node ReNode loss weights from Totoro scores.
+
+    Training nodes are ranked by Totoro score (ascending — least cross-class
+    influence first). Weights are assigned via cosine annealing so that nodes
+    receiving cleaner label signal are up-weighted during training.
+
+    Based on ReNode (Liu et al., 2021).
+
+    Parameters
+    ----------
+    data : PyG Data
+    cfg : dict
+        cfg["dataset"]["rn_base_weight"]  — additive base (default 0.5)
+        cfg["dataset"]["rn_scale_weight"] — cosine amplitude (default 1.0)
+    totoro_values : FloatTensor [num_nodes] or None
+        Pre-computed Totoro scores; computed here if not provided.
+
+    Returns
+    -------
+    rn_weight : FloatTensor, shape [num_nodes]
+        Non-zero only for training nodes.
+    """
+    import math as _math
+
+    if totoro_values is None:
+        totoro_values = get_totoro_values(data, cfg)
+
+    base_w     = cfg["dataset"].get("rn_base_weight",  0.5)
+    scale_w    = cfg["dataset"].get("rn_scale_weight", 1.0)
+    N          = data.num_nodes
+    train_size = int(data.train_mask.sum().item())
+
+    # Rank all nodes by Totoro score ascending
+    sorted_nodes = sorted(range(N), key=lambda i: totoro_values[i].item())
+    id2rank      = {node_id: rank for rank, node_id in enumerate(sorted_nodes)}
+    totoro_rank  = [id2rank[i] for i in range(N)]
+
+    # Cosine annealing: lower rank (cleaner) → higher weight
+    rn_weight = torch.tensor(
+        [base_w + 0.5 * scale_w *
+         (1 + _math.cos(r * _math.pi / max(train_size - 1, 1)))
+         for r in totoro_rank],
+        dtype=torch.float,
+    )
+    rn_weight = rn_weight * data.train_mask.cpu().float()
+    return rn_weight
