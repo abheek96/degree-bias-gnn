@@ -855,3 +855,124 @@ def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.22)
     _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group_vs_degree.png", show)
+
+
+# ── group cardinality + hop distances vs degree ─────────────────────────────────
+
+def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
+                                         group_names, cfg,
+                                         save_dir=None, show=False):
+    """Two-panel figure: group cardinality and hop distances per degree bucket.
+
+    Left panel — Stacked bar chart showing how many test nodes at each degree
+                 fall into each AMP × DMP group.  Reveals which structural
+                 regime dominates at low vs high degrees.
+
+    Right panel — Median ± IQR lines for dist_to_train (orange) and
+                  dist_to_same_class (green) per degree, with a red dashed
+                  reference line at ``num_layers`` (model receptive field).
+
+    Both panels share no axis — they are sized independently so each panel
+    is easy to read on its own.
+
+    Parameters
+    ----------
+    group_deg_counts : dict {degree (int) -> {group (int): count (int)}}
+        Output of ``utils.get_group_deg_counts``.
+    dist_deg_data : dict
+        Output of ``utils.get_distance_deg``.
+    group_names : list[str]
+        Human-readable labels for groups 0-3.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    """
+    GROUP_COLORS = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
+
+    num_layers  = cfg["model"]["num_layers"]
+    amp_coeff   = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff   = cfg["dataset"].get("dmp_coeff", 1)
+    amp_thr     = cfg["dataset"].get("amp_threshold", 0.5)
+    prefix      = _fname_prefix(cfg)
+
+    all_degrees = sorted(set(group_deg_counts) & set(dist_deg_data))
+    pos         = list(range(len(all_degrees)))
+    n_test      = sum(sum(group_deg_counts[d].values()) for d in all_degrees)
+    subtitle    = (
+        f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+        f"{cfg.get('split','random')} · "
+        f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+        f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop"
+        f"   |   {n_test:,} test nodes"
+    )
+
+    fw = max(_fig_w(len(all_degrees)), 14)
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5))
+    fig.suptitle(
+        f"AMP × DMP Group Cardinality & Hop Distances vs. Node Degree\n{subtitle}",
+        fontsize=11, y=1.02,
+    )
+
+    # ── Left: stacked bar of group counts per degree ────────────────────────────
+    bottoms = np.zeros(len(all_degrees))
+    for g in range(4):
+        counts_g = np.array([group_deg_counts[d].get(g, 0) for d in all_degrees],
+                             dtype=float)
+        ax_l.bar(pos, counts_g, bottom=bottoms, width=0.7,
+                 color=GROUP_COLORS[g], alpha=0.85, zorder=3,
+                 label=group_names[g].replace("\n", " "))
+        bottoms += counts_g
+
+    ax_l.set_ylabel("# test nodes", fontsize=10)
+    ax_l.tick_params(axis="y", labelsize=8)
+    ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_l.set_title("Group Cardinality per Degree Bucket", fontsize=10, pad=6)
+    ax_l.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
+    _degree_axis(ax_l, pos, all_degrees)
+
+    # ── Right: distance medians + IQR bands per degree ─────────────────────────
+    def _dist_stats(key):
+        med, lo, hi = [], [], []
+        for d in all_degrees:
+            arr   = dist_deg_data[d][key]
+            clean = arr[~np.isnan(arr)]
+            if len(clean) == 0:
+                med.append(np.nan); lo.append(np.nan); hi.append(np.nan)
+            else:
+                med.append(float(np.median(clean)))
+                lo.append(float(np.percentile(clean, 25)))
+                hi.append(float(np.percentile(clean, 75)))
+        return np.array(med), np.array(lo), np.array(hi)
+
+    d_tr_med, d_tr_lo, d_tr_hi = _dist_stats("dist_to_train")
+    d_sc_med, d_sc_lo, d_sc_hi = _dist_stats("dist_to_same_class")
+
+    ax_r.plot(pos, d_tr_med, color="#e67e22", lw=2.2, marker="o",
+              markersize=4, zorder=4, label="Nearest train node  (any class)")
+    ax_r.fill_between(pos, d_tr_lo, d_tr_hi, color="#e67e22", alpha=0.18, zorder=2)
+
+    ax_r.plot(pos, d_sc_med, color="#27ae60", lw=2.2, marker="s",
+              markersize=4, zorder=4, label="Nearest same-class train node")
+    ax_r.fill_between(pos, d_sc_lo, d_sc_hi, color="#27ae60", alpha=0.18, zorder=2)
+
+    ax_r.axhline(num_layers, color="#e74c3c", lw=1.5, ls="--", zorder=6,
+                 label=f"Model depth  ({num_layers} layers)")
+
+    ymax = max(
+        np.nanmax(d_sc_hi) if not np.all(np.isnan(d_sc_hi)) else num_layers,
+        num_layers
+    ) * 1.25
+    ax_r.set_ylim(0, ymax)
+    ax_r.set_ylabel("Hop distance  (median ± IQR)", fontsize=10)
+    ax_r.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_r.tick_params(axis="y", labelsize=8)
+    ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_r.set_title("Hop Distances to Training Nodes per Degree", fontsize=10, pad=6)
+    ax_r.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                ncol=2, fontsize=8.5, framealpha=0.9, borderpad=0.8)
+    _degree_axis(ax_r, pos, all_degrees)
+
+    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.24, wspace=0.45)
+    _save(fig, save_dir, f"{prefix}_group_cardinality_and_distance.png", show)

@@ -378,6 +378,33 @@ def get_amp_dmp_groups(node_het, node_dmp_k, amp_threshold: float = 0.5):
     return group_labels, group_names
 
 
+def get_group_deg_counts(test_deg, group_labels) -> dict:
+    """Count test nodes per (degree, AMP×DMP group) cell.
+
+    Parameters
+    ----------
+    test_deg : LongTensor or int array, shape [num_test_nodes]
+    group_labels : int array, shape [num_test_nodes]  (values 0-3)
+
+    Returns
+    -------
+    dict mapping degree (int) -> {group (int): count (int)}
+    """
+    if torch.is_tensor(test_deg):
+        test_deg = test_deg.numpy()
+    test_deg = np.asarray(test_deg, dtype=int)
+    if torch.is_tensor(group_labels):
+        group_labels = group_labels.numpy()
+    group_labels = np.asarray(group_labels, dtype=int)
+
+    result = {}
+    for d in np.unique(test_deg):
+        d_mask = test_deg == d
+        result[int(d)] = {g: int((d_mask & (group_labels == g)).sum())
+                          for g in range(4)}
+    return result
+
+
 def get_amp_deg(deg: torch.Tensor, node_het) -> dict:
     """Group per-test-node heterogeneity values by node degree.
 
