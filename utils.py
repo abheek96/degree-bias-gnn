@@ -290,21 +290,42 @@ def get_distance_deg(
     return result
 
 
-def get_node_het(data) -> torch.Tensor:
+def get_node_het(data, k: int = 1) -> torch.Tensor:
     """Return the raw neighbor-heterogeneity ratio for every node.
+
+    For k=1 (default) this is the standard fraction of immediate neighbors
+    whose label differs.  For k>1 the k-hop neighborhood is used: all nodes
+    reachable in 1 to k steps (excluding the node itself) are treated as the
+    effective neighborhood, and the heterogeneity is the fraction of those
+    nodes whose label differs.
+
+    The k-hop reachability matrix is built as the boolean union of the 1-hop
+    through k-hop adjacency powers:  reach_k = adj | adj² | … | adj^k,
+    with the diagonal zeroed to exclude self-loops.
 
     Parameters
     ----------
     data : torch_geometric.data.Data
         Graph with attributes: x, edge_index, y.
+    k : int
+        Neighbourhood radius in hops.  k=1 reproduces the original behaviour.
 
     Returns
     -------
     node_het : FloatTensor, shape [num_nodes]
-        Fraction of each node's neighbors whose label differs from the node's
-        own label.  Isolated nodes (degree 0) receive 0.
+        Fraction of each node's k-hop neighbourhood whose label differs from
+        the node's own label.  Isolated nodes (degree 0) receive 0.
     """
     adj = index_to_adj(data.x, data.edge_index, add_self_loop=False)
+    if k > 1:
+        adj_float = adj.float()
+        reach = adj.clone()          # cumulative reachability (bool)
+        power = adj_float.clone()    # adj^hop (float, for matrix multiply)
+        for _ in range(k - 1):
+            power = power @ adj_float
+            reach = reach | power.bool()
+        reach.fill_diagonal_(False)  # exclude self from neighbourhood
+        adj = reach
     return get_node_neighbor_het_rate(data.y, adj)
 
 

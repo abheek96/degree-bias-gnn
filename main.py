@@ -15,7 +15,7 @@ from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
 from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree
-from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_node_amp, get_node_dmp
+from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het
 from train import train
 from test import evaluate
 
@@ -143,11 +143,22 @@ def main():
         test_deg, dist_to_train, dist_to_same_class, num_nodes=data.num_nodes
     )
 
-    # AMP and DMP are graph-fixed — compute once before the run loop
-    node_het = get_node_het(data)                          # FloatTensor [num_nodes], het ratios
-    node_dmp = get_node_dmp(data, data.train_mask)         # numpy bool [num_nodes]
+    # AMP and DMP are graph-fixed — compute once before the run loop.
+    # amp_coeff / dmp_coeff set the k-hop neighbourhood radius.
+    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+    log.info("AMP neighbourhood: %d hop(s)  |  DMP neighbourhood: %d hop(s)",
+             amp_coeff, dmp_coeff)
+
+    # AMP: heterogeneity over k-hop neighbourhood for each test node
+    node_het = get_node_het(data, k=amp_coeff)             # FloatTensor [num_nodes]
     amp_deg_data = get_amp_deg(test_deg, node_het[data.test_mask.cpu()])
-    dmp_deg_data = get_dmp_deg(test_deg, node_dmp[data.test_mask.cpu().numpy()])
+
+    # DMP-k: a test node is DMP if no same-class training node exists within
+    # dmp_coeff hops — equivalent to dist_to_same_class > dmp_coeff.
+    # dist_to_same_class is already computed above for all test nodes.
+    node_dmp_k = (dist_to_same_class > dmp_coeff).numpy()
+    dmp_deg_data = get_dmp_deg(test_deg, node_dmp_k)
 
     val_accs, test_accs = [], []
     deg_acc_results = []

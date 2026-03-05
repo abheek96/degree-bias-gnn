@@ -589,10 +589,14 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
     prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
 
+    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+
     fw = max(_fig_w(len(all_degrees)), 12)
     fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(fw, 5))
     fig.suptitle(
-        f"AMP Heterogeneity Distribution & DMP Counts vs. Node Degree"
+        f"AMP ({amp_coeff}-hop) Heterogeneity Distribution  &  "
+        f"DMP ({dmp_coeff}-hop) Counts vs. Node Degree"
         f"\n{subtitle}",
         fontsize=11, y=1.02,
     )
