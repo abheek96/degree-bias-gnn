@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_totoro_advantage_group2
-from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_group_deg_counts, get_totoro_values, get_group2_signal_data
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_totoro_advantage_group2
+from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_totoro_values, get_group2_signal_data
 from train import train
 from test import evaluate
 
@@ -171,7 +171,6 @@ def main():
     group_counts    = [int((group_labels == g).sum()) for g in range(4)]
     for g, (name, count) in enumerate(zip(group_names, group_counts)):
         log.info("Group %d (%s): %d test nodes", g, name.replace("\n", " "), count)
-    group_deg_counts = get_group_deg_counts(test_deg, group_labels)
     # Per-run accuracy per group: group_acc_per_run[g] = [acc_run1, acc_run2, ...]
     group_acc_per_run = [[] for _ in range(4)]
     # Per-run accuracy per (group, degree): group_deg_acc[g][degree] = [acc_run1, ...]
@@ -269,14 +268,6 @@ def main():
         )
         plot_acc_by_amp_dmp_group_vs_degree(
             group_deg_acc,
-            group_names,
-            cfg,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
-        )
-        plot_group_cardinality_and_distance(
-            group_deg_counts,
-            dist_deg_data,
             group_names,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
