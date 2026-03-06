@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_totoro_signal_group2
-from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_group_deg_counts, get_totoro_values, get_totoro_signal_by_amp_group
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_totoro_advantage_group2
+from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_group_deg_counts, get_totoro_values, get_group2_signal_data
 from train import train
 from test import evaluate
 
@@ -178,14 +178,14 @@ def main():
     group_deg_acc = {g: {} for g in range(4)}
     test_deg_np = test_deg.numpy()
 
-    # Totoro signal quality — graph-fixed, computed once before the run loop
-    totoro_signal_data = None
+    # Totoro advantage for Group 2 — graph-fixed, computed once before the run loop
+    group2_signal_data = None
     if plot_cfg.get("totoro_signal", False):
-        log.info("Computing Totoro values for signal analysis (PPR matrix inversion)…")
+        log.info("Computing Totoro values (PPR matrix inversion)…")
         _totoro_values = get_totoro_values(data, cfg)
-        log.info("Computing Totoro signal quality per AMP×DMP group (%d-hop)…", amp_coeff)
-        totoro_signal_data = get_totoro_signal_by_amp_group(
-            data, _totoro_values, group_labels, test_deg, k=amp_coeff
+        log.info("Computing per-node Totoro advantage for Group 2 (%d-hop)…", amp_coeff)
+        group2_signal_data = get_group2_signal_data(
+            data, _totoro_values, group_labels, test_deg, test_het, k=amp_coeff
         )
 
     val_accs, test_accs = [], []
@@ -283,9 +283,9 @@ def main():
             show=plot_cfg.get("show", False),
         )
 
-    if plot_cfg.get("totoro_signal", False) and totoro_signal_data is not None:
-        plot_totoro_signal_group2(
-            totoro_signal_data,
+    if plot_cfg.get("totoro_signal", False) and group2_signal_data is not None:
+        plot_totoro_advantage_group2(
+            group2_signal_data,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),

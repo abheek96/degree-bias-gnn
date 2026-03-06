@@ -1052,129 +1052,105 @@ def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
     _save(fig, save_dir, f"{prefix}_group_cardinality_and_distance.png", show)
 
 
-# ── Totoro signal comparison for High AMP / No DMP nodes ───────────────────────
+# ── Totoro advantage vs degree/AMP for High AMP / No DMP nodes ─────────────────
 
-def plot_totoro_signal_group2(signal_data, cfg, save_dir=None, show=False):
-    """Two-panel figure comparing same-class vs diff-class training-neighbour
-    Totoro scores for Group 2 (High AMP, No DMP) test nodes.
+def plot_totoro_advantage_group2(node_data, cfg, save_dir=None, show=False):
+    """Two-panel node-wise scatter for Group 2 (High AMP, No DMP) test nodes.
 
-    For each Group 2 node the k-hop training neighbourhood is split into
-    same-class and different-class training nodes.  The mean Totoro score of
-    each set is one data point.  A lower Totoro score means the training node
-    receives less cross-class PPR influence — i.e. it carries a cleaner signal.
+    For each node the Totoro advantage is defined as:
+        advantage = mean_same_class_Totoro − mean_diff_class_Totoro
 
-    Left  — Scatter: x = mean diff-class Totoro, y = mean same-class Totoro.
-            One dot per node.  The y = x diagonal separates the two regimes:
-              above diagonal → same-class signal is noisier  (red)
-              below diagonal → same-class signal is cleaner  (blue)
+    A positive advantage means the same-class training neighbours have higher
+    Totoro scores (they receive more cross-class PPR confusion themselves) —
+    the correct-class signal is *noisier* than the wrong-class signal.
+    A negative advantage means the correct-class signal is cleaner.
 
-    Right — Distribution of (same − diff) per node.  Negative values mean the
-            correct-class training signal is cleaner; positive means noisier.
-            A dashed vertical line marks zero; the mean is annotated.
+    The key question is whether this advantage, together with degree, can
+    explain whether high AMP (heterogeneous neighbourhood) is compensated.
 
-    Nodes that have no diff-class training neighbour within k hops are excluded
-    from both panels (their count is noted in the title).
+    Left  — Advantage vs node degree. Each dot is one node, coloured by its
+            continuous AMP score (heterogeneity ratio).  Horizontal dashed
+            line at zero separates the two regimes.
+
+    Right — Advantage vs AMP score (het ratio). Each dot coloured by degree.
+            Vertical dashed line at the AMP threshold; horizontal at zero.
+
+    Nodes without diff-class training neighbours are excluded (noted in title).
     """
-    SAME_COLOR  = "#2980b9"   # blue
-    DIFF_COLOR  = "#e74c3c"   # red — used for "noisier" regime
-
     amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+    amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
     prefix    = _fname_prefix(cfg)
     subtitle  = (
         f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
         f"{cfg.get('split', 'random')} · "
         f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
-        f"   |   {amp_coeff}-hop neighbourhood   |   Group 2: High AMP, No DMP"
+        f"   |   {amp_coeff}-hop   |   Group 2: High AMP, No DMP"
     )
 
-    # Flatten per-node arrays for Group 2 across all degrees
-    g2 = signal_data[2]
-    if not g2:
-        log.warning("No Group 2 nodes — skipping plot_totoro_signal_group2")
-        return
+    deg  = node_data['degree']
+    het  = node_data['het']
+    same = node_data['same_totoro']
+    diff = node_data['diff_totoro']
 
-    same_all = np.concatenate([g2[d]['same'] for d in sorted(g2)])
-    diff_all = np.concatenate([g2[d]['diff'] for d in sorted(g2)])
-
-    # Keep only nodes where both same-class AND diff-class neighbours exist
-    valid = ~(np.isnan(same_all) | np.isnan(diff_all))
-    n_total   = len(same_all)
-    n_valid   = int(valid.sum())
+    # Require both same-class and diff-class neighbours to compute advantage
+    valid      = ~(np.isnan(same) | np.isnan(diff))
+    n_total    = len(deg)
+    n_valid    = int(valid.sum())
     n_excluded = n_total - n_valid
 
-    same_v = same_all[valid]
-    diff_v = diff_all[valid]
-    delta  = same_v - diff_v          # positive → same noisier, negative → same cleaner
+    deg_v  = deg[valid]
+    het_v  = het[valid]
+    adv_v  = same[valid] - diff[valid]
 
-    pct_noisier = 100 * (delta > 0).sum() / n_valid if n_valid > 0 else 0.0
+    if n_valid == 0:
+        log.warning("No Group 2 nodes with both same- and diff-class neighbours.")
+        return
 
-    # ── Figure ─────────────────────────────────────────────────────────────────
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(12, 5))
+    pct_positive = 100 * (adv_v > 0).sum() / n_valid
+
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle(
-        f"Totoro signal: same-class vs diff-class training neighbours\n{subtitle}",
-        fontsize=11, y=1.02,
+        f"Totoro advantage per node  (same − diff class Totoro)  —  Group 2\n"
+        f"positive = correct signal noisier,  negative = correct signal cleaner\n"
+        f"{subtitle}   |   {n_valid} nodes  ({n_excluded} excluded, no diff-class neighbour)",
+        fontsize=10, y=1.03,
     )
 
-    # ── Left: scatter same vs diff ──────────────────────────────────────────────
-    colors = np.where(delta > 0, DIFF_COLOR, SAME_COLOR)
-    ax_l.scatter(diff_v, same_v, c=colors, alpha=0.55, s=25, linewidths=0, zorder=3)
-
-    # y = x diagonal
-    lim_max = max(same_v.max(), diff_v.max()) * 1.05
-    lim_min = min(same_v.min(), diff_v.min()) * 0.95
-    ax_l.plot([lim_min, lim_max], [lim_min, lim_max],
-              color="grey", lw=1.2, ls="--", zorder=2, label="y = x  (same = diff)")
-
-    # Region labels
-    ax_l.text(0.97, 0.03, "same < diff\n(correct signal cleaner ✓)",
-              transform=ax_l.transAxes, ha="right", va="bottom",
-              fontsize=8.5, color=SAME_COLOR, fontweight="bold")
-    ax_l.text(0.03, 0.97, "same > diff\n(correct signal noisier ✗)",
-              transform=ax_l.transAxes, ha="left", va="top",
-              fontsize=8.5, color=DIFF_COLOR, fontweight="bold")
-
-    ax_l.set_xlim(lim_min, lim_max)
-    ax_l.set_ylim(lim_min, lim_max)
-    ax_l.set_xlabel("Mean Totoro of diff-class training neighbours", fontsize=10)
-    ax_l.set_ylabel("Mean Totoro of same-class training neighbours", fontsize=10)
-    ax_l.set_title(
-        f"{n_valid} nodes  ({n_excluded} excluded — no diff-class neighbour)\n"
-        f"{pct_noisier:.1f}% of nodes: same > diff",
-        fontsize=9, pad=6,
-    )
-    ax_l.set_aspect("equal", adjustable="box")
+    # ── Left: advantage vs degree, coloured by het ─────────────────────────────
+    sc_l = ax_l.scatter(deg_v, adv_v, c=het_v, cmap="YlOrRd",
+                        vmin=amp_thr, vmax=1.0,
+                        s=30, alpha=0.7, linewidths=0, zorder=3)
+    ax_l.axhline(0, color="dimgrey", lw=1.2, ls="--", zorder=2)
+    ax_l.text(0.98, 0.02, f"{pct_positive:.1f}% nodes: same > diff",
+              transform=ax_l.transAxes, ha="right", va="bottom", fontsize=8.5,
+              color="dimgrey")
+    ax_l.set_xlabel("Node degree", fontsize=10)
+    ax_l.set_ylabel("Totoro advantage  (same − diff)", fontsize=10)
+    ax_l.set_title("Advantage vs degree\n(colour = AMP heterogeneity score)",
+                   fontsize=9, pad=5)
     ax_l.grid(linestyle="--", linewidth=0.4, alpha=0.4)
-    ax_l.legend(loc="upper left", bbox_to_anchor=(0, -0.14),
-                borderaxespad=0, fontsize=9, framealpha=0.85)
+    cb_l = fig.colorbar(sc_l, ax=ax_l, pad=0.02)
+    cb_l.set_label("Heterogeneity ratio (AMP score)", fontsize=8)
+    cb_l.ax.tick_params(labelsize=7)
 
-    # ── Right: distribution of (same − diff) ───────────────────────────────────
-    bins = min(40, max(10, n_valid // 5))
-    bin_edges = np.linspace(delta.min(), delta.max(), bins + 1)
-    counts, _ = np.histogram(delta, bins=bin_edges)
-
-    for i in range(len(counts)):
-        mid = (bin_edges[i] + bin_edges[i + 1]) / 2
-        color = DIFF_COLOR if mid > 0 else SAME_COLOR
-        ax_r.bar(bin_edges[i], counts[i],
-                 width=(bin_edges[i + 1] - bin_edges[i]),
-                 color=color, alpha=0.75, align="edge", zorder=3)
-
-    ax_r.axvline(0, color="grey", lw=1.4, ls="--", zorder=4, label="zero")
-    ax_r.axvline(delta.mean(), color="black", lw=1.4, ls="-", zorder=5,
-                 label=f"mean = {delta.mean():.4f}")
-
-    ax_r.set_xlabel("Same-class Totoro  −  Diff-class Totoro", fontsize=10)
-    ax_r.set_ylabel("Number of nodes", fontsize=10)
-    ax_r.set_title(
-        "Distribution of signal difference per node\n"
-        "(negative = correct signal cleaner, positive = noisier)",
-        fontsize=9, pad=6,
-    )
-    ax_r.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.4)
+    # ── Right: advantage vs het, coloured by degree ─────────────────────────────
+    sc_r = ax_r.scatter(het_v, adv_v, c=deg_v, cmap="viridis_r",
+                        s=30, alpha=0.7, linewidths=0, zorder=3)
+    ax_r.axhline(0, color="dimgrey", lw=1.2, ls="--", zorder=2)
+    ax_r.axvline(amp_thr, color="#c0392b", lw=1.2, ls="--", zorder=2,
+                 label=f"AMP threshold ({amp_thr:.0%})")
+    ax_r.set_xlabel("Heterogeneity ratio (AMP score)", fontsize=10)
+    ax_r.set_ylabel("Totoro advantage  (same − diff)", fontsize=10)
+    ax_r.set_title("Advantage vs AMP score\n(colour = node degree)",
+                   fontsize=9, pad=5)
+    ax_r.grid(linestyle="--", linewidth=0.4, alpha=0.4)
     ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.14),
-                borderaxespad=0, fontsize=9, framealpha=0.85, ncol=2)
+                borderaxespad=0, fontsize=9, framealpha=0.85)
+    cb_r = fig.colorbar(sc_r, ax=ax_r, pad=0.02)
+    cb_r.set_label("Node degree", fontsize=8)
+    cb_r.ax.tick_params(labelsize=7)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.22, wspace=0.40)
-    _save(fig, save_dir, f"{prefix}_totoro_signal_group2.png", show)
+    fig.subplots_adjust(bottom=0.18, wspace=0.40)
+    _save(fig, save_dir, f"{prefix}_totoro_advantage_group2.png", show)
 
