@@ -672,7 +672,7 @@ def get_group2_signal_data(data, totoro_values, group_labels, test_deg, test_het
     tot_cpu    = totoro_values.cpu()
     test_nodes = data.test_mask.nonzero(as_tuple=True)[0].tolist()
     test_deg_np = test_deg.numpy() if torch.is_tensor(test_deg) else np.asarray(test_deg, dtype=int)
-    test_het_np = test_het.numpy() if torch.is_tensor(test_het) else np.asarray(test_het, dtype=float)
+    test_het_np = test_het.cpu().numpy() if torch.is_tensor(test_het) else np.asarray(test_het, dtype=float)
 
     degrees, hets, same_tots, diff_tots = [], [], [], []
 
