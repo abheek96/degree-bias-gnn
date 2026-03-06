@@ -266,6 +266,7 @@ def main():
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
+            run_results=deg_acc_results,
         )
         plot_acc_by_amp_dmp_group(
             group_acc_per_run,

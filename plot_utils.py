@@ -606,21 +606,19 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
 
 def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
-                           save_dir=None, show=False):
-    """Two-panel figure: AMP heterogeneity and DMP rate vs degree bins.
+                           save_dir=None, show=False, run_results=None):
+    """Two-panel figure: AMP heterogeneity and DMP rate vs node degree.
 
-    Degrees are grouped into equal-count bins so each bucket is wide enough
-    to read clearly.
+    Each unique degree is shown as its own tick — no binning.
 
-    Left  — Boxplot of neighbour-heterogeneity ratios per degree bin.
-            Shows whether high-degree nodes tend to have more ambivalent
-            message-passing environments.  A dashed line marks the AMP
-            threshold (het > threshold ⇒ labelled AMP).
+    Left  — Boxplot of neighbour-heterogeneity ratios per degree.
+            A dashed line marks the AMP threshold (het > threshold ⇒ AMP).
+            If run_results is provided, mean accuracy (± 1 σ band for
+            multi-run) is overlaid on a right-hand axis.
 
     Right — Line chart of DMP rate (% of nodes lacking a same-class training
-            node within dmp_coeff hops) per degree bin.  Using a rate rather
-            than raw counts makes the trend legible independent of how many
-            nodes exist at each degree.
+            node within dmp_coeff hops) per degree.  Accuracy is overlaid
+            the same way if run_results is given.
     """
     all_degrees = sorted(set(amp_deg_data.keys()) & set(dmp_deg_data.keys()))
     raw_counts  = [amp_deg_data[d]["count"] for d in all_degrees]
@@ -631,47 +629,53 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
     amp_thr     = cfg["dataset"].get("amp_threshold", 0.5)
     subtitle    = _subtitle(cfg, n_test, len(all_degrees))
 
-    # ── Degree binning ─────────────────────────────────────────────────────────
-    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
-    pos = list(range(n_bins))
+    pos = list(range(len(all_degrees)))
 
-    def _bin_count(b):
-        return sum(amp_deg_data[d]["count"]
-                   for d in all_degrees if bin_of_deg[d] == b)
-
-    bin_counts = [_bin_count(b) for b in range(n_bins)]
-
-    # Aggregate het values per bin
     def _clean(arr):
         a = arr[~np.isnan(arr)]
         return a if len(a) > 0 else np.array([np.nan])
 
-    het_per_bin = []
-    for b in range(n_bins):
-        arrays = [amp_deg_data[d]["het_values"]
-                  for d in all_degrees if bin_of_deg[d] == b]
-        het_per_bin.append(_clean(np.concatenate(arrays)) if arrays
-                           else np.array([np.nan]))
+    # Per-degree het values (no binning)
+    het_per_deg = [_clean(amp_deg_data[d]["het_values"]) for d in all_degrees]
 
-    # Aggregate DMP rate per bin
-    dmp_rate = []
-    for b in range(n_bins):
-        c0 = sum(dmp_deg_data[d]["count_0"] for d in all_degrees if bin_of_deg[d] == b)
-        c1 = sum(dmp_deg_data[d]["count_1"] for d in all_degrees if bin_of_deg[d] == b)
-        total = c0 + c1
-        dmp_rate.append(c1 / total if total > 0 else np.nan)
-    dmp_rate = np.array(dmp_rate)
+    # Per-degree DMP rate
+    dmp_rate = np.array([
+        dmp_deg_data[d]["count_1"] / dmp_deg_data[d]["count"]
+        if dmp_deg_data[d]["count"] > 0 else np.nan
+        for d in all_degrees
+    ])
+
+    # Accuracy per degree (optional)
+    acc_mean = acc_std = None
+    if run_results is not None:
+        _, deg_data = _collect(run_results)
+        _am, _as = [], []
+        for d in all_degrees:
+            arrs = [a for a in deg_data.get(d, []) if len(a) > 0]
+            if arrs:
+                per_run = [a.mean() for a in arrs]
+                _am.append(float(np.mean(per_run)))
+                _as.append(float(np.std(per_run)))
+            else:
+                _am.append(np.nan)
+                _as.append(0.0)
+        acc_mean = np.array(_am)
+        acc_std  = np.array(_as)
 
     # ── Figure ─────────────────────────────────────────────────────────────────
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(max(10, n_bins * 1.4 + 4), 5))
+    n_deg = len(all_degrees)
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(_fig_w(n_deg) + 4, 5))
     fig.suptitle(
         f"AMP ({amp_coeff}-hop) Heterogeneity  &  DMP ({dmp_coeff}-hop) Rate  vs. Degree\n"
         f"{subtitle}",
         fontsize=11, y=1.02,
     )
 
-    # Left — boxplot of het values per bin
-    bp = ax_l.boxplot(het_per_bin, positions=pos, widths=0.55, **_BP_KWARGS)
+    ACC_COLOR = "#2980b9"
+    ann_step  = max(1, n_deg // 15)   # sparse annotations to avoid clutter
+
+    # ── Left: AMP heterogeneity boxplots ───────────────────────────────────────
+    bp = ax_l.boxplot(het_per_deg, positions=pos, widths=0.55, **_BP_KWARGS)
     for patch in bp["boxes"]:
         patch.set_facecolor("#e67e22")
         patch.set_alpha(0.80)
@@ -687,33 +691,49 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
                    "(box = IQR, centre line = median, dots = outliers)",
                    fontsize=10, pad=6)
 
-    # Annotate bin node counts below each box
-    for b, n in enumerate(bin_counts):
-        ax_l.text(b, -0.08, f"n={n}", ha="center", va="top",
-                  fontsize=7.5, color="dimgrey",
-                  transform=ax_l.get_xaxis_transform())
+    for i, n in enumerate(raw_counts):
+        if i % ann_step == 0:
+            ax_l.text(i, -0.08, f"n={n}", ha="center", va="top",
+                      fontsize=6.5, color="dimgrey",
+                      transform=ax_l.get_xaxis_transform())
 
-    ax_l.set_xticks(pos)
-    ax_l.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
-    ax_l.set_xlabel("Node degree (binned)", fontsize=10)
-    ax_l.legend(loc="upper left", fontsize=9, framealpha=0.85)
+    if acc_mean is not None:
+        ax_l2 = ax_l.twinx()
+        valid = ~np.isnan(acc_mean)
+        xs, ym, ys = np.array(pos)[valid], acc_mean[valid], acc_std[valid]
+        ax_l2.plot(xs, ym, color=ACC_COLOR, lw=1.8, marker="s",
+                   markersize=4, zorder=5, label="Accuracy (mean)")
+        if len(run_results) > 1:
+            ax_l2.fill_between(xs, ym - ys, ym + ys,
+                               color=ACC_COLOR, alpha=0.15, zorder=3)
+        ax_l2.set_ylim(0, 1.05)
+        ax_l2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_l2.set_ylabel("Accuracy", fontsize=10, color=ACC_COLOR)
+        ax_l2.tick_params(axis="y", labelsize=8, colors=ACC_COLOR)
+        ax_l2.spines["right"].set_edgecolor(ACC_COLOR)
+        h1, l1 = ax_l.get_legend_handles_labels()
+        h2, l2 = ax_l2.get_legend_handles_labels()
+        ax_l.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8, framealpha=0.85)
+    else:
+        ax_l.legend(loc="upper left", fontsize=9, framealpha=0.85)
 
-    # Right — DMP rate line per bin
+    _degree_axis(ax_l, pos, all_degrees)
+
+    # ── Right: DMP rate per degree ──────────────────────────────────────────────
     ax_r.plot(pos, dmp_rate, color="#8e44ad", lw=2.2, marker="o",
-              markersize=7, zorder=4)
+              markersize=5, zorder=4)
     ax_r.fill_between(pos, 0, dmp_rate, color="#8e44ad", alpha=0.15, zorder=2)
 
-    # Annotate each point with its rate value
-    for b, rate in enumerate(dmp_rate):
-        if not np.isnan(rate):
-            ax_r.text(b, rate + 0.03, f"{rate:.0%}", ha="center", va="bottom",
-                      fontsize=8.5, color="#6c3483", fontweight="bold")
+    for i, rate in enumerate(dmp_rate):
+        if not np.isnan(rate) and i % ann_step == 0:
+            ax_r.text(i, rate + 0.03, f"{rate:.0%}", ha="center", va="bottom",
+                      fontsize=7.5, color="#6c3483", fontweight="bold")
 
-    # Annotate bin node counts below axis
-    for b, n in enumerate(bin_counts):
-        ax_r.text(b, -0.08, f"n={n}", ha="center", va="top",
-                  fontsize=7.5, color="dimgrey",
-                  transform=ax_r.get_xaxis_transform())
+    for i, n in enumerate(raw_counts):
+        if i % ann_step == 0:
+            ax_r.text(i, -0.08, f"n={n}", ha="center", va="top",
+                      fontsize=6.5, color="dimgrey",
+                      transform=ax_r.get_xaxis_transform())
 
     ax_r.set_ylim(0, 1.10)
     ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
@@ -722,12 +742,27 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
     ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_r.set_title("DMP: what fraction of nodes lack a nearby\nsame-class training node?",
                    fontsize=10, pad=6)
-    ax_r.set_xticks(pos)
-    ax_r.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
-    ax_r.set_xlabel("Node degree (binned)", fontsize=10)
+
+    if acc_mean is not None:
+        ax_r2 = ax_r.twinx()
+        valid = ~np.isnan(acc_mean)
+        xs, ym, ys = np.array(pos)[valid], acc_mean[valid], acc_std[valid]
+        ax_r2.plot(xs, ym, color=ACC_COLOR, lw=1.8, marker="s",
+                   markersize=4, zorder=5, label="Accuracy (mean)")
+        if len(run_results) > 1:
+            ax_r2.fill_between(xs, ym - ys, ym + ys,
+                               color=ACC_COLOR, alpha=0.15, zorder=3)
+        ax_r2.set_ylim(0, 1.05)
+        ax_r2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_r2.set_ylabel("Accuracy", fontsize=10, color=ACC_COLOR)
+        ax_r2.tick_params(axis="y", labelsize=8, colors=ACC_COLOR)
+        ax_r2.spines["right"].set_edgecolor(ACC_COLOR)
+        ax_r2.legend(loc="upper right", fontsize=8, framealpha=0.85)
+
+    _degree_axis(ax_r, pos, all_degrees)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.20, wspace=0.45)
+    fig.subplots_adjust(bottom=0.20, wspace=0.55)
     _save(fig, save_dir, f"{prefix}_amp_dmp_vs_degree.png", show)
 
 
