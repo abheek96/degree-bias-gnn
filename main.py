@@ -162,6 +162,7 @@ def main():
 
     # Totoro neighbourhood groups — graph-fixed, computed once
     # PPR matrix inversion is O(N³); logged so the user knows it may take a moment
+    plot_cfg = cfg.get("plot", {})
     if plot_cfg.get("acc_vs_totoro", False):
         log.info("Computing Totoro values (PPR matrix inversion)…")
         totoro_values = get_totoro_values(data, cfg)
