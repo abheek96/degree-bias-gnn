@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_totoro_signal_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_totoro_signal_group2
 from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_group_deg_counts, get_totoro_values, get_totoro_signal_by_amp_group
 from train import train
 from test import evaluate
@@ -169,6 +169,8 @@ def main():
         test_het, node_dmp_k, amp_threshold=amp_threshold
     )
     group_counts    = [int((group_labels == g).sum()) for g in range(4)]
+    for g, (name, count) in enumerate(zip(group_names, group_counts)):
+        log.info("Group %d (%s): %d test nodes", g, name.replace("\n", " "), count)
     group_deg_counts = get_group_deg_counts(test_deg, group_labels)
     # Per-run accuracy per group: group_acc_per_run[g] = [acc_run1, acc_run2, ...]
     group_acc_per_run = [[] for _ in range(4)]
@@ -282,9 +284,8 @@ def main():
         )
 
     if plot_cfg.get("totoro_signal", False) and totoro_signal_data is not None:
-        plot_totoro_signal_vs_degree(
+        plot_totoro_signal_group2(
             totoro_signal_data,
-            group_names,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),

@@ -1052,22 +1052,31 @@ def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
     _save(fig, save_dir, f"{prefix}_group_cardinality_and_distance.png", show)
 
 
-# ── Totoro signal quality by AMP × DMP group ───────────────────────────────────
+# ── Totoro signal comparison for High AMP / No DMP nodes ───────────────────────
 
-def plot_totoro_signal_vs_degree(signal_data, group_names, cfg,
-                                  save_dir=None, show=False):
-    """2×2 grid: mean Totoro score of same-class vs diff-class k-hop training
-    neighbours per degree bin, one panel per AMP×DMP group.
+def plot_totoro_signal_group2(signal_data, cfg, save_dir=None, show=False):
+    """Two-panel figure comparing same-class vs diff-class training-neighbour
+    Totoro scores for Group 2 (High AMP, No DMP) test nodes.
 
-    A lower Totoro score means a training node receives less cross-class PPR
-    influence — i.e. it carries a cleaner label signal.
+    For each Group 2 node the k-hop training neighbourhood is split into
+    same-class and different-class training nodes.  The mean Totoro score of
+    each set is one data point.  A lower Totoro score means the training node
+    receives less cross-class PPR influence — i.e. it carries a cleaner signal.
 
-    Blue shading  — same-class Totoro < diff-class Totoro  (correct signal cleaner ✓)
-    Red shading   — same-class Totoro > diff-class Totoro  (correct signal noisier ✗)
+    Left  — Scatter: x = mean diff-class Totoro, y = mean same-class Totoro.
+            One dot per node.  The y = x diagonal separates the two regimes:
+              above diagonal → same-class signal is noisier  (red)
+              below diagonal → same-class signal is cleaner  (blue)
+
+    Right — Distribution of (same − diff) per node.  Negative values mean the
+            correct-class training signal is cleaner; positive means noisier.
+            A dashed vertical line marks zero; the mean is annotated.
+
+    Nodes that have no diff-class training neighbour within k hops are excluded
+    from both panels (their count is noted in the title).
     """
-    GROUP_COLORS = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
-    SAME_COLOR   = "#2980b9"    # blue  — same-class neighbours
-    DIFF_COLOR   = "#e67e22"    # orange — diff-class neighbours
+    SAME_COLOR  = "#2980b9"   # blue
+    DIFF_COLOR  = "#e74c3c"   # red — used for "noisier" regime
 
     amp_coeff = cfg["dataset"].get("amp_coeff", 1)
     prefix    = _fname_prefix(cfg)
@@ -1075,90 +1084,97 @@ def plot_totoro_signal_vs_degree(signal_data, group_names, cfg,
         f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
         f"{cfg.get('split', 'random')} · "
         f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
-        f"   |   {amp_coeff}-hop neighbourhood"
+        f"   |   {amp_coeff}-hop neighbourhood   |   Group 2: High AMP, No DMP"
     )
 
-    # Global degree binning shared across all panels for comparability
-    all_degrees = sorted({d for g in range(4) for d in signal_data[g]})
-    if not all_degrees:
+    # Flatten per-node arrays for Group 2 across all degrees
+    g2 = signal_data[2]
+    if not g2:
+        log.warning("No Group 2 nodes — skipping plot_totoro_signal_group2")
         return
-    raw_counts = [
-        sum(signal_data[g].get(d, {}).get('count', 0) for g in range(4))
-        for d in all_degrees
-    ]
-    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
-    pos = list(range(n_bins))
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+    same_all = np.concatenate([g2[d]['same'] for d in sorted(g2)])
+    diff_all = np.concatenate([g2[d]['diff'] for d in sorted(g2)])
+
+    # Keep only nodes where both same-class AND diff-class neighbours exist
+    valid = ~(np.isnan(same_all) | np.isnan(diff_all))
+    n_total   = len(same_all)
+    n_valid   = int(valid.sum())
+    n_excluded = n_total - n_valid
+
+    same_v = same_all[valid]
+    diff_v = diff_all[valid]
+    delta  = same_v - diff_v          # positive → same noisier, negative → same cleaner
+
+    pct_noisier = 100 * (delta > 0).sum() / n_valid if n_valid > 0 else 0.0
+
+    # ── Figure ─────────────────────────────────────────────────────────────────
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(12, 5))
     fig.suptitle(
-        f"Totoro signal quality of {amp_coeff}-hop training neighbours — by AMP×DMP group\n"
-        f"(lower Totoro = cleaner label signal)\n{subtitle}",
+        f"Totoro signal: same-class vs diff-class training neighbours\n{subtitle}",
         fontsize=11, y=1.02,
     )
 
-    for g, ax in enumerate(axes.flat):
-        g_data = signal_data[g]
+    # ── Left: scatter same vs diff ──────────────────────────────────────────────
+    colors = np.where(delta > 0, DIFF_COLOR, SAME_COLOR)
+    ax_l.scatter(diff_v, same_v, c=colors, alpha=0.55, s=25, linewidths=0, zorder=3)
 
-        # Mean Totoro per bin (nanmean across all nodes in that (group, bin) cell)
-        ym_same = np.full(n_bins, np.nan)
-        ym_diff = np.full(n_bins, np.nan)
-        for b in range(n_bins):
-            same_vals = np.concatenate(
-                [g_data[d]['same'] for d in all_degrees
-                 if bin_of_deg.get(d) == b and d in g_data]
-                or [np.array([np.nan])]
-            )
-            diff_vals = np.concatenate(
-                [g_data[d]['diff'] for d in all_degrees
-                 if bin_of_deg.get(d) == b and d in g_data]
-                or [np.array([np.nan])]
-            )
-            ym_same[b] = np.nanmean(same_vals)
-            ym_diff[b] = np.nanmean(diff_vals)
+    # y = x diagonal
+    lim_max = max(same_v.max(), diff_v.max()) * 1.05
+    lim_min = min(same_v.min(), diff_v.min()) * 0.95
+    ax_l.plot([lim_min, lim_max], [lim_min, lim_max],
+              color="grey", lw=1.2, ls="--", zorder=2, label="y = x  (same = diff)")
 
-        # Shade between lines where both are valid
-        both_v = ~(np.isnan(ym_same) | np.isnan(ym_diff))
-        if both_v.sum() >= 2:
-            xv = np.array(pos, dtype=float)[both_v]
-            sv = ym_same[both_v]
-            dv = ym_diff[both_v]
-            ax.fill_between(xv, sv, dv, where=(sv <= dv),
-                            color=SAME_COLOR, alpha=0.15, interpolate=True)
-            ax.fill_between(xv, sv, dv, where=(sv > dv),
-                            color="#e74c3c", alpha=0.15, interpolate=True)
+    # Region labels
+    ax_l.text(0.97, 0.03, "same < diff\n(correct signal cleaner ✓)",
+              transform=ax_l.transAxes, ha="right", va="bottom",
+              fontsize=8.5, color=SAME_COLOR, fontweight="bold")
+    ax_l.text(0.03, 0.97, "same > diff\n(correct signal noisier ✗)",
+              transform=ax_l.transAxes, ha="left", va="top",
+              fontsize=8.5, color=DIFF_COLOR, fontweight="bold")
 
-        ax.plot(pos, ym_same, color=SAME_COLOR, lw=2.0, marker="o",
-                markersize=5, zorder=4)
-        ax.plot(pos, ym_diff, color=DIFF_COLOR, lw=2.0, marker="s",
-                markersize=5, zorder=4)
+    ax_l.set_xlim(lim_min, lim_max)
+    ax_l.set_ylim(lim_min, lim_max)
+    ax_l.set_xlabel("Mean Totoro of diff-class training neighbours", fontsize=10)
+    ax_l.set_ylabel("Mean Totoro of same-class training neighbours", fontsize=10)
+    ax_l.set_title(
+        f"{n_valid} nodes  ({n_excluded} excluded — no diff-class neighbour)\n"
+        f"{pct_noisier:.1f}% of nodes: same > diff",
+        fontsize=9, pad=6,
+    )
+    ax_l.set_aspect("equal", adjustable="box")
+    ax_l.grid(linestyle="--", linewidth=0.4, alpha=0.4)
+    ax_l.legend(loc="upper left", bbox_to_anchor=(0, -0.14),
+                borderaxespad=0, fontsize=9, framealpha=0.85)
 
-        ax.set_xticks(pos)
-        ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=8)
-        ax.set_xlabel("Node degree (binned)", fontsize=9)
-        ax.set_ylabel("Mean Totoro score", fontsize=9)
-        ax.tick_params(axis="y", labelsize=8)
-        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-        ax.set_title(
-            group_names[g].replace("\n", " "),
-            fontsize=10, pad=5,
-            color=GROUP_COLORS[g], fontweight="bold",
-        )
+    # ── Right: distribution of (same − diff) ───────────────────────────────────
+    bins = min(40, max(10, n_valid // 5))
+    bin_edges = np.linspace(delta.min(), delta.max(), bins + 1)
+    counts, _ = np.histogram(delta, bins=bin_edges)
 
-    # Shared legend at the bottom
-    legend_handles = [
-        plt.Line2D([0], [0], color=SAME_COLOR, lw=2, marker="o", markersize=5,
-                   label="Same-class training neighbours"),
-        plt.Line2D([0], [0], color=DIFF_COLOR, lw=2, marker="s", markersize=5,
-                   label="Diff-class training neighbours"),
-        plt.Rectangle((0, 0), 1, 1, facecolor=SAME_COLOR, alpha=0.4,
-                       label="Same < Diff  (correct signal cleaner ✓)"),
-        plt.Rectangle((0, 0), 1, 1, facecolor="#e74c3c", alpha=0.4,
-                       label="Same > Diff  (correct signal noisier ✗)"),
-    ]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=2,
-               fontsize=9, framealpha=0.9, bbox_to_anchor=(0.5, -0.04))
+    for i in range(len(counts)):
+        mid = (bin_edges[i] + bin_edges[i + 1]) / 2
+        color = DIFF_COLOR if mid > 0 else SAME_COLOR
+        ax_r.bar(bin_edges[i], counts[i],
+                 width=(bin_edges[i + 1] - bin_edges[i]),
+                 color=color, alpha=0.75, align="edge", zorder=3)
+
+    ax_r.axvline(0, color="grey", lw=1.4, ls="--", zorder=4, label="zero")
+    ax_r.axvline(delta.mean(), color="black", lw=1.4, ls="-", zorder=5,
+                 label=f"mean = {delta.mean():.4f}")
+
+    ax_r.set_xlabel("Same-class Totoro  −  Diff-class Totoro", fontsize=10)
+    ax_r.set_ylabel("Number of nodes", fontsize=10)
+    ax_r.set_title(
+        "Distribution of signal difference per node\n"
+        "(negative = correct signal cleaner, positive = noisier)",
+        fontsize=9, pad=6,
+    )
+    ax_r.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.4)
+    ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.14),
+                borderaxespad=0, fontsize=9, framealpha=0.85, ncol=2)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.20, hspace=0.60, wspace=0.35)
-    _save(fig, save_dir, f"{prefix}_totoro_signal_vs_degree.png", show)
+    fig.subplots_adjust(bottom=0.22, wspace=0.40)
+    _save(fig, save_dir, f"{prefix}_totoro_signal_group2.png", show)
 
