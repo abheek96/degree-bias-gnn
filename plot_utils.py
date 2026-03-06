@@ -606,19 +606,16 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
 
 def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
-                           save_dir=None, show=False, run_results=None):
+                           save_dir=None, show=False):
     """Two-panel figure: AMP heterogeneity and DMP rate vs node degree.
 
     Each unique degree is shown as its own tick — no binning.
 
     Left  — Boxplot of neighbour-heterogeneity ratios per degree.
             A dashed line marks the AMP threshold (het > threshold ⇒ AMP).
-            If run_results is provided, mean accuracy (± 1 σ band for
-            multi-run) is overlaid on a right-hand axis.
 
     Right — Line chart of DMP rate (% of nodes lacking a same-class training
-            node within dmp_coeff hops) per degree.  Accuracy is overlaid
-            the same way if run_results is given.
+            node within dmp_coeff hops) per degree.
     """
     all_degrees = sorted(set(amp_deg_data.keys()) & set(dmp_deg_data.keys()))
     raw_counts  = [amp_deg_data[d]["count"] for d in all_degrees]
@@ -635,32 +632,13 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
         a = arr[~np.isnan(arr)]
         return a if len(a) > 0 else np.array([np.nan])
 
-    # Per-degree het values (no binning)
     het_per_deg = [_clean(amp_deg_data[d]["het_values"]) for d in all_degrees]
 
-    # Per-degree DMP rate
     dmp_rate = np.array([
         dmp_deg_data[d]["count_1"] / dmp_deg_data[d]["count"]
         if dmp_deg_data[d]["count"] > 0 else np.nan
         for d in all_degrees
     ])
-
-    # Accuracy per degree (optional)
-    acc_mean = acc_std = None
-    if run_results is not None:
-        _, deg_data = _collect(run_results)
-        _am, _as = [], []
-        for d in all_degrees:
-            arrs = [a for a in deg_data.get(d, []) if len(a) > 0]
-            if arrs:
-                per_run = [a.mean() for a in arrs]
-                _am.append(float(np.mean(per_run)))
-                _as.append(float(np.std(per_run)))
-            else:
-                _am.append(np.nan)
-                _as.append(0.0)
-        acc_mean = np.array(_am)
-        acc_std  = np.array(_as)
 
     # ── Figure ─────────────────────────────────────────────────────────────────
     n_deg = len(all_degrees)
@@ -671,9 +649,6 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
         fontsize=11, y=1.02,
     )
 
-    ACC_COLOR = "#2980b9"
-    ann_step  = max(1, n_deg // 15)   # sparse annotations to avoid clutter
-
     # ── Left: AMP heterogeneity boxplots ───────────────────────────────────────
     bp = ax_l.boxplot(het_per_deg, positions=pos, widths=0.55, **_BP_KWARGS)
     for patch in bp["boxes"]:
@@ -681,88 +656,37 @@ def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
         patch.set_alpha(0.80)
 
     ax_l.axhline(amp_thr, color="#c0392b", lw=1.4, ls="--", zorder=6,
-                 label=f"AMP threshold  ({amp_thr:.0%})")
+                 label=f"AMP threshold ({amp_thr:.0%})")
     ax_l.set_ylabel("Neighbour heterogeneity ratio", fontsize=10)
     ax_l.set_ylim(-0.05, 1.10)
     ax_l.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax_l.tick_params(axis="y", labelsize=8)
     ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_l.set_title("AMP: how ambivalent are node neighbourhoods?\n"
-                   "(box = IQR, centre line = median, dots = outliers)",
+    ax_l.set_title("AMP: neighbour heterogeneity per degree\n"
+                   "(box = IQR, centre line = median)",
                    fontsize=10, pad=6)
-
-    for i, n in enumerate(raw_counts):
-        if i % ann_step == 0:
-            ax_l.text(i, -0.08, f"n={n}", ha="center", va="top",
-                      fontsize=6.5, color="dimgrey",
-                      transform=ax_l.get_xaxis_transform())
-
-    if acc_mean is not None:
-        ax_l2 = ax_l.twinx()
-        valid = ~np.isnan(acc_mean)
-        xs, ym, ys = np.array(pos)[valid], acc_mean[valid], acc_std[valid]
-        ax_l2.plot(xs, ym, color=ACC_COLOR, lw=1.8, marker="s",
-                   markersize=4, zorder=5, label="Accuracy (mean)")
-        if len(run_results) > 1:
-            ax_l2.fill_between(xs, ym - ys, ym + ys,
-                               color=ACC_COLOR, alpha=0.15, zorder=3)
-        ax_l2.set_ylim(0, 1.05)
-        ax_l2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-        ax_l2.set_ylabel("Accuracy", fontsize=10, color=ACC_COLOR)
-        ax_l2.tick_params(axis="y", labelsize=8, colors=ACC_COLOR)
-        ax_l2.spines["right"].set_edgecolor(ACC_COLOR)
-        h1, l1 = ax_l.get_legend_handles_labels()
-        h2, l2 = ax_l2.get_legend_handles_labels()
-        ax_l.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8, framealpha=0.85)
-    else:
-        ax_l.legend(loc="upper left", fontsize=9, framealpha=0.85)
-
+    ax_l.legend(loc="upper left", bbox_to_anchor=(0, -0.18),
+                borderaxespad=0, fontsize=9, framealpha=0.85, ncol=1)
     _degree_axis(ax_l, pos, all_degrees)
 
     # ── Right: DMP rate per degree ──────────────────────────────────────────────
     ax_r.plot(pos, dmp_rate, color="#8e44ad", lw=2.2, marker="o",
-              markersize=5, zorder=4)
+              markersize=5, zorder=4, label=f"DMP rate ({dmp_coeff}-hop)")
     ax_r.fill_between(pos, 0, dmp_rate, color="#8e44ad", alpha=0.15, zorder=2)
-
-    for i, rate in enumerate(dmp_rate):
-        if not np.isnan(rate) and i % ann_step == 0:
-            ax_r.text(i, rate + 0.03, f"{rate:.0%}", ha="center", va="bottom",
-                      fontsize=7.5, color="#6c3483", fontweight="bold")
-
-    for i, n in enumerate(raw_counts):
-        if i % ann_step == 0:
-            ax_r.text(i, -0.08, f"n={n}", ha="center", va="top",
-                      fontsize=6.5, color="dimgrey",
-                      transform=ax_r.get_xaxis_transform())
 
     ax_r.set_ylim(0, 1.10)
     ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax_r.tick_params(axis="y", labelsize=8)
     ax_r.set_ylabel("% of nodes with DMP", fontsize=10)
     ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_r.set_title("DMP: what fraction of nodes lack a nearby\nsame-class training node?",
+    ax_r.set_title("DMP: fraction lacking a nearby\nsame-class training node",
                    fontsize=10, pad=6)
-
-    if acc_mean is not None:
-        ax_r2 = ax_r.twinx()
-        valid = ~np.isnan(acc_mean)
-        xs, ym, ys = np.array(pos)[valid], acc_mean[valid], acc_std[valid]
-        ax_r2.plot(xs, ym, color=ACC_COLOR, lw=1.8, marker="s",
-                   markersize=4, zorder=5, label="Accuracy (mean)")
-        if len(run_results) > 1:
-            ax_r2.fill_between(xs, ym - ys, ym + ys,
-                               color=ACC_COLOR, alpha=0.15, zorder=3)
-        ax_r2.set_ylim(0, 1.05)
-        ax_r2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-        ax_r2.set_ylabel("Accuracy", fontsize=10, color=ACC_COLOR)
-        ax_r2.tick_params(axis="y", labelsize=8, colors=ACC_COLOR)
-        ax_r2.spines["right"].set_edgecolor(ACC_COLOR)
-        ax_r2.legend(loc="upper right", fontsize=8, framealpha=0.85)
-
+    ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.18),
+                borderaxespad=0, fontsize=9, framealpha=0.85, ncol=1)
     _degree_axis(ax_r, pos, all_degrees)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.20, wspace=0.55)
+    fig.subplots_adjust(bottom=0.25, wspace=0.45)
     _save(fig, save_dir, f"{prefix}_amp_dmp_vs_degree.png", show)
 
 
@@ -1128,181 +1052,113 @@ def plot_group_cardinality_and_distance(group_deg_counts, dist_deg_data,
     _save(fig, save_dir, f"{prefix}_group_cardinality_and_distance.png", show)
 
 
-# ── accuracy by Totoro neighbourhood group ──────────────────────────────────────
+# ── Totoro signal quality by AMP × DMP group ───────────────────────────────────
 
-def plot_acc_by_totoro_group(group_acc_per_run, group_names, group_counts,
-                              neighborhood_stats, cfg,
-                              save_dir=None, show=False):
-    """Two-panel figure comparing accuracy across Totoro neighbourhood groups.
+def plot_totoro_signal_vs_degree(signal_data, group_names, cfg,
+                                  save_dir=None, show=False):
+    """2×2 grid: mean Totoro score of same-class vs diff-class k-hop training
+    neighbours per degree bin, one panel per AMP×DMP group.
 
-    Test nodes are grouped by how their k-hop training neighbourhood compares
-    along two dimensions — count and mean Totoro score of same-class vs
-    different-class training neighbours.
+    A lower Totoro score means a training node receives less cross-class PPR
+    influence — i.e. it carries a cleaner label signal.
 
-    Left panel  — Accuracy per group (bars for single run, boxplots for
-                  multi-run).  Group 0 (same class wins both) is coloured
-                  green; group 3 (diff class wins / no same-class) is red.
-                  Node counts and group definitions are annotated.
-
-    Right panel — For each group, side-by-side bars showing the mean Totoro
-                  score of same-class (blue) vs different-class (red) training
-                  neighbours and mean neighbour counts (overlaid line).
-                  Makes the neighbourhood imbalance that defines each group
-                  directly visible.
-
-    Parameters
-    ----------
-    group_acc_per_run : list[list[float]]
-        Per-run accuracy for each group (4 groups, n_runs values each).
-    group_names : list[str]
-    group_counts : list[int]
-        Total test nodes per group.
-    neighborhood_stats : dict
-        Output of ``utils.get_totoro_neighborhood_groups`` — per-test-node
-        arrays: same_count, diff_count, same_totoro, diff_totoro.
-    cfg : dict
-    save_dir : str or None
-    show : bool
+    Blue shading  — same-class Totoro < diff-class Totoro  (correct signal cleaner ✓)
+    Red shading   — same-class Totoro > diff-class Totoro  (correct signal noisier ✗)
     """
     GROUP_COLORS = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
-    GROUP_EDGE   = ["#1e8449", "#4a5568", "#6c3483", "#c0392b"]
+    SAME_COLOR   = "#2980b9"    # blue  — same-class neighbours
+    DIFF_COLOR   = "#e67e22"    # orange — diff-class neighbours
 
-    n_runs  = len(group_acc_per_run[0])
-    prefix  = _fname_prefix(cfg)
-    n_test  = sum(group_counts)
-    k       = cfg["dataset"].get("amp_coeff", 2)   # reuse or default to 2
-    subtitle = (
+    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+    prefix    = _fname_prefix(cfg)
+    subtitle  = (
         f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
-        f"{cfg.get('split','random')} · "
+        f"{cfg.get('split', 'random')} · "
         f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
-        f"   |   {n_test:,} test nodes  ·  {k}-hop neighbourhood"
+        f"   |   {amp_coeff}-hop neighbourhood"
     )
 
-    pos = list(range(4))
-    g_labels = [n.replace("\n", " ") for n in group_names]
+    # Global degree binning shared across all panels for comparability
+    all_degrees = sorted({d for g in range(4) for d in signal_data[g]})
+    if not all_degrees:
+        return
+    raw_counts = [
+        sum(signal_data[g].get(d, {}).get('count', 0) for g in range(4))
+        for d in all_degrees
+    ]
+    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
+    pos = list(range(n_bins))
 
-    # ── Per-group neighbourhood stats (mean across test nodes in each group) ──
-    group_labels_arr = np.concatenate([
-        np.full(group_counts[g], g) for g in range(4)
-    ])
-    same_tot  = neighborhood_stats["same_totoro"]
-    diff_tot  = neighborhood_stats["diff_totoro"]
-    same_cnt  = neighborhood_stats["same_count"]
-    diff_cnt  = neighborhood_stats["diff_count"]
-
-    mean_same_tot = [same_tot[group_labels_arr == g].mean() if group_counts[g] > 0
-                     else 0.0 for g in range(4)]
-    mean_diff_tot = [diff_tot[group_labels_arr == g].mean() if group_counts[g] > 0
-                     else 0.0 for g in range(4)]
-    mean_same_cnt = [same_cnt[group_labels_arr == g].mean() if group_counts[g] > 0
-                     else 0.0 for g in range(4)]
-    mean_diff_cnt = [diff_cnt[group_labels_arr == g].mean() if group_counts[g] > 0
-                     else 0.0 for g in range(4)]
-
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8))
     fig.suptitle(
-        f"Accuracy by Totoro Neighbourhood Group\n{subtitle}",
+        f"Totoro signal quality of {amp_coeff}-hop training neighbours — by AMP×DMP group\n"
+        f"(lower Totoro = cleaner label signal)\n{subtitle}",
         fontsize=11, y=1.02,
     )
 
-    # ── Left: accuracy per group ───────────────────────────────────────────────
-    if n_runs == 1:
-        accs = [vals[0] for vals in group_acc_per_run]
-        bars = ax_l.bar(pos, accs, color=GROUP_COLORS, edgecolor=GROUP_EDGE,
-                        linewidth=1.2, alpha=0.87, zorder=3, width=0.6)
-        for bar, acc, cnt in zip(bars, accs, group_counts):
-            ax_l.text(bar.get_x() + bar.get_width() / 2,
-                      bar.get_height() + 0.015,
-                      f"{acc:.1%}", ha="center", va="bottom",
-                      fontsize=9.5, fontweight="bold")
-            ax_l.text(bar.get_x() + bar.get_width() / 2,
-                      -0.06, f"n={cnt}", ha="center", va="top",
-                      fontsize=8, color="dimgrey",
-                      transform=ax_l.get_xaxis_transform())
-    else:
-        bp = ax_l.boxplot(group_acc_per_run, positions=pos, widths=0.55,
-                          **_BP_KWARGS)
-        for patch, color in zip(bp["boxes"], GROUP_COLORS):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.82)
-        for cnt, x in zip(group_counts, pos):
-            ax_l.text(x, -0.06, f"n={cnt}", ha="center", va="top",
-                      fontsize=8, color="dimgrey",
-                      transform=ax_l.get_xaxis_transform())
+    for g, ax in enumerate(axes.flat):
+        g_data = signal_data[g]
 
-    overall = (sum(a[0] * c for a, c in zip(group_acc_per_run, group_counts)
-                   if not np.isnan(a[0])) / n_test)
-    ax_l.axhline(overall, color="dimgrey", lw=1.0, ls=":",
-                 label=f"Overall acc  {overall:.1%}", zorder=2)
+        # Mean Totoro per bin (nanmean across all nodes in that (group, bin) cell)
+        ym_same = np.full(n_bins, np.nan)
+        ym_diff = np.full(n_bins, np.nan)
+        for b in range(n_bins):
+            same_vals = np.concatenate(
+                [g_data[d]['same'] for d in all_degrees
+                 if bin_of_deg.get(d) == b and d in g_data]
+                or [np.array([np.nan])]
+            )
+            diff_vals = np.concatenate(
+                [g_data[d]['diff'] for d in all_degrees
+                 if bin_of_deg.get(d) == b and d in g_data]
+                or [np.array([np.nan])]
+            )
+            ym_same[b] = np.nanmean(same_vals)
+            ym_diff[b] = np.nanmean(diff_vals)
 
-    ax_l.annotate("← easiest", xy=(0, 0.02), xycoords=("data","axes fraction"),
-                  fontsize=8, color="#1e8449", ha="center")
-    ax_l.annotate("hardest →", xy=(3, 0.02), xycoords=("data","axes fraction"),
-                  fontsize=8, color="#c0392b", ha="center")
+        # Shade between lines where both are valid
+        both_v = ~(np.isnan(ym_same) | np.isnan(ym_diff))
+        if both_v.sum() >= 2:
+            xv = np.array(pos, dtype=float)[both_v]
+            sv = ym_same[both_v]
+            dv = ym_diff[both_v]
+            ax.fill_between(xv, sv, dv, where=(sv <= dv),
+                            color=SAME_COLOR, alpha=0.15, interpolate=True)
+            ax.fill_between(xv, sv, dv, where=(sv > dv),
+                            color="#e74c3c", alpha=0.15, interpolate=True)
 
-    ax_l.set_xticks(pos)
-    ax_l.set_xticklabels(g_labels, fontsize=9)
-    ax_l.set_ylabel("Accuracy", fontsize=11)
-    ax_l.set_ylim(-0.05, 1.15)
-    ax_l.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_l.legend(loc="upper right", fontsize=9, framealpha=0.85)
-    ax_l.set_title(
-        f"Accuracy per group\n({'single run' if n_runs == 1 else f'{n_runs} seeds'})",
-        fontsize=10, pad=6,
-    )
+        ax.plot(pos, ym_same, color=SAME_COLOR, lw=2.0, marker="o",
+                markersize=5, zorder=4)
+        ax.plot(pos, ym_diff, color=DIFF_COLOR, lw=2.0, marker="s",
+                markersize=5, zorder=4)
 
-    # ── Right: mean same vs diff Totoro score + count per group ───────────────
-    bw = 0.3
-    xs = np.array(pos, dtype=float)
+        ax.set_xticks(pos)
+        ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=8)
+        ax.set_xlabel("Node degree (binned)", fontsize=9)
+        ax.set_ylabel("Mean Totoro score", fontsize=9)
+        ax.tick_params(axis="y", labelsize=8)
+        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+        ax.set_title(
+            group_names[g].replace("\n", " "),
+            fontsize=10, pad=5,
+            color=GROUP_COLORS[g], fontweight="bold",
+        )
 
-    ax_r.bar(xs - bw / 2, mean_same_tot, width=bw, color="#2980b9",
-             alpha=0.85, label="Same-class train neighbours  (Totoro)", zorder=3)
-    ax_r.bar(xs + bw / 2, mean_diff_tot, width=bw, color="#e74c3c",
-             alpha=0.85, label="Diff-class train neighbours  (Totoro)", zorder=3)
-
-    # Annotate Totoro values
-    for x, sv, dv in zip(xs, mean_same_tot, mean_diff_tot):
-        ax_r.text(x - bw / 2, sv + 0.002, f"{sv:.3f}",
-                  ha="center", va="bottom", fontsize=7.5, color="#1a5276")
-        ax_r.text(x + bw / 2, dv + 0.002, f"{dv:.3f}",
-                  ha="center", va="bottom", fontsize=7.5, color="#922b21")
-
-    ax_r.set_ylabel("Mean Totoro score", fontsize=10)
-    ax_r.tick_params(axis="y", labelsize=8)
-    ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-
-    # Overlay mean neighbour counts as a twin axis line
-    ax_r2 = ax_r.twinx()
-    ax_r2.plot(xs, mean_same_cnt, color="#2980b9", lw=1.8, ls="--",
-               marker="o", markersize=5, alpha=0.7, label="Same-class count")
-    ax_r2.plot(xs, mean_diff_cnt, color="#e74c3c", lw=1.8, ls="--",
-               marker="s", markersize=5, alpha=0.7, label="Diff-class count")
-    ax_r2.set_ylabel("Mean # training neighbours", fontsize=9, color="dimgrey")
-    ax_r2.tick_params(axis="y", labelsize=7, colors="dimgrey")
-    ax_r2.spines["right"].set_color("lightgrey")
-
-    ax_r.set_xticks(pos)
-    ax_r.set_xticklabels(g_labels, fontsize=9)
-    ax_r.set_title(
-        "Neighbourhood profile per group\n"
-        "(bars = Totoro scores · dashed lines = neighbour counts)",
-        fontsize=10, pad=6,
-    )
-
-    # Combined legend below right panel
-    handles_bar  = [plt.Rectangle((0,0),1,1, color="#2980b9", alpha=0.85,
-                                  label="Same-class Totoro (bar)"),
-                    plt.Rectangle((0,0),1,1, color="#e74c3c", alpha=0.85,
-                                  label="Diff-class Totoro (bar)")]
-    handles_line = [plt.Line2D([0],[0], color="#2980b9", lw=1.8, ls="--",
-                               marker="o", markersize=5, label="Same-class count (line)"),
-                    plt.Line2D([0],[0], color="#e74c3c", lw=1.8, ls="--",
-                               marker="s", markersize=5, label="Diff-class count (line)")]
-    ax_r.legend(handles=handles_bar + handles_line,
-                loc="upper center", bbox_to_anchor=(0.5, -0.16),
-                ncol=2, fontsize=8, framealpha=0.9)
+    # Shared legend at the bottom
+    legend_handles = [
+        plt.Line2D([0], [0], color=SAME_COLOR, lw=2, marker="o", markersize=5,
+                   label="Same-class training neighbours"),
+        plt.Line2D([0], [0], color=DIFF_COLOR, lw=2, marker="s", markersize=5,
+                   label="Diff-class training neighbours"),
+        plt.Rectangle((0, 0), 1, 1, facecolor=SAME_COLOR, alpha=0.4,
+                       label="Same < Diff  (correct signal cleaner ✓)"),
+        plt.Rectangle((0, 0), 1, 1, facecolor="#e74c3c", alpha=0.4,
+                       label="Same > Diff  (correct signal noisier ✗)"),
+    ]
+    fig.legend(handles=legend_handles, loc="lower center", ncol=2,
+               fontsize=9, framealpha=0.9, bbox_to_anchor=(0.5, -0.04))
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.20, wspace=0.52)
-    _save(fig, save_dir, f"{prefix}_acc_by_totoro_group.png", show)
+    fig.subplots_adjust(bottom=0.20, hspace=0.60, wspace=0.35)
+    _save(fig, save_dir, f"{prefix}_totoro_signal_vs_degree.png", show)
+

@@ -10,7 +10,7 @@ plot:
   acc_vs_distance: true
   acc_vs_amp: true
   acc_vs_dmp: true
-  acc_vs_totoro: true
+  totoro_signal: true
   save: true
   show: false
 

@@ -640,6 +640,72 @@ def get_totoro_values(data, cfg) -> torch.Tensor:
     return totoro_values
 
 
+def get_totoro_signal_by_amp_group(data, totoro_values, group_labels, test_deg, k: int = 2):
+    """For each test node, compute the mean Totoro score of its same-class and
+    different-class k-hop training neighbours, grouped by AMP×DMP group and degree.
+
+    A lower Totoro score means a training node receives less cross-class PPR
+    influence — i.e. it carries a cleaner label signal.  Comparing the two lines
+    per group reveals whether the correct-class training signal is structurally
+    cleaner or noisier than the wrong-class signal.
+
+    Parameters
+    ----------
+    data : PyG Data
+    totoro_values : FloatTensor [num_nodes]
+    group_labels : int numpy array [num_test_nodes]  (values 0–3)
+    test_deg : LongTensor [num_test_nodes]
+    k : int — neighbourhood radius in hops
+
+    Returns
+    -------
+    dict: group (0–3) -> degree (int) -> {
+        'same'  : float64 array, per-node mean Totoro of same-class training
+                  neighbours (NaN when the node has none within k hops),
+        'diff'  : float64 array, per-node mean Totoro of diff-class training
+                  neighbours (NaN when the node has none within k hops),
+        'count' : int, number of test nodes in this (group, degree) cell,
+    }
+    """
+    from torch_geometric.utils import k_hop_subgraph
+
+    y_cpu      = data.y.cpu()
+    train_cpu  = data.train_mask.cpu()
+    tot_cpu    = totoro_values.cpu()
+    test_nodes = data.test_mask.nonzero(as_tuple=True)[0].tolist()
+    test_deg_np = test_deg.numpy() if torch.is_tensor(test_deg) else np.asarray(test_deg, dtype=int)
+
+    result = {g: {} for g in range(4)}
+
+    for i, node in enumerate(test_nodes):
+        g = int(group_labels[i])
+        d = int(test_deg_np[i])
+        node_label = int(y_cpu[node])
+
+        nbs, _, _, _ = k_hop_subgraph(
+            node_idx=int(node), num_hops=k,
+            edge_index=data.edge_index, num_nodes=data.num_nodes,
+        )
+        nbs_set    = set(nbs.cpu().tolist()) - {node}
+        same_train = [n for n in nbs_set if train_cpu[n] and int(y_cpu[n]) == node_label]
+        diff_train = [n for n in nbs_set if train_cpu[n] and int(y_cpu[n]) != node_label]
+
+        same_tot = float(tot_cpu[same_train].mean()) if same_train else np.nan
+        diff_tot = float(tot_cpu[diff_train].mean()) if diff_train else np.nan
+
+        bucket = result[g].setdefault(d, {'same': [], 'diff': [], 'count': 0})
+        bucket['same'].append(same_tot)
+        bucket['diff'].append(diff_tot)
+        bucket['count'] += 1
+
+    for g in range(4):
+        for d in result[g]:
+            result[g][d]['same'] = np.array(result[g][d]['same'], dtype=float)
+            result[g][d]['diff'] = np.array(result[g][d]['diff'], dtype=float)
+
+    return result
+
+
 def get_renode_weight(data, cfg, totoro_values=None) -> torch.Tensor:
     """Compute per-training-node ReNode loss weights from Totoro scores.
 

@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_acc_by_totoro_group
-from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_group_deg_counts, get_totoro_values, get_totoro_neighborhood_groups
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_group_cardinality_and_distance, plot_totoro_signal_vs_degree
+from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_group_deg_counts, get_totoro_values, get_totoro_signal_by_amp_group
 from train import train
 from test import evaluate
 
@@ -160,19 +160,7 @@ def main():
     node_dmp_k = (dist_to_same_class > dmp_coeff).numpy()
     dmp_deg_data = get_dmp_deg(test_deg, node_dmp_k)
 
-    # Totoro neighbourhood groups — graph-fixed, computed once
-    # PPR matrix inversion is O(N³); logged so the user knows it may take a moment
     plot_cfg = cfg.get("plot", {})
-    if plot_cfg.get("acc_vs_totoro", False):
-        log.info("Computing Totoro values (PPR matrix inversion)…")
-        totoro_values = get_totoro_values(data, cfg)
-        tot_k = cfg["model"].get("num_layers", 2)   # use model depth as neighbourhood radius
-        log.info("Building Totoro neighbourhood groups (%d-hop)…", tot_k)
-        tot_group_labels, tot_group_names, tot_neighborhood_stats = \
-            get_totoro_neighborhood_groups(data, totoro_values, k=tot_k)
-        tot_group_counts   = [int((tot_group_labels == g).sum()) for g in range(4)]
-        tot_group_acc_per_run = [[] for _ in range(4)]
-        log.info("Totoro group sizes: %s", tot_group_counts)
 
     # AMP × DMP group membership — fixed for all runs
     amp_threshold = cfg["dataset"].get("amp_threshold", 0.5)
@@ -187,6 +175,16 @@ def main():
     # Per-run accuracy per (group, degree): group_deg_acc[g][degree] = [acc_run1, ...]
     group_deg_acc = {g: {} for g in range(4)}
     test_deg_np = test_deg.numpy()
+
+    # Totoro signal quality — graph-fixed, computed once before the run loop
+    totoro_signal_data = None
+    if plot_cfg.get("totoro_signal", False):
+        log.info("Computing Totoro values for signal analysis (PPR matrix inversion)…")
+        _totoro_values = get_totoro_values(data, cfg)
+        log.info("Computing Totoro signal quality per AMP×DMP group (%d-hop)…", amp_coeff)
+        totoro_signal_data = get_totoro_signal_by_amp_group(
+            data, _totoro_values, group_labels, test_deg, k=amp_coeff
+        )
 
     val_accs, test_accs = [], []
     deg_acc_results = []
@@ -225,14 +223,6 @@ def main():
                 acc_dg  = float(correct[dg_mask].mean())
                 group_deg_acc[g].setdefault(int(d), []).append(acc_dg)
 
-        # Totoro neighbourhood group accuracy for this run
-        if plot_cfg.get("acc_vs_totoro", False):
-            for g in range(4):
-                tg_mask = tot_group_labels == g
-                tot_group_acc_per_run[g].append(
-                    float(correct[tg_mask].mean()) if tg_mask.any() else float("nan")
-                )
-
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
 
@@ -241,7 +231,6 @@ def main():
     log.info("  Val:  %.4f +/- %.4f", val_mean, val_std)
     log.info("  Test: %.4f +/- %.4f", test_mean, test_std)
 
-    plot_cfg = cfg.get("plot", {})
     if plot_cfg.get("acc_vs_degree", False):
         plot_acc_vs_degree(
             deg_acc_results,
@@ -267,7 +256,6 @@ def main():
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
-            run_results=deg_acc_results,
         )
         plot_acc_by_amp_dmp_group(
             group_acc_per_run,
@@ -293,12 +281,10 @@ def main():
             show=plot_cfg.get("show", False),
         )
 
-    if plot_cfg.get("acc_vs_totoro", False):
-        plot_acc_by_totoro_group(
-            tot_group_acc_per_run,
-            tot_group_names,
-            tot_group_counts,
-            tot_neighborhood_stats,
+    if plot_cfg.get("totoro_signal", False) and totoro_signal_data is not None:
+        plot_totoro_signal_vs_degree(
+            totoro_signal_data,
+            group_names,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
