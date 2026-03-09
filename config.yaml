@@ -8,9 +8,9 @@ split: random        # random, public, or custom
 plot:
   acc_vs_degree: true
   acc_vs_distance: true
-  acc_vs_amp: true
-  acc_vs_dmp: true
-  totoro_signal: true
+  # acc_vs_amp: false
+  # acc_vs_dmp: false
+  # totoro_signal: false
   save: true
   show: false
 

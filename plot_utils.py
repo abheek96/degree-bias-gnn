@@ -300,13 +300,9 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
     max_count   = max(counts) or 1
     bubble_size = [max(30, 700 * c / max_count) for c in counts]
 
-    fig, (ax_main, ax_diff) = plt.subplots(
-        2, 1,
-        figsize=(_fig_w(len(all_degrees)), 7),
-        gridspec_kw={"height_ratios": [3, 1]},
-        sharex=True,
+    fig, ax_main = plt.subplots(
+        figsize=(_fig_w(len(all_degrees)), 5),
     )
-    fig.subplots_adjust(hspace=0.08)
 
     # Scatter: one point per degree, size encodes node count
     ax_main.scatter(pos, mean_acc,
@@ -322,7 +318,6 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
 
     ax_main.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                     label=f"Mean test acc ({overall:.1%})", zorder=2)
-    _add_trend(ax_main, all_degrees, pos, mean_acc, counts=counts)
 
     ax_main.set_ylabel("Accuracy  (test nodes)", fontsize=11)
     ax_main.set_ylim(-0.05, 1.10)
@@ -334,8 +329,7 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
         f"Accuracy vs. Node Degree  —  single run\n{subtitle}", fontsize=11
     )
 
-    _diff_subplot(ax_diff, pos, mean_acc, overall)
-    _degree_axis(ax_diff, pos, all_degrees)
+    _degree_axis(ax_main, pos, all_degrees)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_degree_single_run.png", show)
@@ -356,13 +350,9 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
     overall     = (sum(a * c for a, c in zip(median_accs, counts) if not np.isnan(a))
                    / n_test)
 
-    fig, (ax_main, ax_diff) = plt.subplots(
-        2, 1,
-        figsize=(_fig_w(len(all_degrees)), 7),
-        gridspec_kw={"height_ratios": [3, 1]},
-        sharex=True,
+    fig, ax_main = plt.subplots(
+        figsize=(_fig_w(len(all_degrees)), 5),
     )
-    fig.subplots_adjust(hspace=0.08)
 
     bp = ax_main.boxplot(per_run_means, positions=pos, widths=0.6, **_BP_KWARGS)
     for patch in bp["boxes"]:
@@ -372,7 +362,6 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
     _count_bars(ax_main, pos, counts)
     ax_main.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                     label=f"Mean test acc ({overall:.1%})", zorder=2)
-    _add_trend(ax_main, all_degrees, pos, median_accs, counts=counts)
 
     ax_main.set_ylabel(f"Mean accuracy per run  ({n_runs} seeds)", fontsize=11)
     ax_main.set_ylim(-0.05, 1.10)
@@ -383,8 +372,7 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
         f"Accuracy vs. Node Degree  —  {n_runs} seeds\n{subtitle}", fontsize=11
     )
 
-    _diff_subplot(ax_diff, pos, median_accs, overall)
-    _degree_axis(ax_diff, pos, all_degrees)
+    _degree_axis(ax_main, pos, all_degrees)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_degree_across_runs.png", show)
@@ -603,401 +591,401 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
         _save(fig, save_dir, f"{prefix}_combined_vs_degree_{label}.png", show)
 
 
-# ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
-
-def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
-                           save_dir=None, show=False):
-    """Two-panel figure: AMP heterogeneity and DMP rate vs node degree.
-
-    Each unique degree is shown as its own tick — no binning.
-
-    Left  — Boxplot of neighbour-heterogeneity ratios per degree.
-            A dashed line marks the AMP threshold (het > threshold ⇒ AMP).
-
-    Right — Line chart of DMP rate (% of nodes lacking a same-class training
-            node within dmp_coeff hops) per degree.
-    """
-    all_degrees = sorted(set(amp_deg_data.keys()) & set(dmp_deg_data.keys()))
-    raw_counts  = [amp_deg_data[d]["count"] for d in all_degrees]
-    n_test      = sum(raw_counts)
-    prefix      = _fname_prefix(cfg)
-    amp_coeff   = cfg["dataset"].get("amp_coeff", 1)
-    dmp_coeff   = cfg["dataset"].get("dmp_coeff", 1)
-    amp_thr     = cfg["dataset"].get("amp_threshold", 0.5)
-    subtitle    = _subtitle(cfg, n_test, len(all_degrees))
-
-    pos = list(range(len(all_degrees)))
-
-    def _clean(arr):
-        a = arr[~np.isnan(arr)]
-        return a if len(a) > 0 else np.array([np.nan])
-
-    het_per_deg = [_clean(amp_deg_data[d]["het_values"]) for d in all_degrees]
-
-    dmp_rate = np.array([
-        dmp_deg_data[d]["count_1"] / dmp_deg_data[d]["count"]
-        if dmp_deg_data[d]["count"] > 0 else np.nan
-        for d in all_degrees
-    ])
-
-    # ── Figure ─────────────────────────────────────────────────────────────────
-    n_deg = len(all_degrees)
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(_fig_w(n_deg) + 4, 5))
-    fig.suptitle(
-        f"AMP ({amp_coeff}-hop) Heterogeneity  &  DMP ({dmp_coeff}-hop) Rate  vs. Degree\n"
-        f"{subtitle}",
-        fontsize=11, y=1.02,
-    )
-
-    # ── Left: AMP heterogeneity boxplots ───────────────────────────────────────
-    bp = ax_l.boxplot(het_per_deg, positions=pos, widths=0.55, **_BP_KWARGS)
-    for patch in bp["boxes"]:
-        patch.set_facecolor("#e67e22")
-        patch.set_alpha(0.80)
-
-    ax_l.axhline(amp_thr, color="#c0392b", lw=1.4, ls="--", zorder=6,
-                 label=f"AMP threshold ({amp_thr:.0%})")
-    ax_l.set_ylabel("Neighbour heterogeneity ratio", fontsize=10)
-    ax_l.set_ylim(-0.05, 1.10)
-    ax_l.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_l.tick_params(axis="y", labelsize=8)
-    ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_l.set_title("AMP: neighbour heterogeneity per degree\n"
-                   "(box = IQR, centre line = median)",
-                   fontsize=10, pad=6)
-    ax_l.legend(loc="upper left", bbox_to_anchor=(0, -0.18),
-                borderaxespad=0, fontsize=9, framealpha=0.85, ncol=1)
-    _degree_axis(ax_l, pos, all_degrees)
-
-    # ── Right: DMP rate per degree ──────────────────────────────────────────────
-    ax_r.plot(pos, dmp_rate, color="#8e44ad", lw=2.2, marker="o",
-              markersize=5, zorder=4, label=f"DMP rate ({dmp_coeff}-hop)")
-    ax_r.fill_between(pos, 0, dmp_rate, color="#8e44ad", alpha=0.15, zorder=2)
-
-    ax_r.set_ylim(0, 1.10)
-    ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_r.tick_params(axis="y", labelsize=8)
-    ax_r.set_ylabel("% of nodes with DMP", fontsize=10)
-    ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_r.set_title("DMP: fraction lacking a nearby\nsame-class training node",
-                   fontsize=10, pad=6)
-    ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.18),
-                borderaxespad=0, fontsize=9, framealpha=0.85, ncol=1)
-    _degree_axis(ax_r, pos, all_degrees)
-
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=0.25, wspace=0.45)
-    _save(fig, save_dir, f"{prefix}_amp_dmp_vs_degree.png", show)
-
-
-# ── accuracy by AMP × DMP group ────────────────────────────────────────────────
-
-def plot_acc_by_amp_dmp_group(group_acc_per_run, group_names, group_counts,
-                               cfg, save_dir=None, show=False):
-    """Compare classification accuracy across four AMP × DMP groups.
-
-    Groups (x-axis, left to right):
-      0 – Low AMP + No DMP   (structurally easy nodes)
-      1 – Low AMP + DMP
-      2 – High AMP + No DMP
-      3 – High AMP + DMP     (structurally hard nodes)
-
-    Single run  — horizontal bar per group, annotated with node count.
-    Multi-run   — boxplot per group (distribution across seeds), with node
-                  count shown below each box.
-
-    The two extreme groups (0 and 3) are highlighted to make the easy vs
-    hard comparison immediately visible.
-
-    Parameters
-    ----------
-    group_acc_per_run : list[list[float]]
-        Outer list: one entry per group (4 total).
-        Inner list: one accuracy value per run.
-    group_names : list[str]
-        Human-readable label for each group (4 total).
-    group_counts : list[int]
-        Number of test nodes per group.
-    cfg : dict
-    save_dir : str or None
-    show : bool
-    """
-    n_runs   = len(group_acc_per_run[0])
-    prefix   = _fname_prefix(cfg)
-    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
-    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
-    amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
-
-    # Colours: highlight groups 0 (easy, green) and 3 (hard, red); others grey
-    GROUP_COLORS = ["#27ae60", "#95a5a6", "#95a5a6", "#e74c3c"]
-    GROUP_EDGE   = ["#1e8449", "#7f8c8d", "#7f8c8d", "#c0392b"]
-
-    n_test   = sum(group_counts)
-    subtitle = (f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
-                f"{cfg.get('split','random')} · "
-                f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
-                f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop"
-                f"   |   {n_test:,} test nodes")
-
-    pos = list(range(4))
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-
-    if n_runs == 1:
-        accs = [vals[0] for vals in group_acc_per_run]
-        bars = ax.bar(pos, accs, color=GROUP_COLORS, edgecolor=GROUP_EDGE,
-                      linewidth=1.2, alpha=0.85, zorder=3)
-        for bar, acc, cnt in zip(bars, accs, group_counts):
-            ax.text(bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.015,
-                    f"{acc:.1%}", ha="center", va="bottom", fontsize=9,
-                    fontweight="bold")
-            ax.text(bar.get_x() + bar.get_width() / 2,
-                    -0.04, f"n={cnt}", ha="center", va="top",
-                    fontsize=8, color="dimgrey")
-    else:
-        bp = ax.boxplot(group_acc_per_run, positions=pos, widths=0.55,
-                        **_BP_KWARGS)
-        for patch, color in zip(bp["boxes"], GROUP_COLORS):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.80)
-        for cnt, x in zip(group_counts, pos):
-            ax.text(x, -0.06, f"n={cnt}", ha="center", va="top",
-                    fontsize=8, color="dimgrey",
-                    transform=ax.get_xaxis_transform())
-
-    # Annotate the two extremes
-    ax.annotate("← easy nodes", xy=(0, 0.02), xycoords=("data", "axes fraction"),
-                fontsize=8, color="#1e8449", ha="center")
-    ax.annotate("hard nodes →", xy=(3, 0.02), xycoords=("data", "axes fraction"),
-                fontsize=8, color="#c0392b", ha="center")
-
-    overall = (sum(a[0] * c for a, c in zip(group_acc_per_run, group_counts))
-               / n_test)
-    ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
-               label=f"Overall test acc  {overall:.1%}", zorder=2)
-
-    ax.set_xticks(pos)
-    ax.set_xticklabels(group_names, fontsize=10)
-    ax.set_ylabel("Accuracy", fontsize=11)
-    ax.set_ylim(-0.05, 1.15)
-    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
-    ax.set_title(
-        f"Accuracy by AMP × DMP Group  "
-        f"({'single run' if n_runs == 1 else f'{n_runs} seeds'})\n{subtitle}",
-        fontsize=10,
-    )
-
-    fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group.png", show)
-
-
-# ── accuracy by AMP × DMP group, stratified by degree ──────────────────────────
-
-def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
-                                         save_dir=None, show=False):
-    """Accuracy per AMP × DMP group vs binned node degree — 4 overlaid lines.
-
-    Degrees are binned into equal-count buckets so each point on the x-axis
-    represents a comparable number of nodes.  For multi-run experiments each
-    line shows the cross-seed mean with a ±1σ shaded band.
-
-    Answers: does the group ranking (Low AMP + No DMP best, High AMP + DMP
-    worst) hold consistently at every degree, or does it collapse/reverse for
-    very low- or very high-degree nodes?
-    """
-    GROUP_COLORS  = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
-    GROUP_MARKERS = ["o", "s", "^", "D"]
-    GROUP_LS      = ["-", "--", "-.", ":"]
-
-    prefix    = _fname_prefix(cfg)
-    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
-    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
-    amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
-    dataset   = cfg["dataset"]["name"]
-    model     = cfg["model"]["name"]
-    split     = cfg.get("split", "random")
-    cc        = "CC" if cfg["dataset"].get("use_cc") else "noCC"
-
-    all_degrees = sorted({d for g in range(4) for d in group_deg_acc[g]})
-    if not all_degrees:
-        return
-
-    # Use total node count across all groups for degree binning
-    deg_total = {}
-    for d in all_degrees:
-        deg_total[d] = sum(len(group_deg_acc[g].get(d, [])) for g in range(4))
-    raw_counts  = [deg_total[d] for d in all_degrees]
-    bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
-    pos = list(range(n_bins))
-
-    n_runs = max((len(v) for g in range(4) for v in group_deg_acc[g].values()),
-                 default=1)
-
-    # Aggregate per-run accuracy into bins: mean over degrees in each bin
-    fig, ax = plt.subplots(figsize=(max(10, n_bins * 1.5 + 3), 5))
-
-    for g, (color, marker, ls, name) in enumerate(
-        zip(GROUP_COLORS, GROUP_MARKERS, GROUP_LS, group_names)
-    ):
-        bin_means, bin_stds = [], []
-        for b in range(n_bins):
-            degs_in_bin = [d for d in all_degrees if bin_of_deg[d] == b]
-            # Collect all per-run accuracy values for this (group, bin)
-            run_accs = []
-            for run_i in range(n_runs):
-                vals = [group_deg_acc[g][d][run_i]
-                        for d in degs_in_bin
-                        if d in group_deg_acc[g] and run_i < len(group_deg_acc[g][d])
-                        and not np.isnan(group_deg_acc[g][d][run_i])]
-                if vals:
-                    run_accs.append(float(np.mean(vals)))
-            if run_accs:
-                bin_means.append(float(np.mean(run_accs)))
-                bin_stds.append(float(np.std(run_accs)))
-            else:
-                bin_means.append(np.nan)
-                bin_stds.append(np.nan)
-
-        xs    = np.array(pos, dtype=float)
-        means = np.array(bin_means)
-        stds  = np.array(bin_stds)
-        label = name.replace("\n", " ")
-
-        valid = ~np.isnan(means)
-        ax.plot(xs[valid], means[valid], color=color, lw=2.2, ls=ls,
-                marker=marker, markersize=7, zorder=4, label=label)
-        if n_runs > 1:
-            ax.fill_between(xs[valid],
-                            (means - stds)[valid], (means + stds)[valid],
-                            color=color, alpha=0.13, zorder=2)
-
-    ax.set_ylabel("Accuracy", fontsize=11)
-    ax.set_ylim(-0.05, 1.10)
-    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax.set_xticks(pos)
-    ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
-    ax.set_xlabel("Node degree (binned)", fontsize=10)
-
-    run_str = "single run" if n_runs == 1 else f"{n_runs} seeds  (mean ± 1σ)"
-    ax.set_title(
-        f"Does the accuracy gap between AMP × DMP groups persist across degrees?  "
-        f"—  {run_str}\n"
-        f"{dataset} · {model} · {split} · {cc}"
-        f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop",
-        fontsize=10,
-    )
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
-              ncol=4, fontsize=9.5, framealpha=0.9, borderpad=0.8)
-
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=0.24)
-    _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group_vs_degree.png", show)
-
-
-
-# ── Totoro advantage vs degree/AMP for High AMP / No DMP nodes ─────────────────
-
-def plot_totoro_advantage_group2(node_data, cfg, save_dir=None, show=False):
-    """Two-panel node-wise scatter for Group 2 (High AMP, No DMP) test nodes.
-
-    For each node the Totoro advantage is defined as:
-        advantage = mean_same_class_Totoro − mean_diff_class_Totoro
-
-    A positive advantage means the same-class training neighbours have higher
-    Totoro scores (they receive more cross-class PPR confusion themselves) —
-    the correct-class signal is *noisier* than the wrong-class signal.
-    A negative advantage means the correct-class signal is cleaner.
-
-    The key question is whether this advantage, together with degree, can
-    explain whether high AMP (heterogeneous neighbourhood) is compensated.
-
-    Left  — Advantage vs node degree. Each dot is one node, coloured by its
-            continuous AMP score (heterogeneity ratio).  Horizontal dashed
-            line at zero separates the two regimes.
-
-    Right — Advantage vs AMP score (het ratio). Each dot coloured by degree.
-            Vertical dashed line at the AMP threshold; horizontal at zero.
-
-    Nodes without diff-class training neighbours are excluded (noted in title).
-    """
-    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
-    amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
-    prefix    = _fname_prefix(cfg)
-    subtitle  = (
-        f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
-        f"{cfg.get('split', 'random')} · "
-        f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
-        f"   |   {amp_coeff}-hop   |   Group 2: High AMP, No DMP"
-    )
-
-    deg  = node_data['degree']
-    het  = node_data['het']
-    same = node_data['same_totoro']
-    diff = node_data['diff_totoro']
-
-    # Require both same-class and diff-class neighbours to compute advantage
-    valid      = ~(np.isnan(same) | np.isnan(diff))
-    n_total    = len(deg)
-    n_valid    = int(valid.sum())
-    n_excluded = n_total - n_valid
-
-    deg_v  = deg[valid]
-    het_v  = het[valid]
-    adv_v  = same[valid] - diff[valid]
-
-    if n_valid == 0:
-        log.warning("No Group 2 nodes with both same- and diff-class neighbours.")
-        return
-
-    pct_positive = 100 * (adv_v > 0).sum() / n_valid
-
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle(
-        f"Totoro advantage per node  (same − diff class Totoro)  —  Group 2\n"
-        f"positive = correct signal noisier,  negative = correct signal cleaner\n"
-        f"{subtitle}   |   {n_valid} nodes  ({n_excluded} excluded, no diff-class neighbour)",
-        fontsize=10, y=1.03,
-    )
-
-    # ── Left: advantage vs degree, coloured by het ─────────────────────────────
-    sc_l = ax_l.scatter(deg_v, adv_v, c=het_v, cmap="YlOrRd",
-                        vmin=amp_thr, vmax=1.0,
-                        s=30, alpha=0.7, linewidths=0, zorder=3)
-    ax_l.axhline(0, color="dimgrey", lw=1.2, ls="--", zorder=2)
-    ax_l.text(0.98, 0.02, f"{pct_positive:.1f}% nodes: same > diff",
-              transform=ax_l.transAxes, ha="right", va="bottom", fontsize=8.5,
-              color="dimgrey")
-    ax_l.set_xlabel("Node degree", fontsize=10)
-    ax_l.set_ylabel("Totoro advantage  (same − diff)", fontsize=10)
-    ax_l.set_title("Advantage vs degree\n(colour = AMP heterogeneity score)",
-                   fontsize=9, pad=5)
-    ax_l.grid(linestyle="--", linewidth=0.4, alpha=0.4)
-    cb_l = fig.colorbar(sc_l, ax=ax_l, pad=0.02)
-    cb_l.set_label("Heterogeneity ratio (AMP score)", fontsize=8)
-    cb_l.ax.tick_params(labelsize=7)
-
-    # ── Right: advantage vs het, coloured by degree ─────────────────────────────
-    sc_r = ax_r.scatter(het_v, adv_v, c=deg_v, cmap="viridis_r",
-                        s=30, alpha=0.7, linewidths=0, zorder=3)
-    ax_r.axhline(0, color="dimgrey", lw=1.2, ls="--", zorder=2)
-    ax_r.axvline(amp_thr, color="#c0392b", lw=1.2, ls="--", zorder=2,
-                 label=f"AMP threshold ({amp_thr:.0%})")
-    ax_r.set_xlabel("Heterogeneity ratio (AMP score)", fontsize=10)
-    ax_r.set_ylabel("Totoro advantage  (same − diff)", fontsize=10)
-    ax_r.set_title("Advantage vs AMP score\n(colour = node degree)",
-                   fontsize=9, pad=5)
-    ax_r.grid(linestyle="--", linewidth=0.4, alpha=0.4)
-    ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.14),
-                borderaxespad=0, fontsize=9, framealpha=0.85)
-    cb_r = fig.colorbar(sc_r, ax=ax_r, pad=0.02)
-    cb_r.set_label("Node degree", fontsize=8)
-    cb_r.ax.tick_params(labelsize=7)
-
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=0.18, wspace=0.40)
-    _save(fig, save_dir, f"{prefix}_totoro_advantage_group2.png", show)
-
+# # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
+# 
+# def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
+#                            save_dir=None, show=False):
+#     """Two-panel figure: AMP heterogeneity and DMP rate vs node degree.
+# 
+#     Each unique degree is shown as its own tick — no binning.
+# 
+#     Left  — Boxplot of neighbour-heterogeneity ratios per degree.
+#             A dashed line marks the AMP threshold (het > threshold ⇒ AMP).
+# 
+#     Right — Line chart of DMP rate (% of nodes lacking a same-class training
+#             node within dmp_coeff hops) per degree.
+#     """
+#     all_degrees = sorted(set(amp_deg_data.keys()) & set(dmp_deg_data.keys()))
+#     raw_counts  = [amp_deg_data[d]["count"] for d in all_degrees]
+#     n_test      = sum(raw_counts)
+#     prefix      = _fname_prefix(cfg)
+#     amp_coeff   = cfg["dataset"].get("amp_coeff", 1)
+#     dmp_coeff   = cfg["dataset"].get("dmp_coeff", 1)
+#     amp_thr     = cfg["dataset"].get("amp_threshold", 0.5)
+#     subtitle    = _subtitle(cfg, n_test, len(all_degrees))
+# 
+#     pos = list(range(len(all_degrees)))
+# 
+#     def _clean(arr):
+#         a = arr[~np.isnan(arr)]
+#         return a if len(a) > 0 else np.array([np.nan])
+# 
+#     het_per_deg = [_clean(amp_deg_data[d]["het_values"]) for d in all_degrees]
+# 
+#     dmp_rate = np.array([
+#         dmp_deg_data[d]["count_1"] / dmp_deg_data[d]["count"]
+#         if dmp_deg_data[d]["count"] > 0 else np.nan
+#         for d in all_degrees
+#     ])
+# 
+#     # ── Figure ─────────────────────────────────────────────────────────────────
+#     n_deg = len(all_degrees)
+#     fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(_fig_w(n_deg) + 4, 5))
+#     fig.suptitle(
+#         f"AMP ({amp_coeff}-hop) Heterogeneity  &  DMP ({dmp_coeff}-hop) Rate  vs. Degree\n"
+#         f"{subtitle}",
+#         fontsize=11, y=1.02,
+#     )
+# 
+#     # ── Left: AMP heterogeneity boxplots ───────────────────────────────────────
+#     bp = ax_l.boxplot(het_per_deg, positions=pos, widths=0.55, **_BP_KWARGS)
+#     for patch in bp["boxes"]:
+#         patch.set_facecolor("#e67e22")
+#         patch.set_alpha(0.80)
+# 
+#     ax_l.axhline(amp_thr, color="#c0392b", lw=1.4, ls="--", zorder=6,
+#                  label=f"AMP threshold ({amp_thr:.0%})")
+#     ax_l.set_ylabel("Neighbour heterogeneity ratio", fontsize=10)
+#     ax_l.set_ylim(-0.05, 1.10)
+#     ax_l.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+#     ax_l.tick_params(axis="y", labelsize=8)
+#     ax_l.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#     ax_l.set_title("AMP: neighbour heterogeneity per degree\n"
+#                    "(box = IQR, centre line = median)",
+#                    fontsize=10, pad=6)
+#     ax_l.legend(loc="upper left", bbox_to_anchor=(0, -0.18),
+#                 borderaxespad=0, fontsize=9, framealpha=0.85, ncol=1)
+#     _degree_axis(ax_l, pos, all_degrees)
+# 
+#     # ── Right: DMP rate per degree ──────────────────────────────────────────────
+#     ax_r.plot(pos, dmp_rate, color="#8e44ad", lw=2.2, marker="o",
+#               markersize=5, zorder=4, label=f"DMP rate ({dmp_coeff}-hop)")
+#     ax_r.fill_between(pos, 0, dmp_rate, color="#8e44ad", alpha=0.15, zorder=2)
+# 
+#     ax_r.set_ylim(0, 1.10)
+#     ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+#     ax_r.tick_params(axis="y", labelsize=8)
+#     ax_r.set_ylabel("% of nodes with DMP", fontsize=10)
+#     ax_r.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#     ax_r.set_title("DMP: fraction lacking a nearby\nsame-class training node",
+#                    fontsize=10, pad=6)
+#     ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.18),
+#                 borderaxespad=0, fontsize=9, framealpha=0.85, ncol=1)
+#     _degree_axis(ax_r, pos, all_degrees)
+# 
+#     fig.tight_layout()
+#     fig.subplots_adjust(bottom=0.25, wspace=0.45)
+#     _save(fig, save_dir, f"{prefix}_amp_dmp_vs_degree.png", show)
+# 
+# 
+# # ── accuracy by AMP × DMP group ────────────────────────────────────────────────
+# 
+# def plot_acc_by_amp_dmp_group(group_acc_per_run, group_names, group_counts,
+#                                cfg, save_dir=None, show=False):
+#     """Compare classification accuracy across four AMP × DMP groups.
+# 
+#     Groups (x-axis, left to right):
+#       0 – Low AMP + No DMP   (structurally easy nodes)
+#       1 – Low AMP + DMP
+#       2 – High AMP + No DMP
+#       3 – High AMP + DMP     (structurally hard nodes)
+# 
+#     Single run  — horizontal bar per group, annotated with node count.
+#     Multi-run   — boxplot per group (distribution across seeds), with node
+#                   count shown below each box.
+# 
+#     The two extreme groups (0 and 3) are highlighted to make the easy vs
+#     hard comparison immediately visible.
+# 
+#     Parameters
+#     ----------
+#     group_acc_per_run : list[list[float]]
+#         Outer list: one entry per group (4 total).
+#         Inner list: one accuracy value per run.
+#     group_names : list[str]
+#         Human-readable label for each group (4 total).
+#     group_counts : list[int]
+#         Number of test nodes per group.
+#     cfg : dict
+#     save_dir : str or None
+#     show : bool
+#     """
+#     n_runs   = len(group_acc_per_run[0])
+#     prefix   = _fname_prefix(cfg)
+#     amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+#     dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+#     amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
+# 
+#     # Colours: highlight groups 0 (easy, green) and 3 (hard, red); others grey
+#     GROUP_COLORS = ["#27ae60", "#95a5a6", "#95a5a6", "#e74c3c"]
+#     GROUP_EDGE   = ["#1e8449", "#7f8c8d", "#7f8c8d", "#c0392b"]
+# 
+#     n_test   = sum(group_counts)
+#     subtitle = (f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+#                 f"{cfg.get('split','random')} · "
+#                 f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+#                 f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop"
+#                 f"   |   {n_test:,} test nodes")
+# 
+#     pos = list(range(4))
+# 
+#     fig, ax = plt.subplots(figsize=(8, 5))
+# 
+#     if n_runs == 1:
+#         accs = [vals[0] for vals in group_acc_per_run]
+#         bars = ax.bar(pos, accs, color=GROUP_COLORS, edgecolor=GROUP_EDGE,
+#                       linewidth=1.2, alpha=0.85, zorder=3)
+#         for bar, acc, cnt in zip(bars, accs, group_counts):
+#             ax.text(bar.get_x() + bar.get_width() / 2,
+#                     bar.get_height() + 0.015,
+#                     f"{acc:.1%}", ha="center", va="bottom", fontsize=9,
+#                     fontweight="bold")
+#             ax.text(bar.get_x() + bar.get_width() / 2,
+#                     -0.04, f"n={cnt}", ha="center", va="top",
+#                     fontsize=8, color="dimgrey")
+#     else:
+#         bp = ax.boxplot(group_acc_per_run, positions=pos, widths=0.55,
+#                         **_BP_KWARGS)
+#         for patch, color in zip(bp["boxes"], GROUP_COLORS):
+#             patch.set_facecolor(color)
+#             patch.set_alpha(0.80)
+#         for cnt, x in zip(group_counts, pos):
+#             ax.text(x, -0.06, f"n={cnt}", ha="center", va="top",
+#                     fontsize=8, color="dimgrey",
+#                     transform=ax.get_xaxis_transform())
+# 
+#     # Annotate the two extremes
+#     ax.annotate("← easy nodes", xy=(0, 0.02), xycoords=("data", "axes fraction"),
+#                 fontsize=8, color="#1e8449", ha="center")
+#     ax.annotate("hard nodes →", xy=(3, 0.02), xycoords=("data", "axes fraction"),
+#                 fontsize=8, color="#c0392b", ha="center")
+# 
+#     overall = (sum(a[0] * c for a, c in zip(group_acc_per_run, group_counts))
+#                / n_test)
+#     ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+#                label=f"Overall test acc  {overall:.1%}", zorder=2)
+# 
+#     ax.set_xticks(pos)
+#     ax.set_xticklabels(group_names, fontsize=10)
+#     ax.set_ylabel("Accuracy", fontsize=11)
+#     ax.set_ylim(-0.05, 1.15)
+#     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+#     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#     ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
+#     ax.set_title(
+#         f"Accuracy by AMP × DMP Group  "
+#         f"({'single run' if n_runs == 1 else f'{n_runs} seeds'})\n{subtitle}",
+#         fontsize=10,
+#     )
+# 
+#     fig.tight_layout()
+#     _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group.png", show)
+# 
+# 
+# # ── accuracy by AMP × DMP group, stratified by degree ──────────────────────────
+# 
+# def plot_acc_by_amp_dmp_group_vs_degree(group_deg_acc, group_names, cfg,
+#                                          save_dir=None, show=False):
+#     """Accuracy per AMP × DMP group vs binned node degree — 4 overlaid lines.
+# 
+#     Degrees are binned into equal-count buckets so each point on the x-axis
+#     represents a comparable number of nodes.  For multi-run experiments each
+#     line shows the cross-seed mean with a ±1σ shaded band.
+# 
+#     Answers: does the group ranking (Low AMP + No DMP best, High AMP + DMP
+#     worst) hold consistently at every degree, or does it collapse/reverse for
+#     very low- or very high-degree nodes?
+#     """
+#     GROUP_COLORS  = ["#27ae60", "#5d6d7e", "#a569bd", "#e74c3c"]
+#     GROUP_MARKERS = ["o", "s", "^", "D"]
+#     GROUP_LS      = ["-", "--", "-.", ":"]
+# 
+#     prefix    = _fname_prefix(cfg)
+#     amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+#     dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
+#     amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
+#     dataset   = cfg["dataset"]["name"]
+#     model     = cfg["model"]["name"]
+#     split     = cfg.get("split", "random")
+#     cc        = "CC" if cfg["dataset"].get("use_cc") else "noCC"
+# 
+#     all_degrees = sorted({d for g in range(4) for d in group_deg_acc[g]})
+#     if not all_degrees:
+#         return
+# 
+#     # Use total node count across all groups for degree binning
+#     deg_total = {}
+#     for d in all_degrees:
+#         deg_total[d] = sum(len(group_deg_acc[g].get(d, [])) for g in range(4))
+#     raw_counts  = [deg_total[d] for d in all_degrees]
+#     bin_of_deg, bin_labels, n_bins = _make_degree_bins(all_degrees, raw_counts)
+#     pos = list(range(n_bins))
+# 
+#     n_runs = max((len(v) for g in range(4) for v in group_deg_acc[g].values()),
+#                  default=1)
+# 
+#     # Aggregate per-run accuracy into bins: mean over degrees in each bin
+#     fig, ax = plt.subplots(figsize=(max(10, n_bins * 1.5 + 3), 5))
+# 
+#     for g, (color, marker, ls, name) in enumerate(
+#         zip(GROUP_COLORS, GROUP_MARKERS, GROUP_LS, group_names)
+#     ):
+#         bin_means, bin_stds = [], []
+#         for b in range(n_bins):
+#             degs_in_bin = [d for d in all_degrees if bin_of_deg[d] == b]
+#             # Collect all per-run accuracy values for this (group, bin)
+#             run_accs = []
+#             for run_i in range(n_runs):
+#                 vals = [group_deg_acc[g][d][run_i]
+#                         for d in degs_in_bin
+#                         if d in group_deg_acc[g] and run_i < len(group_deg_acc[g][d])
+#                         and not np.isnan(group_deg_acc[g][d][run_i])]
+#                 if vals:
+#                     run_accs.append(float(np.mean(vals)))
+#             if run_accs:
+#                 bin_means.append(float(np.mean(run_accs)))
+#                 bin_stds.append(float(np.std(run_accs)))
+#             else:
+#                 bin_means.append(np.nan)
+#                 bin_stds.append(np.nan)
+# 
+#         xs    = np.array(pos, dtype=float)
+#         means = np.array(bin_means)
+#         stds  = np.array(bin_stds)
+#         label = name.replace("\n", " ")
+# 
+#         valid = ~np.isnan(means)
+#         ax.plot(xs[valid], means[valid], color=color, lw=2.2, ls=ls,
+#                 marker=marker, markersize=7, zorder=4, label=label)
+#         if n_runs > 1:
+#             ax.fill_between(xs[valid],
+#                             (means - stds)[valid], (means + stds)[valid],
+#                             color=color, alpha=0.13, zorder=2)
+# 
+#     ax.set_ylabel("Accuracy", fontsize=11)
+#     ax.set_ylim(-0.05, 1.10)
+#     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+#     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#     ax.set_xticks(pos)
+#     ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
+#     ax.set_xlabel("Node degree (binned)", fontsize=10)
+# 
+#     run_str = "single run" if n_runs == 1 else f"{n_runs} seeds  (mean ± 1σ)"
+#     ax.set_title(
+#         f"Does the accuracy gap between AMP × DMP groups persist across degrees?  "
+#         f"—  {run_str}\n"
+#         f"{dataset} · {model} · {split} · {cc}"
+#         f"   |   AMP {amp_coeff}-hop  thr={amp_thr}  ·  DMP {dmp_coeff}-hop",
+#         fontsize=10,
+#     )
+#     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
+#               ncol=4, fontsize=9.5, framealpha=0.9, borderpad=0.8)
+# 
+#     fig.tight_layout()
+#     fig.subplots_adjust(bottom=0.24)
+#     _save(fig, save_dir, f"{prefix}_acc_by_amp_dmp_group_vs_degree.png", show)
+# 
+# 
+# 
+# # ── Totoro advantage vs degree/AMP for High AMP / No DMP nodes ─────────────────
+# 
+# def plot_totoro_advantage_group2(node_data, cfg, save_dir=None, show=False):
+#     """Two-panel node-wise scatter for Group 2 (High AMP, No DMP) test nodes.
+# 
+#     For each node the Totoro advantage is defined as:
+#         advantage = mean_same_class_Totoro − mean_diff_class_Totoro
+# 
+#     A positive advantage means the same-class training neighbours have higher
+#     Totoro scores (they receive more cross-class PPR confusion themselves) —
+#     the correct-class signal is *noisier* than the wrong-class signal.
+#     A negative advantage means the correct-class signal is cleaner.
+# 
+#     The key question is whether this advantage, together with degree, can
+#     explain whether high AMP (heterogeneous neighbourhood) is compensated.
+# 
+#     Left  — Advantage vs node degree. Each dot is one node, coloured by its
+#             continuous AMP score (heterogeneity ratio).  Horizontal dashed
+#             line at zero separates the two regimes.
+# 
+#     Right — Advantage vs AMP score (het ratio). Each dot coloured by degree.
+#             Vertical dashed line at the AMP threshold; horizontal at zero.
+# 
+#     Nodes without diff-class training neighbours are excluded (noted in title).
+#     """
+#     amp_coeff = cfg["dataset"].get("amp_coeff", 1)
+#     amp_thr   = cfg["dataset"].get("amp_threshold", 0.5)
+#     prefix    = _fname_prefix(cfg)
+#     subtitle  = (
+#         f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+#         f"{cfg.get('split', 'random')} · "
+#         f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+#         f"   |   {amp_coeff}-hop   |   Group 2: High AMP, No DMP"
+#     )
+# 
+#     deg  = node_data['degree']
+#     het  = node_data['het']
+#     same = node_data['same_totoro']
+#     diff = node_data['diff_totoro']
+# 
+#     # Require both same-class and diff-class neighbours to compute advantage
+#     valid      = ~(np.isnan(same) | np.isnan(diff))
+#     n_total    = len(deg)
+#     n_valid    = int(valid.sum())
+#     n_excluded = n_total - n_valid
+# 
+#     deg_v  = deg[valid]
+#     het_v  = het[valid]
+#     adv_v  = same[valid] - diff[valid]
+# 
+#     if n_valid == 0:
+#         log.warning("No Group 2 nodes with both same- and diff-class neighbours.")
+#         return
+# 
+#     pct_positive = 100 * (adv_v > 0).sum() / n_valid
+# 
+#     fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13, 5))
+#     fig.suptitle(
+#         f"Totoro advantage per node  (same − diff class Totoro)  —  Group 2\n"
+#         f"positive = correct signal noisier,  negative = correct signal cleaner\n"
+#         f"{subtitle}   |   {n_valid} nodes  ({n_excluded} excluded, no diff-class neighbour)",
+#         fontsize=10, y=1.03,
+#     )
+# 
+#     # ── Left: advantage vs degree, coloured by het ─────────────────────────────
+#     sc_l = ax_l.scatter(deg_v, adv_v, c=het_v, cmap="YlOrRd",
+#                         vmin=amp_thr, vmax=1.0,
+#                         s=30, alpha=0.7, linewidths=0, zorder=3)
+#     ax_l.axhline(0, color="dimgrey", lw=1.2, ls="--", zorder=2)
+#     ax_l.text(0.98, 0.02, f"{pct_positive:.1f}% nodes: same > diff",
+#               transform=ax_l.transAxes, ha="right", va="bottom", fontsize=8.5,
+#               color="dimgrey")
+#     ax_l.set_xlabel("Node degree", fontsize=10)
+#     ax_l.set_ylabel("Totoro advantage  (same − diff)", fontsize=10)
+#     ax_l.set_title("Advantage vs degree\n(colour = AMP heterogeneity score)",
+#                    fontsize=9, pad=5)
+#     ax_l.grid(linestyle="--", linewidth=0.4, alpha=0.4)
+#     cb_l = fig.colorbar(sc_l, ax=ax_l, pad=0.02)
+#     cb_l.set_label("Heterogeneity ratio (AMP score)", fontsize=8)
+#     cb_l.ax.tick_params(labelsize=7)
+# 
+#     # ── Right: advantage vs het, coloured by degree ─────────────────────────────
+#     sc_r = ax_r.scatter(het_v, adv_v, c=deg_v, cmap="viridis_r",
+#                         s=30, alpha=0.7, linewidths=0, zorder=3)
+#     ax_r.axhline(0, color="dimgrey", lw=1.2, ls="--", zorder=2)
+#     ax_r.axvline(amp_thr, color="#c0392b", lw=1.2, ls="--", zorder=2,
+#                  label=f"AMP threshold ({amp_thr:.0%})")
+#     ax_r.set_xlabel("Heterogeneity ratio (AMP score)", fontsize=10)
+#     ax_r.set_ylabel("Totoro advantage  (same − diff)", fontsize=10)
+#     ax_r.set_title("Advantage vs AMP score\n(colour = node degree)",
+#                    fontsize=9, pad=5)
+#     ax_r.grid(linestyle="--", linewidth=0.4, alpha=0.4)
+#     ax_r.legend(loc="upper left", bbox_to_anchor=(0, -0.14),
+#                 borderaxespad=0, fontsize=9, framealpha=0.85)
+#     cb_r = fig.colorbar(sc_r, ax=ax_r, pad=0.02)
+#     cb_r.set_label("Node degree", fontsize=8)
+#     cb_r.ax.tick_params(labelsize=7)
+# 
+#     fig.tight_layout()
+#     fig.subplots_adjust(bottom=0.18, wspace=0.40)
+#     _save(fig, save_dir, f"{prefix}_totoro_advantage_group2.png", show)
+# 
