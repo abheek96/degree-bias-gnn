@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree, plot_amp_dmp_vs_degree, plot_acc_by_amp_dmp_group, plot_acc_by_amp_dmp_group_vs_degree, plot_totoro_advantage_group2
-from utils import compute_distances_to_train, get_distance_deg, get_amp_deg, get_dmp_deg, get_node_het, get_amp_dmp_groups, get_totoro_values, get_group2_signal_data
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_dist_vs_degree, plot_combined_vs_degree
+from utils import compute_distances_to_train, get_distance_deg
 from train import train
 from test import evaluate
 
@@ -143,49 +143,7 @@ def main():
         test_deg, dist_to_train, dist_to_same_class, num_nodes=data.num_nodes
     )
 
-    # AMP and DMP are graph-fixed — compute once before the run loop.
-    # amp_coeff / dmp_coeff set the k-hop neighbourhood radius.
-    amp_coeff = cfg["dataset"].get("amp_coeff", 1)
-    dmp_coeff = cfg["dataset"].get("dmp_coeff", 1)
-    log.info("AMP neighbourhood: %d hop(s)  |  DMP neighbourhood: %d hop(s)",
-             amp_coeff, dmp_coeff)
-
-    # AMP: heterogeneity over k-hop neighbourhood for each test node
-    node_het = get_node_het(data, k=amp_coeff)             # FloatTensor [num_nodes]
-    amp_deg_data = get_amp_deg(test_deg, node_het[data.test_mask.cpu()])
-
-    # DMP-k: a test node is DMP if no same-class training node exists within
-    # dmp_coeff hops — equivalent to dist_to_same_class > dmp_coeff.
-    # dist_to_same_class is already computed above for all test nodes.
-    node_dmp_k = (dist_to_same_class > dmp_coeff).numpy()
-    dmp_deg_data = get_dmp_deg(test_deg, node_dmp_k)
-
     plot_cfg = cfg.get("plot", {})
-
-    # AMP × DMP group membership — fixed for all runs
-    amp_threshold = cfg["dataset"].get("amp_threshold", 0.5)
-    test_het = node_het[data.test_mask.cpu()]              # FloatTensor [num_test]
-    group_labels, group_names = get_amp_dmp_groups(
-        test_het, node_dmp_k, amp_threshold=amp_threshold
-    )
-    group_counts    = [int((group_labels == g).sum()) for g in range(4)]
-    for g, (name, count) in enumerate(zip(group_names, group_counts)):
-        log.info("Group %d (%s): %d test nodes", g, name.replace("\n", " "), count)
-    # Per-run accuracy per group: group_acc_per_run[g] = [acc_run1, acc_run2, ...]
-    group_acc_per_run = [[] for _ in range(4)]
-    # Per-run accuracy per (group, degree): group_deg_acc[g][degree] = [acc_run1, ...]
-    group_deg_acc = {g: {} for g in range(4)}
-    test_deg_np = test_deg.numpy()
-
-    # Totoro advantage for Group 2 — graph-fixed, computed once before the run loop
-    group2_signal_data = None
-    if plot_cfg.get("totoro_signal", False):
-        log.info("Computing Totoro values (PPR matrix inversion)…")
-        _totoro_values = get_totoro_values(data, cfg)
-        log.info("Computing per-node Totoro advantage for Group 2 (%d-hop)…", amp_coeff)
-        group2_signal_data = get_group2_signal_data(
-            data, _totoro_values, group_labels, test_deg, test_het, k=amp_coeff
-        )
 
     val_accs, test_accs = [], []
     deg_acc_results = []
@@ -208,21 +166,6 @@ def main():
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
         )
         run_labels.append(run_name)
-
-        # Per-group accuracy for this run
-        test_pred  = pred[data.test_mask].cpu()
-        test_true  = data.y[data.test_mask].cpu()
-        correct    = (test_pred == test_true).float().numpy()
-        for g in range(4):
-            g_mask = group_labels == g
-            group_acc_per_run[g].append(
-                float(correct[g_mask].mean()) if g_mask.any() else float("nan")
-            )
-            # Per-(group, degree) accuracy
-            for d in np.unique(test_deg_np[g_mask]):
-                dg_mask = g_mask & (test_deg_np == d)
-                acc_dg  = float(correct[dg_mask].mean())
-                group_deg_acc[g].setdefault(int(d), []).append(acc_dg)
 
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
@@ -248,38 +191,6 @@ def main():
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
             run_labels=run_labels,
-        )
-
-    if plot_cfg.get("acc_vs_amp", False) or plot_cfg.get("acc_vs_dmp", False):
-        plot_amp_dmp_vs_degree(
-            amp_deg_data,
-            dmp_deg_data,
-            cfg,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
-        )
-        plot_acc_by_amp_dmp_group(
-            group_acc_per_run,
-            group_names,
-            group_counts,
-            cfg,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
-        )
-        plot_acc_by_amp_dmp_group_vs_degree(
-            group_deg_acc,
-            group_names,
-            cfg,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
-        )
-
-    if plot_cfg.get("totoro_signal", False) and group2_signal_data is not None:
-        plot_totoro_advantage_group2(
-            group2_signal_data,
-            cfg,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
         )
 
 
