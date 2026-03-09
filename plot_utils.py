@@ -111,54 +111,6 @@ def _save(fig, save_dir, filename, show):
     plt.close(fig)
 
 
-
-def _make_degree_bins(all_degrees, counts, n_bins=6):
-    """Bin degree values into n_bins groups each containing roughly equal numbers
-    of test nodes (equal-count / quantile binning).
-
-    Parameters
-    ----------
-    all_degrees : sorted list[int]
-    counts      : list[int], test-node count for each degree (same order)
-    n_bins      : target number of bins
-
-    Returns
-    -------
-    bin_of_degree : dict {degree -> bin_index}
-    bin_labels    : list[str] – human-readable ranges, e.g. "1", "2–3", "≥16"
-    n_actual      : int – actual number of bins produced
-    """
-    arr  = np.array(all_degrees, dtype=int)
-    cnts = np.array(counts, dtype=float)
-
-    if len(arr) <= n_bins:
-        return ({int(d): i for i, d in enumerate(arr)},
-                [str(d) for d in arr],
-                len(arr))
-
-    # Find degree boundaries that split the cumulative node count equally
-    cum     = np.cumsum(cnts)
-    targets = np.linspace(0, cum[-1], n_bins + 1)[1:-1]   # interior splits
-    bounds  = sorted({int(arr[min(int(np.searchsorted(cum, t)), len(arr) - 1)])
-                      for t in targets})
-
-    bin_of_degree = {int(d): int(np.searchsorted(bounds, d, side="right"))
-                     for d in arr}
-
-    n_actual = max(bin_of_degree.values()) + 1
-    bin_labels = []
-    for b in range(n_actual):
-        in_b = sorted(d for d, bi in bin_of_degree.items() if bi == b)
-        lo, hi = in_b[0], in_b[-1]
-        if lo == hi:
-            bin_labels.append(str(lo))
-        elif b == n_actual - 1:
-            bin_labels.append(f"≥{lo}")
-        else:
-            bin_labels.append(f"{lo}–{hi}")
-    return bin_of_degree, bin_labels, n_actual
-
-
 def _degree_axis(ax, pos, all_degrees):
     """Set x-axis label and ticks; thin labels when there are many degrees."""
     ax.set_xlabel("Node degree", fontsize=11)
@@ -166,62 +118,6 @@ def _degree_axis(ax, pos, all_degrees):
     step = max(1, len(all_degrees) // 30)
     ax.set_xticks(pos[::step])
     ax.set_xticklabels(all_degrees[::step], rotation=55, ha="right", fontsize=8)
-
-
-def _add_trend(ax, all_degrees, pos, accs, counts=None):
-    """Fit WLS on (degree, accuracy) weighted by node count and overlay as a
-    dashed line with a shaded 95 % confidence band.
-
-    Using WLS (rather than plain OLS) down-weights degree buckets that contain
-    very few test nodes, whose accuracy estimates are noisier.  The slope is in
-    units of accuracy-change per unit degree — a positive slope means
-    higher-degree nodes tend to be classified more accurately.
-
-    The 95 % CI band is derived from the standard error of the WLS fit
-    evaluated at each interpolated degree value.
-    """
-    pairs = [(d, p, a, c) for d, p, a, c in
-             zip(all_degrees, pos, accs, counts if counts is not None else [1] * len(all_degrees))
-             if not np.isnan(a)]
-    if len(pairs) < 2:
-        return
-    degs, poss, vals, wts = map(list, zip(*pairs))
-    degs = np.array(degs, dtype=float)
-    vals = np.array(vals, dtype=float)
-    wts  = np.array(wts,  dtype=float)
-
-    # WLS via weighted polyfit
-    z = np.polyfit(degs, vals, 1, w=wts)
-
-    # Residual standard error for the confidence band
-    y_hat = np.polyval(z, degs)
-    resid = vals - y_hat
-    # Weighted residual sum of squares
-    wrss  = np.sum(wts * resid ** 2)
-    dof   = max(len(degs) - 2, 1)
-    s2    = wrss / dof
-
-    x_deg = np.linspace(degs.min(), degs.max(), 200)
-    x_pos = np.interp(x_deg, degs, poss)
-    y_fit = np.polyval(z, x_deg)
-
-    # Leverage for each interpolated point: var(ŷ) = s² * x'(X'WX)⁻¹x
-    W   = np.diag(wts)
-    X   = np.column_stack([degs, np.ones_like(degs)])
-    XtW = X.T @ W
-    try:
-        cov = np.linalg.inv(XtW @ X) * s2
-        X_new = np.column_stack([x_deg, np.ones_like(x_deg)])
-        se_fit = np.sqrt(np.einsum("ij,jk,ik->i", X_new, cov, X_new))
-        ci = 1.96 * se_fit
-        ax.fill_between(x_pos, y_fit - ci, y_fit + ci,
-                        color="black", alpha=0.10, zorder=4)
-    except np.linalg.LinAlgError:
-        pass  # skip CI if matrix is singular
-
-    ax.plot(x_pos, y_fit,
-            color="black", lw=1.5, ls="--", zorder=5,
-            label=f"WLS trend  ({z[0]:+.4f} acc / degree)")
 
 
 def _count_bars(ax_main, pos, counts):
@@ -237,22 +133,6 @@ def _count_bars(ax_main, pos, counts):
     ax2.spines["right"].set_color("lightgrey")
     ax2.set_ylim(0, max(counts) * 4)
     return ax2
-
-
-def _diff_subplot(ax, pos, accs, overall):
-    """Bar chart of per-degree accuracy minus the overall test accuracy.
-
-    Green bars = above average for that degree; red = below average.
-    This makes the degree-bias trend immediately legible even when absolute
-    accuracy values are tightly clustered.
-    """
-    diffs  = [a - overall for a in accs]
-    colors = ["#27ae60" if d >= 0 else "#e74c3c" for d in diffs]
-    ax.bar(pos, diffs, color=colors, width=0.6, alpha=0.82, zorder=3)
-    ax.axhline(0, color="black", linewidth=0.9, zorder=4)
-    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.set_ylabel("Δ from mean\ntest acc", fontsize=9)
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
 
 # ── public entry point ─────────────────────────────────────────────────────────
@@ -376,89 +256,6 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_degree_across_runs.png", show)
-
-
-
-
-# ── distance-to-train vs degree ────────────────────────────────────────────────
-
-def plot_dist_vs_degree(dist_deg_data, cfg, save_dir=None, show=False):
-    """Plot hop-distance distributions per degree group.
-
-    Two stacked subplots, sharing the x-axis (node degree):
-      • Top    – dist to *any* training node   (blue boxes)
-      • Bottom – dist to *same-class* training node (green boxes)
-
-    A horizontal dashed red line marks the model's receptive field
-    (``cfg['model']['num_layers']`` hops).  NaN entries (unreachable nodes)
-    are silently omitted from each boxplot.
-
-    Parameters
-    ----------
-    dist_deg_data : dict
-        Output of ``utils.get_distance_deg``.
-    cfg : dict
-        Experiment config (used for ``num_layers``, titles, filenames).
-    save_dir : str or None
-    show : bool
-    """
-    num_layers  = cfg["model"]["num_layers"]
-    all_degrees = sorted(dist_deg_data.keys())
-    pos         = list(range(len(all_degrees)))
-    counts      = [dist_deg_data[d]["count"] for d in all_degrees]
-    n_test      = sum(counts)
-    prefix      = _fname_prefix(cfg)
-    subtitle    = _subtitle(cfg, n_test, len(all_degrees))
-
-    def _clean(arr):
-        """Drop NaN, return at least [NaN] so boxplot doesn't crash."""
-        a = arr[~np.isnan(arr)]
-        return a if len(a) > 0 else np.array([np.nan])
-
-    data_train = [_clean(dist_deg_data[d]["dist_to_train"])     for d in all_degrees]
-    data_same  = [_clean(dist_deg_data[d]["dist_to_same_class"]) for d in all_degrees]
-
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1,
-        figsize=(_fig_w(len(all_degrees)), 8),
-        sharex=True,
-        gridspec_kw={"height_ratios": [1, 1]},
-    )
-    fig.subplots_adjust(hspace=0.08)
-
-    # ── top: dist to any train node ──
-    bp1 = ax_top.boxplot(data_train, positions=pos, widths=0.6, **_BP_KWARGS)
-    for patch in bp1["boxes"]:
-        patch.set_facecolor("#5b9bd5")
-        patch.set_alpha(0.72)
-    _count_bars(ax_top, pos, counts)
-    ax_top.axhline(
-        num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
-        label=f"Model receptive field  ({num_layers} layers)",
-    )
-    ax_top.set_ylabel("Hops to nearest\ntraining node", fontsize=10)
-    ax_top.legend(loc="upper left", fontsize=9, framealpha=0.85)
-    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_top.set_title(
-        f"Distance to Training Node vs. Node Degree\n{subtitle}", fontsize=11
-    )
-
-    # ── bottom: dist to same-class train node ──
-    bp2 = ax_bot.boxplot(data_same, positions=pos, widths=0.6, **_BP_KWARGS)
-    for patch in bp2["boxes"]:
-        patch.set_facecolor("#27ae60")
-        patch.set_alpha(0.72)
-    ax_bot.axhline(
-        num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
-        label=f"Model receptive field  ({num_layers} layers)",
-    )
-    ax_bot.set_ylabel("Hops to nearest\nsame-class training node", fontsize=10)
-    ax_bot.legend(loc="upper left", fontsize=9, framealpha=0.85)
-    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    _degree_axis(ax_bot, pos, all_degrees)
-
-    fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_dist_vs_degree.png", show)
 
 
 # ── combined accuracy + distance vs degree ─────────────────────────────────────
@@ -989,3 +786,205 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 #     fig.subplots_adjust(bottom=0.18, wspace=0.40)
 #     _save(fig, save_dir, f"{prefix}_totoro_advantage_group2.png", show)
 # 
+
+
+
+# ── Unused functions ──────────────────────────────────────────────────────────
+
+# def _make_degree_bins(all_degrees, counts, n_bins=6):
+#     """Bin degree values into n_bins groups each containing roughly equal numbers
+#     of test nodes (equal-count / quantile binning).
+#
+#     Parameters
+#     ----------
+#     all_degrees : sorted list[int]
+#     counts      : list[int], test-node count for each degree (same order)
+#     n_bins      : target number of bins
+#
+#     Returns
+#     -------
+#     bin_of_degree : dict {degree -> bin_index}
+#     bin_labels    : list[str] – human-readable ranges, e.g. "1", "2–3", "≥16"
+#     n_actual      : int – actual number of bins produced
+#     """
+#     arr  = np.array(all_degrees, dtype=int)
+#     cnts = np.array(counts, dtype=float)
+#
+#     if len(arr) <= n_bins:
+#         return ({int(d): i for i, d in enumerate(arr)},
+#                 [str(d) for d in arr],
+#                 len(arr))
+#
+#     # Find degree boundaries that split the cumulative node count equally
+#     cum     = np.cumsum(cnts)
+#     targets = np.linspace(0, cum[-1], n_bins + 1)[1:-1]   # interior splits
+#     bounds  = sorted({int(arr[min(int(np.searchsorted(cum, t)), len(arr) - 1)])
+#                       for t in targets})
+#
+#     bin_of_degree = {int(d): int(np.searchsorted(bounds, d, side="right"))
+#                      for d in arr}
+#
+#     n_actual = max(bin_of_degree.values()) + 1
+#     bin_labels = []
+#     for b in range(n_actual):
+#         in_b = sorted(d for d, bi in bin_of_degree.items() if bi == b)
+#         lo, hi = in_b[0], in_b[-1]
+#         if lo == hi:
+#             bin_labels.append(str(lo))
+#         elif b == n_actual - 1:
+#             bin_labels.append(f"≥{lo}")
+#         else:
+#             bin_labels.append(f"{lo}–{hi}")
+#     return bin_of_degree, bin_labels, n_actual
+#
+# def _add_trend(ax, all_degrees, pos, accs, counts=None):
+#     """Fit WLS on (degree, accuracy) weighted by node count and overlay as a
+#     dashed line with a shaded 95 % confidence band.
+#
+#     Using WLS (rather than plain OLS) down-weights degree buckets that contain
+#     very few test nodes, whose accuracy estimates are noisier.  The slope is in
+#     units of accuracy-change per unit degree — a positive slope means
+#     higher-degree nodes tend to be classified more accurately.
+#
+#     The 95 % CI band is derived from the standard error of the WLS fit
+#     evaluated at each interpolated degree value.
+#     """
+#     pairs = [(d, p, a, c) for d, p, a, c in
+#              zip(all_degrees, pos, accs, counts if counts is not None else [1] * len(all_degrees))
+#              if not np.isnan(a)]
+#     if len(pairs) < 2:
+#         return
+#     degs, poss, vals, wts = map(list, zip(*pairs))
+#     degs = np.array(degs, dtype=float)
+#     vals = np.array(vals, dtype=float)
+#     wts  = np.array(wts,  dtype=float)
+#
+#     # WLS via weighted polyfit
+#     z = np.polyfit(degs, vals, 1, w=wts)
+#
+#     # Residual standard error for the confidence band
+#     y_hat = np.polyval(z, degs)
+#     resid = vals - y_hat
+#     # Weighted residual sum of squares
+#     wrss  = np.sum(wts * resid ** 2)
+#     dof   = max(len(degs) - 2, 1)
+#     s2    = wrss / dof
+#
+#     x_deg = np.linspace(degs.min(), degs.max(), 200)
+#     x_pos = np.interp(x_deg, degs, poss)
+#     y_fit = np.polyval(z, x_deg)
+#
+#     # Leverage for each interpolated point: var(ŷ) = s² * x'(X'WX)⁻¹x
+#     W   = np.diag(wts)
+#     X   = np.column_stack([degs, np.ones_like(degs)])
+#     XtW = X.T @ W
+#     try:
+#         cov = np.linalg.inv(XtW @ X) * s2
+#         X_new = np.column_stack([x_deg, np.ones_like(x_deg)])
+#         se_fit = np.sqrt(np.einsum("ij,jk,ik->i", X_new, cov, X_new))
+#         ci = 1.96 * se_fit
+#         ax.fill_between(x_pos, y_fit - ci, y_fit + ci,
+#                         color="black", alpha=0.10, zorder=4)
+#     except np.linalg.LinAlgError:
+#         pass  # skip CI if matrix is singular
+#
+#     ax.plot(x_pos, y_fit,
+#             color="black", lw=1.5, ls="--", zorder=5,
+#             label=f"WLS trend  ({z[0]:+.4f} acc / degree)")
+#
+#
+# def _diff_subplot(ax, pos, accs, overall):
+#     """Bar chart of per-degree accuracy minus the overall test accuracy.
+#
+#     Green bars = above average for that degree; red = below average.
+#     This makes the degree-bias trend immediately legible even when absolute
+#     accuracy values are tightly clustered.
+#     """
+#     diffs  = [a - overall for a in accs]
+#     colors = ["#27ae60" if d >= 0 else "#e74c3c" for d in diffs]
+#     ax.bar(pos, diffs, color=colors, width=0.6, alpha=0.82, zorder=3)
+#     ax.axhline(0, color="black", linewidth=0.9, zorder=4)
+#     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+#     ax.set_ylabel("Δ from mean\ntest acc", fontsize=9)
+#     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#
+# # ── distance-to-train vs degree ────────────────────────────────────────────────
+#
+# def plot_dist_vs_degree(dist_deg_data, cfg, save_dir=None, show=False):
+#     """Plot hop-distance distributions per degree group.
+#
+#     Two stacked subplots, sharing the x-axis (node degree):
+#       • Top    – dist to *any* training node   (blue boxes)
+#       • Bottom – dist to *same-class* training node (green boxes)
+#
+#     A horizontal dashed red line marks the model's receptive field
+#     (``cfg['model']['num_layers']`` hops).  NaN entries (unreachable nodes)
+#     are silently omitted from each boxplot.
+#
+#     Parameters
+#     ----------
+#     dist_deg_data : dict
+#         Output of ``utils.get_distance_deg``.
+#     cfg : dict
+#         Experiment config (used for ``num_layers``, titles, filenames).
+#     save_dir : str or None
+#     show : bool
+#     """
+#     num_layers  = cfg["model"]["num_layers"]
+#     all_degrees = sorted(dist_deg_data.keys())
+#     pos         = list(range(len(all_degrees)))
+#     counts      = [dist_deg_data[d]["count"] for d in all_degrees]
+#     n_test      = sum(counts)
+#     prefix      = _fname_prefix(cfg)
+#     subtitle    = _subtitle(cfg, n_test, len(all_degrees))
+#
+#     def _clean(arr):
+#         """Drop NaN, return at least [NaN] so boxplot doesn't crash."""
+#         a = arr[~np.isnan(arr)]
+#         return a if len(a) > 0 else np.array([np.nan])
+#
+#     data_train = [_clean(dist_deg_data[d]["dist_to_train"])     for d in all_degrees]
+#     data_same  = [_clean(dist_deg_data[d]["dist_to_same_class"]) for d in all_degrees]
+#
+#     fig, (ax_top, ax_bot) = plt.subplots(
+#         2, 1,
+#         figsize=(_fig_w(len(all_degrees)), 8),
+#         sharex=True,
+#         gridspec_kw={"height_ratios": [1, 1]},
+#     )
+#     fig.subplots_adjust(hspace=0.08)
+#
+#     # ── top: dist to any train node ──
+#     bp1 = ax_top.boxplot(data_train, positions=pos, widths=0.6, **_BP_KWARGS)
+#     for patch in bp1["boxes"]:
+#         patch.set_facecolor("#5b9bd5")
+#         patch.set_alpha(0.72)
+#     _count_bars(ax_top, pos, counts)
+#     ax_top.axhline(
+#         num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
+#         label=f"Model receptive field  ({num_layers} layers)",
+#     )
+#     ax_top.set_ylabel("Hops to nearest\ntraining node", fontsize=10)
+#     ax_top.legend(loc="upper left", fontsize=9, framealpha=0.85)
+#     ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#     ax_top.set_title(
+#         f"Distance to Training Node vs. Node Degree\n{subtitle}", fontsize=11
+#     )
+#
+#     # ── bottom: dist to same-class train node ──
+#     bp2 = ax_bot.boxplot(data_same, positions=pos, widths=0.6, **_BP_KWARGS)
+#     for patch in bp2["boxes"]:
+#         patch.set_facecolor("#27ae60")
+#         patch.set_alpha(0.72)
+#     ax_bot.axhline(
+#         num_layers, color="#e74c3c", lw=1.8, ls="--", zorder=6,
+#         label=f"Model receptive field  ({num_layers} layers)",
+#     )
+#     ax_bot.set_ylabel("Hops to nearest\nsame-class training node", fontsize=10)
+#     ax_bot.legend(loc="upper left", fontsize=9, framealpha=0.85)
+#     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+#     _degree_axis(ax_bot, pos, all_degrees)
+#
+#     fig.tight_layout()
+#     _save(fig, save_dir, f"{prefix}_dist_vs_degree.png", show)
+#

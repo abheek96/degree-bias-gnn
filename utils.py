@@ -10,22 +10,6 @@ from collections import defaultdict
 import numpy as np
 import torch
 
-def index_to_adj(
-    x, edge_index, add_self_loop=False, remove_self_loop=False, sparse=False
-):
-    from torch_geometric.utils import to_dense_adj
-
-    assert not (add_self_loop == True and remove_self_loop == True)
-    num_nodes = len(x)
-    adj = to_dense_adj(edge_index, max_num_nodes=num_nodes)[0].bool()
-    if add_self_loop:
-        adj.fill_diagonal_(True)
-    if remove_self_loop:
-        adj.fill_diagonal_(False)
-    if sparse:
-        adj = adj.to_sparse()
-    return adj
-
 
 # def get_node_neighbor_het_rate(y, adj):
 #     if not torch.is_tensor(y):
@@ -122,33 +106,6 @@ def index_to_adj(
 #         print(torch.tensor(node_dmp).unique(return_counts=True))
 #
 #     return node_dmp
-
-
-def compute_hops_to_nearest_labeled_nodes(data, train_mask):
-    from torch_geometric.utils import k_hop_subgraph, mask_to_index
-
-    y = data.y.cpu().numpy()
-    label_idx = mask_to_index(train_mask).cpu().numpy()
-    num_hops = np.zeros(data.num_nodes).astype(int)
-    for node in tqdm(
-        range(data.num_nodes), desc="Computing hops to nearest labeled node"
-    ):
-        node_label = y[node]
-        num_hop = 0
-        while True:
-            nbs, _, _, _ = k_hop_subgraph(
-                node, num_hop, data.edge_index, num_nodes=data.num_nodes
-            )
-            labeled_nbs = set(nbs.cpu().numpy()).intersection(set(label_idx))
-            if len(labeled_nbs) > 0 or num_hop >= 10:
-                ngb_labels = y[list(labeled_nbs)]
-                label_correct = node_label in ngb_labels
-                if label_correct or num_hop >= 10:
-                    # print (f'Node {node} label {node_label} hop {num_hop} n_ngb {len(nbs)} labeled_ngb {labeled_nbs} ngb_label {ngb_labels} isin {isin}')
-                    break
-            num_hop += 1
-        num_hops[node] = num_hop
-    return num_hops
 
 
 def compute_distances_to_train(data) -> tuple[torch.Tensor, torch.Tensor]:
@@ -749,3 +706,48 @@ def get_distance_deg(
 #     )
 #     rn_weight = rn_weight * data.train_mask.cpu().float()
 #     return rn_weight
+
+
+
+# ── Unused functions ──────────────────────────────────────────────────────────
+
+# def index_to_adj(
+#     x, edge_index, add_self_loop=False, remove_self_loop=False, sparse=False
+# ):
+#     from torch_geometric.utils import to_dense_adj
+#
+#     assert not (add_self_loop == True and remove_self_loop == True)
+#     num_nodes = len(x)
+#     adj = to_dense_adj(edge_index, max_num_nodes=num_nodes)[0].bool()
+#     if add_self_loop:
+#         adj.fill_diagonal_(True)
+#     if remove_self_loop:
+#         adj.fill_diagonal_(False)
+#     if sparse:
+#         adj = adj.to_sparse()
+#     return adj
+# def compute_hops_to_nearest_labeled_nodes(data, train_mask):
+#     from torch_geometric.utils import k_hop_subgraph, mask_to_index
+#
+#     y = data.y.cpu().numpy()
+#     label_idx = mask_to_index(train_mask).cpu().numpy()
+#     num_hops = np.zeros(data.num_nodes).astype(int)
+#     for node in tqdm(
+#         range(data.num_nodes), desc="Computing hops to nearest labeled node"
+#     ):
+#         node_label = y[node]
+#         num_hop = 0
+#         while True:
+#             nbs, _, _, _ = k_hop_subgraph(
+#                 node, num_hop, data.edge_index, num_nodes=data.num_nodes
+#             )
+#             labeled_nbs = set(nbs.cpu().numpy()).intersection(set(label_idx))
+#             if len(labeled_nbs) > 0 or num_hop >= 10:
+#                 ngb_labels = y[list(labeled_nbs)]
+#                 label_correct = node_label in ngb_labels
+#                 if label_correct or num_hop >= 10:
+#                     # print (f'Node {node} label {node_label} hop {num_hop} n_ngb {len(nbs)} labeled_ngb {labeled_nbs} ngb_label {ngb_labels} isin {isin}')
+#                     break
+#             num_hop += 1
+#         num_hops[node] = num_hop
+#     return num_hops
