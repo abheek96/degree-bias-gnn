@@ -8,6 +8,9 @@ split: random        # random, public, or custom
 plot:
   acc_vs_degree: true
   acc_vs_distance: true
+  acc_vs_khop_degree: true
+  khop_k: 2          # neighbourhood radius for k-hop degree
+  khop_n_bins: 8     # number of equal-count bins
   save: true
   show: false
 

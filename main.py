@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree
-from utils import compute_distances_to_train, get_distance_deg
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree
+from utils import compute_distances_to_train, get_distance_deg, get_khop_degree
 from train import train
 from test import evaluate
 
@@ -145,8 +145,13 @@ def main():
 
     plot_cfg = cfg.get("plot", {})
 
+    # k-hop degree is graph-fixed — compute once before the run loop
+    khop_k        = plot_cfg.get("khop_k", 2)
+    khop_deg_test = get_khop_degree(data, k=khop_k)[data.test_mask].cpu()
+
     val_accs, test_accs = [], []
-    deg_acc_results = []
+    deg_acc_results  = []
+    khop_acc_results = []
     run_labels = []
 
     for i in tqdm(range(1, num_runs + 1), desc="Runs"):
@@ -164,6 +169,9 @@ def main():
 
         deg_acc_results.append(
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
+        )
+        khop_acc_results.append(
+            get_accuracy_deg(khop_deg_test, pred[data.test_mask], data.y[data.test_mask])
         )
         run_labels.append(run_name)
 
@@ -191,6 +199,16 @@ def main():
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
             run_labels=run_labels,
+        )
+
+    if plot_cfg.get("acc_vs_khop_degree", False):
+        plot_acc_vs_khop_degree(
+            khop_acc_results,
+            cfg,
+            k=khop_k,
+            n_bins=plot_cfg.get("khop_n_bins", 8),
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
         )
 
 
