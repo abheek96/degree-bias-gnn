@@ -506,7 +506,9 @@ def _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, pref
 
 # ── accuracy vs. 1-hop degree: grouped boxplots by num_layers ──────────────────
 
-_LAYER_COLORS = ["#2ecc71", "#3498db", "#9b59b6", "#e67e22", "#e74c3c"]
+# Colorblind-friendly, high-contrast palette (tab10 subset, visually distinct)
+_LAYER_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                 "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
 
 
 def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=False):
@@ -514,6 +516,7 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
 
     For each degree group on the x-axis there is one boxplot per layer count.
     Each boxplot shows the distribution of per-run mean accuracies across seeds.
+    A median trend line is drawn through the per-degree median for each layer.
 
     Parameters
     ----------
@@ -572,18 +575,21 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
         bp = ax.boxplot(data, positions=bpos, widths=box_w * 0.85, **_BP_KWARGS)
         for patch in bp["boxes"]:
             patch.set_facecolor(color)
-            patch.set_alpha(0.72)
-        # Invisible scatter for legend entry
-        ax.scatter([], [], color=color, alpha=0.85,
-                   label=f"{L} layer{'s' if L != 1 else ''}", s=50)
+            patch.set_alpha(0.65)
+
+        # Median trend line through box centres
+        medians = [float(np.median(layer_deg_means[L][d])) for d in all_degrees]
+        ax.plot(bpos, medians, color=color, lw=1.5, alpha=0.85,
+                marker="o", markersize=3, zorder=5,
+                label=f"{L} layer{'s' if L != 1 else ''}")
 
     _count_bars(ax, pos, counts)
 
     ax.set_ylabel(f"Mean accuracy per run  ({n_runs} seeds)", fontsize=11)
     ax.set_ylim(-0.05, 1.10)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.85, title="# layers",
-              title_fontsize=8)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0,
+              fontsize=8, framealpha=0.9, title="# layers", title_fontsize=8)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax.set_title(
         f"Accuracy vs. Node Degree  —  varying num_layers  ({n_runs} seeds)\n{subtitle}",
