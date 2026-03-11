@@ -60,6 +60,7 @@ def run(data, cfg, run_id, device):
 
     best_val_acc = 0.0
     best_test_acc = 0.0
+    best_loss = float("nan")
     best_state = copy.deepcopy(model.state_dict())
     patience_counter = 0
     patience = train_cfg.get("patience", 0)
@@ -72,12 +73,15 @@ def run(data, cfg, run_id, device):
         if results["val"] > best_val_acc:
             best_val_acc = results["val"]
             best_test_acc = results["test"]
+            best_loss = loss
             best_state = copy.deepcopy(model.state_dict())
             patience_counter = 0
         else:
             patience_counter += 1
 
         epoch_bar.set_postfix(loss=f"{loss:.4f}", val=f"{results['val']:.4f}", test=f"{results['test']:.4f}")
+        log.debug("  [Run %d] Epoch %d  loss=%.4f  val=%.4f  test=%.4f",
+                  run_id, epoch, loss, results["val"], results["test"])
 
         if patience > 0 and patience_counter >= patience:
             epoch_bar.close()
@@ -90,7 +94,7 @@ def run(data, cfg, run_id, device):
     with torch.no_grad():
         pred = model(data.x, data.edge_index).argmax(dim=1)
 
-    return best_val_acc, best_test_acc, pred
+    return best_val_acc, best_test_acc, best_loss, pred
 
 
 def main():
@@ -170,10 +174,10 @@ def main():
         log.info("Experiment: %s", exec_name)
         log.info("Config: %s", cfg)
         log.info("=== Run %d/%d (seed=%d) ===", i, num_runs, seed)
-        val_acc, test_acc, pred = run(data, cfg, i, device)
+        val_acc, test_acc, best_loss, pred = run(data, cfg, i, device)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
-        log.info("Best Val: %.4f  Test: %.4f", val_acc, test_acc)
+        log.info("Best Val: %.4f  Test: %.4f  Loss: %.4f", val_acc, test_acc, best_loss)
 
         deg_acc_results.append(
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
@@ -241,7 +245,7 @@ def main():
                 for i in tqdm(range(1, num_runs + 1), desc=label):
                     seed = base_seed + i - 1
                     set_seed(seed)
-                    _, _, pred_L = run(data, run_cfg, i, device)
+                    _, _, _, pred_L = run(data, run_cfg, i, device)
                     label_deg_results.append(
                         get_accuracy_deg(test_deg, pred_L[data.test_mask], data.y[data.test_mask])
                     )
