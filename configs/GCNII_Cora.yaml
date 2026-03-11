@@ -1,0 +1,24 @@
+model:
+  name: GCNII
+  hidden_dim: 64
+  num_layers: 64
+  dropout: 0.5
+
+train:
+  lr: 0.01
+  weight_decay: 5e-4
+  epochs: 200
+  patience: 100
+
+plot:
+  acc_vs_degree_by_layers: true
+  layer_values: [16, 32, 64]
+  compare_models: [GCNII]
+  model_layer_values:
+    GCNII: [16, 32, 64]
+  model_hyperparams:
+    GCNII:
+      hidden_dim: 64
+      dropout: 0.5
+      lr: 0.01
+      patience: 100

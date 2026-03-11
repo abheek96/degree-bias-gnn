@@ -5,37 +5,16 @@ device: 'cuda'
 results_dir: ./results
 split: random        # random, public, or custom
 
-plot:
-  acc_vs_degree: true
-  acc_vs_distance: true
-  acc_vs_khop_degree: true
-  khop_k: 2          # neighbourhood radius for k-hop degree
-  acc_vs_degree_by_layers: true
-  layer_values: [1, 2, 3, 4, 5]   # default layer counts for all models
-  model_layer_values:              # per-model layer count overrides (optional)
-    GCNII: [64]
-  model_hyperparams:               # per-model hyperparameter overrides (optional)
-    GCNII:
-      hidden_dim: 64
-      dropout: 0.5
-      lr: 0.01
-      patience: 100
-  compare_models: [GCN]
-  # compare_models: [GCN, GCNII]
-  save: true
-  show: false
-
 dataset:
-  name: Cora          # Cora, CiteSeer, PubMed, etc.
+  name: Cora
   root: ./data
-  use_cc: true          # whether to use the largest connected component
+  use_cc: true
   num_train_per_class: 20
   num_val: 500
   num_test: 1000
-  
 
 model:
-  name: GCN           # GCN, GAT, GraphSAGE
+  name: GCN
   hidden_dim: 512
   num_layers: 2
   dropout: 0.0
@@ -44,4 +23,17 @@ train:
   lr: 0.001
   weight_decay: 5e-4
   epochs: 200
-  patience: 50     # early stopping patience (0 to disable)
+  patience: 50
+
+plot:
+  acc_vs_degree: true
+  acc_vs_distance: true
+  acc_vs_khop_degree: true
+  khop_k: 2
+  acc_vs_degree_by_layers: false
+  layer_values: [1, 2, 3, 4, 5]
+  model_layer_values: {}
+  model_hyperparams: {}
+  compare_models: []
+  save: true
+  show: false

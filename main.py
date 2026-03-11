@@ -22,6 +22,17 @@ from test import evaluate
 log = logging.getLogger(__name__)
 
 
+def _deep_merge(base, override):
+    """Recursively merge override into base; override values win. Lists are replaced."""
+    merged = copy.deepcopy(base)
+    for key, val in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+            merged[key] = _deep_merge(merged[key], val)
+        else:
+            merged[key] = copy.deepcopy(val)
+    return merged
+
+
 def make_exec_name(cfg) -> str:
     dataset = cfg["dataset"]["name"]
     model = cfg["model"]["name"]
@@ -99,12 +110,28 @@ def run(data, cfg, run_id, device):
 
 def main():
     parser = argparse.ArgumentParser(description="Graph Learning Experiments")
-    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to base config file")
+    parser.add_argument("--model-config", type=str, default=None, help="Path to model-dataset config override (auto-discovered if omitted)")
     parser.add_argument("--device", type=str, default=None, help="Device override (e.g. cuda:0, cpu)")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
+
+    # Auto-discover or explicitly load a model-dataset config and deep-merge it
+    model_cfg_path = args.model_config
+    if model_cfg_path is None:
+        model_name  = cfg["model"]["name"]
+        dataset_name = cfg["dataset"]["name"]
+        model_cfg_path = os.path.join("configs", f"{model_name}_{dataset_name}.yaml")
+
+    if os.path.exists(model_cfg_path):
+        with open(model_cfg_path) as f:
+            model_cfg = yaml.safe_load(f)
+        cfg = _deep_merge(cfg, model_cfg)
+        log.info("Loaded model-dataset config: %s", model_cfg_path)
+    else:
+        log.info("No model-dataset config found at %s; using base config only", model_cfg_path)
 
     results_dir = cfg.get("results_dir", "./results")
     exec_name = make_exec_name(cfg)

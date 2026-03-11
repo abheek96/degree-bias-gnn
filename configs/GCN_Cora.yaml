@@ -1,0 +1,16 @@
+model:
+  name: GCN
+  hidden_dim: 512
+  num_layers: 2
+  dropout: 0.0
+
+train:
+  lr: 0.001
+  weight_decay: 5e-4
+  epochs: 200
+  patience: 50
+
+plot:
+  acc_vs_degree_by_layers: true
+  layer_values: [1, 2, 3, 4, 5]
+  compare_models: [GCN]
