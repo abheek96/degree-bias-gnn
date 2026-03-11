@@ -12,8 +12,13 @@ plot:
   khop_k: 2          # neighbourhood radius for k-hop degree
   acc_vs_degree_by_layers: true
   layer_values: [1, 2, 3, 4, 5]   # default layer counts for all models
-  model_layer_values:              # per-model overrides (optional)
+  model_layer_values:              # per-model layer count overrides (optional)
     GCNII: [64]
+  model_hyperparams:               # per-model hyperparameter overrides (optional)
+    GCNII:
+      hidden_dim: 64
+      dropout: 0.5
+      lr: 0.01
   compare_models: [GCN, GCNII]
   save: true
   show: false

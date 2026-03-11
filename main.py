@@ -214,6 +214,7 @@ def main():
         import copy as _copy
         layer_values       = plot_cfg.get("layer_values", [1, 2, 3, 4, 5])
         model_layer_values = plot_cfg.get("model_layer_values", {})
+        model_hyperparams  = plot_cfg.get("model_hyperparams", {})
         compare_models     = plot_cfg.get("compare_models", [cfg["model"]["name"]])
         results_by_label = {}
         for model_name in compare_models:
@@ -223,6 +224,11 @@ def main():
                 run_cfg = _copy.deepcopy(cfg)
                 run_cfg["model"]["name"]       = model_name
                 run_cfg["model"]["num_layers"] = L
+                for hp_key, hp_val in model_hyperparams.get(model_name, {}).items():
+                    if hp_key == "lr":
+                        run_cfg["train"]["lr"] = hp_val
+                    elif hp_key in ("hidden_dim", "dropout"):
+                        run_cfg["model"][hp_key] = hp_val
                 label_deg_results = []
                 for i in tqdm(range(1, num_runs + 1), desc=label):
                     seed = base_seed + i - 1
