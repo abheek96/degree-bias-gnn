@@ -212,11 +212,12 @@ def main():
 
     if plot_cfg.get("acc_vs_degree_by_layers", False):
         import copy as _copy
-        layer_values    = plot_cfg.get("layer_values", [1, 2, 3, 4, 5])
-        compare_models  = plot_cfg.get("compare_models", [cfg["model"]["name"]])
+        layer_values       = plot_cfg.get("layer_values", [1, 2, 3, 4, 5])
+        model_layer_values = plot_cfg.get("model_layer_values", {})
+        compare_models     = plot_cfg.get("compare_models", [cfg["model"]["name"]])
         results_by_label = {}
         for model_name in compare_models:
-            for L in layer_values:
+            for L in model_layer_values.get(model_name, layer_values):
                 label = f"{model_name} L={L}"
                 log.info("=== Training %s ===", label)
                 run_cfg = _copy.deepcopy(cfg)

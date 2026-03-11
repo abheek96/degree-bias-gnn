@@ -11,7 +11,9 @@ plot:
   acc_vs_khop_degree: true
   khop_k: 2          # neighbourhood radius for k-hop degree
   acc_vs_degree_by_layers: true
-  layer_values: [1, 2, 3, 4, 5]
+  layer_values: [1, 2, 3, 4, 5]   # default layer counts for all models
+  model_layer_values:              # per-model overrides (optional)
+    GCNII: [64]
   compare_models: [GCN, GCNII]
   save: true
   show: false
