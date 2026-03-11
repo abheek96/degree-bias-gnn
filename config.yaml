@@ -12,6 +12,7 @@ plot:
   khop_k: 2          # neighbourhood radius for k-hop degree
   acc_vs_degree_by_layers: true
   layer_values: [1, 2, 3, 4, 5]
+  compare_models: [GCN, GCNII]
   save: true
   show: false
 

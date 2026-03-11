@@ -212,23 +212,27 @@ def main():
 
     if plot_cfg.get("acc_vs_degree_by_layers", False):
         import copy as _copy
-        layer_values = plot_cfg.get("layer_values", [1, 2, 3, 4, 5])
-        results_by_layers = {}
-        for L in layer_values:
-            log.info("=== Training with num_layers=%d ===", L)
-            layer_cfg = _copy.deepcopy(cfg)
-            layer_cfg["model"]["num_layers"] = L
-            layer_deg_results = []
-            for i in tqdm(range(1, num_runs + 1), desc=f"Layers={L}"):
-                seed = base_seed + i - 1
-                set_seed(seed)
-                _, _, pred_L = run(data, layer_cfg, i, device)
-                layer_deg_results.append(
-                    get_accuracy_deg(test_deg, pred_L[data.test_mask], data.y[data.test_mask])
-                )
-            results_by_layers[L] = layer_deg_results
+        layer_values    = plot_cfg.get("layer_values", [1, 2, 3, 4, 5])
+        compare_models  = plot_cfg.get("compare_models", [cfg["model"]["name"]])
+        results_by_label = {}
+        for model_name in compare_models:
+            for L in layer_values:
+                label = f"{model_name} L={L}"
+                log.info("=== Training %s ===", label)
+                run_cfg = _copy.deepcopy(cfg)
+                run_cfg["model"]["name"]       = model_name
+                run_cfg["model"]["num_layers"] = L
+                label_deg_results = []
+                for i in tqdm(range(1, num_runs + 1), desc=label):
+                    seed = base_seed + i - 1
+                    set_seed(seed)
+                    _, _, pred_L = run(data, run_cfg, i, device)
+                    label_deg_results.append(
+                        get_accuracy_deg(test_deg, pred_L[data.test_mask], data.y[data.test_mask])
+                    )
+                results_by_label[label] = label_deg_results
         plot_acc_vs_degree_by_layers(
-            results_by_layers,
+            results_by_label,
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),

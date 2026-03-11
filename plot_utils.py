@@ -511,65 +511,65 @@ _LAYER_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
                  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
 
 
-def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=False):
-    """Grouped boxplot of accuracy vs. 1-hop degree, one box per num_layers value.
+def plot_acc_vs_degree_by_layers(results_by_label, cfg, save_dir=None, show=False):
+    """Grouped boxplot of accuracy vs. 1-hop degree, one box per (model, num_layers).
 
-    For each degree group on the x-axis there is one boxplot per layer count.
-    Each boxplot shows the distribution of per-run mean accuracies across seeds.
-    A median trend line is drawn through the per-degree median for each layer.
+    For each degree group on the x-axis there is one boxplot per label (e.g.
+    ``"GCN L=2"`` or ``"GCNII L=3"``).  Each boxplot shows the distribution of
+    per-run mean accuracies across seeds.
 
     Parameters
     ----------
-    results_by_layers : dict[int, list[dict]]
-        Mapping from num_layers to a list of per-run ``get_accuracy_deg`` dicts.
+    results_by_label : dict[str, list[dict]]
+        Ordered mapping from a human-readable label to a list of per-run
+        ``get_accuracy_deg`` dicts.  Insertion order determines box order.
     cfg : dict
     save_dir : str or None
     show : bool
     """
-    layer_values = sorted(results_by_layers.keys())
-    n_layers     = len(layer_values)
-    if n_layers == 0:
+    labels   = list(results_by_label.keys())
+    n_labels = len(labels)
+    if n_labels == 0:
         return
 
-    # Collect all unique degree values across every layer configuration
-    all_degrees = sorted({d for results in results_by_layers.values()
+    # Collect all unique degree values across every configuration
+    all_degrees = sorted({d for results in results_by_label.values()
                           for run in results for d in run})
     n_deg  = len(all_degrees)
     pos    = list(range(n_deg))
     prefix = _fname_prefix(cfg)
 
-    # Use counts from the first layer (graph-fixed)
-    first_results = results_by_layers[layer_values[0]]
-    _, first_deg_data = _collect(first_results)
+    # Node counts are graph-fixed — use the first label's results
+    _, first_deg_data = _collect(results_by_label[labels[0]])
     counts = [len(first_deg_data[d][0]) if d in first_deg_data else 0
               for d in all_degrees]
-    n_test = sum(counts)
+    n_test   = sum(counts)
     subtitle = _subtitle(cfg, n_test, n_deg)
-    n_runs   = len(first_results)
+    n_runs   = len(results_by_label[labels[0]])
 
-    # Per-layer, per-degree: list of per-run mean accuracies
-    layer_deg_means = {}
-    for L in layer_values:
-        _, deg_data = _collect(results_by_layers[L])
-        layer_deg_means[L] = {}
+    # Per-label, per-degree: list of per-run mean accuracies
+    label_deg_means = {}
+    for lbl in labels:
+        _, deg_data = _collect(results_by_label[lbl])
+        label_deg_means[lbl] = {}
         for d in all_degrees:
             if d in deg_data:
                 means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
-                layer_deg_means[L][d] = means if means else [np.nan]
+                label_deg_means[lbl][d] = means if means else [np.nan]
             else:
-                layer_deg_means[L][d] = [np.nan]
+                label_deg_means[lbl][d] = [np.nan]
 
     # Box geometry
     group_w  = 0.8
-    box_w    = group_w / n_layers
+    box_w    = group_w / n_labels
     offsets  = np.linspace(-group_w / 2 + box_w / 2,
-                            group_w / 2 - box_w / 2, n_layers)
+                            group_w / 2 - box_w / 2, n_labels)
 
-    fig, ax = plt.subplots(figsize=(_fig_w(n_deg, n_layers), 5))
+    fig, ax = plt.subplots(figsize=(_fig_w(n_deg, n_labels), 5))
 
-    for i, L in enumerate(layer_values):
+    for i, lbl in enumerate(labels):
         bpos  = [p + offsets[i] for p in pos]
-        data  = [layer_deg_means[L][d] for d in all_degrees]
+        data  = [label_deg_means[lbl][d] for d in all_degrees]
         color = _LAYER_COLORS[i % len(_LAYER_COLORS)]
 
         bp = ax.boxplot(data, positions=bpos, widths=box_w * 0.85, **_BP_KWARGS)
@@ -577,9 +577,7 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
             patch.set_facecolor(color)
             patch.set_alpha(0.65)
 
-        # Legend proxy
-        ax.scatter([], [], color=color, s=30, alpha=0.85,
-                   label=f"{L} layer{'s' if L != 1 else ''}")
+        ax.scatter([], [], color=color, s=30, alpha=0.85, label=lbl)
 
     _count_bars(ax, pos, counts)
 
@@ -587,10 +585,10 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
     ax.set_ylim(-0.05, 1.10)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0,
-              fontsize=8, framealpha=0.9, title="# layers", title_fontsize=8)
+              fontsize=8, framealpha=0.9)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax.set_title(
-        f"Accuracy vs. Node Degree  —  varying num_layers  ({n_runs} seeds)\n{subtitle}",
+        f"Accuracy vs. Node Degree  —  model × layers  ({n_runs} seeds)\n{subtitle}",
         fontsize=11,
     )
 
@@ -601,8 +599,8 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
     ax.set_xticklabels(all_degrees[::step], rotation=55, ha="right", fontsize=8)
 
     fig.tight_layout()
-    layer_str = "_".join(str(L) for L in layer_values)
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_by_layers_{layer_str}.png", show)
+    models_str = "_".join(dict.fromkeys(lbl.split()[0] for lbl in labels))
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_by_layers_{models_str}.png", show)
 
 
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
