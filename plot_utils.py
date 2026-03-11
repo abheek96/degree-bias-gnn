@@ -567,6 +567,9 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
 
     fig, ax = plt.subplots(figsize=(_fig_w(n_deg, n_layers), 5))
 
+    rng = np.random.default_rng(0)
+    jitter_w = box_w * 0.18   # jitter width well inside box footprint
+
     for i, L in enumerate(layer_values):
         bpos  = [p + offsets[i] for p in pos]
         data  = [layer_deg_means[L][d] for d in all_degrees]
@@ -577,11 +580,18 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
             patch.set_facecolor(color)
             patch.set_alpha(0.65)
 
-        # Median trend line through box centres
-        medians = [float(np.median(layer_deg_means[L][d])) for d in all_degrees]
-        ax.plot(bpos, medians, color=color, lw=1.5, alpha=0.85,
-                marker="o", markersize=3, zorder=5,
-                label=f"{L} layer{'s' if L != 1 else ''}")
+        # Jittered strip of individual seed values on top of each box
+        for xi, vals in zip(bpos, data):
+            clean = [v for v in vals if not np.isnan(v)]
+            if not clean:
+                continue
+            jx = xi + rng.uniform(-jitter_w, jitter_w, len(clean))
+            ax.scatter(jx, clean, color=color, s=18, alpha=0.7,
+                       edgecolors="white", linewidths=0.4, zorder=6)
+
+        # Legend proxy
+        ax.scatter([], [], color=color, s=30, alpha=0.85,
+                   label=f"{L} layer{'s' if L != 1 else ''}")
 
     _count_bars(ax, pos, counts)
 
