@@ -191,7 +191,7 @@ def main():
     # Neighborhood purity is graph-fixed — compute once per k value
     purity_k_max = plot_cfg.get("purity_k_max", 4)
     purity_by_k  = {
-        k: get_node_purity(data, k=k)[data.test_mask].cpu()
+        k: get_node_purity(data, k=k)[data.test_mask.cpu()]
         for k in range(1, purity_k_max + 1)
     } if plot_cfg.get("purity_vs_degree", False) else {}
 
