@@ -20,7 +20,8 @@ plot:
       dropout: 0.5
       lr: 0.01
       patience: 100
-  compare_models: [GCN, GCNII]
+  compare_models: [GCN]
+  # compare_models: [GCN, GCNII]
   save: true
   show: false
 
