@@ -19,6 +19,7 @@ plot:
       hidden_dim: 64
       dropout: 0.5
       lr: 0.01
+      patience: 100
   compare_models: [GCN, GCNII]
   save: true
   show: false
@@ -42,4 +43,4 @@ train:
   lr: 0.001
   weight_decay: 5e-4
   epochs: 200
-  patience: 0      # early stopping patience (0 to disable)
+  patience: 50     # early stopping patience (0 to disable)

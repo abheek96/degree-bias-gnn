@@ -225,8 +225,8 @@ def main():
                 run_cfg["model"]["name"]       = model_name
                 run_cfg["model"]["num_layers"] = L
                 for hp_key, hp_val in model_hyperparams.get(model_name, {}).items():
-                    if hp_key == "lr":
-                        run_cfg["train"]["lr"] = hp_val
+                    if hp_key in ("lr", "patience"):
+                        run_cfg["train"][hp_key] = hp_val
                     elif hp_key in ("hidden_dim", "dropout"):
                         run_cfg["model"][hp_key] = hp_val
                 label_deg_results = []
