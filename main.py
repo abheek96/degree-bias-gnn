@@ -14,8 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers
-from utils import compute_distances_to_train, get_distance_deg, get_khop_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_purity_vs_degree
+from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity
 from train import train
 from test import evaluate
 
@@ -188,6 +188,13 @@ def main():
     khop_k        = plot_cfg.get("khop_k", 2)
     khop_deg_test = get_khop_degree(data, k=khop_k)[data.test_mask].cpu()
 
+    # Neighborhood purity is graph-fixed — compute once per k value
+    purity_k_max = plot_cfg.get("purity_k_max", 4)
+    purity_by_k  = {
+        k: get_node_purity(data, k=k)[data.test_mask].cpu()
+        for k in range(1, purity_k_max + 1)
+    } if plot_cfg.get("purity_vs_degree", False) else {}
+
     val_accs, test_accs = [], []
     deg_acc_results  = []
     khop_acc_results = []
@@ -283,6 +290,15 @@ def main():
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
+
+    if plot_cfg.get("purity_vs_degree", False):
+        save_dir = exec_dir if plot_cfg.get("save", True) else None
+        for k, purity_test in purity_by_k.items():
+            plot_purity_vs_degree(
+                test_deg, purity_test, cfg, k,
+                save_dir=save_dir,
+                show=plot_cfg.get("show", False),
+            )
 
 
 if __name__ == "__main__":

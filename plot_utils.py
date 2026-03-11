@@ -111,6 +111,11 @@ def _save(fig, save_dir, filename, show):
     plt.close(fig)
 
 
+def _subdir(save_dir, name):
+    """Return save_dir/name if save_dir is set, else None."""
+    return os.path.join(save_dir, name) if save_dir else None
+
+
 def _degree_axis(ax, pos, all_degrees):
     """Set x-axis label and ticks; thin labels when there are many degrees."""
     ax.set_xlabel("Node degree", fontsize=11)
@@ -212,7 +217,7 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
     _degree_axis(ax_main, pos, all_degrees)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_single_run.png", show)
+    _save(fig, _subdir(save_dir, "acc_vs_degree"), f"{prefix}_acc_vs_degree_single_run.png", show)
 
 
 # ── multiple runs: seed-to-seed variability per degree ─────────────────────────
@@ -255,7 +260,7 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
     _degree_axis(ax_main, pos, all_degrees)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_across_runs.png", show)
+    _save(fig, _subdir(save_dir, "acc_vs_degree"), f"{prefix}_acc_vs_degree_across_runs.png", show)
 
 
 # ── combined accuracy + distance vs degree ─────────────────────────────────────
@@ -385,7 +390,7 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 
         fig.tight_layout()
         fig.subplots_adjust(bottom=0.26, wspace=0.5)
-        _save(fig, save_dir, f"{prefix}_combined_vs_degree_{label}.png", show)
+        _save(fig, _subdir(save_dir, "acc_vs_distance"), f"{prefix}_combined_vs_degree_{label}.png", show)
 
 
 # ── accuracy vs cumulative k-hop degree ────────────────────────────────────────
@@ -462,7 +467,7 @@ def _plot_khop_single(all_degrees, pos, deg_data, k, subtitle, prefix, save_dir,
     ax.set_xticklabels(all_degrees, rotation=55, ha="right", fontsize=8)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_single_run.png", show)
+    _save(fig, _subdir(save_dir, "acc_vs_khop_degree"), f"{prefix}_acc_vs_{k}hop_degree_single_run.png", show)
 
 
 def _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, prefix, save_dir, show):
@@ -501,7 +506,7 @@ def _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, pref
     ax.set_xticklabels(all_degrees, rotation=55, ha="right", fontsize=8)
 
     fig.tight_layout()
-    _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_across_runs.png", show)
+    _save(fig, _subdir(save_dir, "acc_vs_khop_degree"), f"{prefix}_acc_vs_{k}hop_degree_across_runs.png", show)
 
 
 # ── accuracy vs. 1-hop degree: grouped boxplots by num_layers ──────────────────
@@ -600,7 +605,88 @@ def plot_acc_vs_degree_by_layers(results_by_label, cfg, save_dir=None, show=Fals
 
     fig.tight_layout()
     models_str = "_".join(dict.fromkeys(lbl.split()[0] for lbl in labels))
-    _save(fig, save_dir, f"{prefix}_acc_vs_degree_by_layers_{models_str}.png", show)
+    _save(fig, _subdir(save_dir, "acc_vs_degree_by_layers"), f"{prefix}_acc_vs_degree_by_layers_{models_str}.png", show)
+
+
+# ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
+
+def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=False):
+    """Scatter plot of mean neighborhood purity vs. 1-hop degree.
+
+    Nodes are grouped by their 1-hop degree.  For each group the mean purity
+    across test nodes is plotted; bubble size encodes node count.
+
+    purity(v) = |same-class nodes in N_k(v)| / |N_k(v)|
+
+    Parameters
+    ----------
+    test_deg    : 1-D LongTensor of 1-hop degrees for test nodes.
+    purity_test : 1-D FloatTensor of purity values for test nodes (NaN-safe).
+    cfg         : dict
+    k           : neighbourhood radius used to compute purity.
+    save_dir    : str or None
+    show        : bool
+    """
+    deg    = test_deg.cpu()
+    purity = purity_test.cpu()
+
+    unique_degrees = sorted(deg.unique().tolist())
+    pos    = list(range(len(unique_degrees)))
+    prefix = _fname_prefix(cfg)
+
+    counts    = []
+    mean_purs = []
+    for d in unique_degrees:
+        mask  = deg == d
+        vals  = purity[mask]
+        valid = vals[~torch.isnan(vals)]
+        counts.append(int(mask.sum()))
+        mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
+
+    n_test   = sum(counts)
+    n_deg    = len(unique_degrees)
+    subtitle = _subtitle(cfg, n_test, n_deg)
+
+    max_count   = max(counts) or 1
+    bubble_size = [max(30, 700 * c / max_count) for c in counts]
+
+    fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
+
+    ax.scatter(pos, mean_purs, s=bubble_size, c="#e67e22", alpha=0.78,
+               edgecolors="white", linewidths=0.6, zorder=3)
+
+    ref_counts = sorted({min(counts), int(np.median(counts)), max(counts)})
+    for rc in ref_counts:
+        ax.scatter([], [], s=max(30, 700 * rc / max_count),
+                   c="#e67e22", alpha=0.65, edgecolors="white", label=f"n = {rc}")
+
+    # Overall mean purity (weighted by node count)
+    valid_pairs = [(m, c) for m, c in zip(mean_purs, counts) if not np.isnan(m)]
+    if valid_pairs:
+        overall = sum(m * c for m, c in valid_pairs) / sum(c for _, c in valid_pairs)
+        ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
+                   label=f"Mean purity ({overall:.1%})", zorder=2)
+
+    _count_bars(ax, pos, counts)
+
+    ax.set_ylabel(f"Mean neighborhood purity  (k={k})", fontsize=11)
+    ax.set_ylim(-0.05, 1.10)
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.85,
+              title="Node count", title_fontsize=8)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.set_title(
+        f"Neighborhood Purity vs. Node Degree  (k={k})\n{subtitle}", fontsize=11
+    )
+
+    ax.set_xlabel("Node degree", fontsize=11)
+    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    step = max(1, n_deg // 30)
+    ax.set_xticks(pos[::step])
+    ax.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "purity_vs_degree"), f"{prefix}_purity_vs_degree_k{k}.png", show)
 
 
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────

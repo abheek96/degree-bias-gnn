@@ -35,5 +35,7 @@ plot:
   model_layer_values: {}
   model_hyperparams: {}
   compare_models: []
+  purity_vs_degree: true
+  purity_k_max: 4
   save: true
   show: false

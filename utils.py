@@ -312,6 +312,52 @@ def get_khop_degree(data, k: int = 2, exclusive: bool = False) -> torch.Tensor:
     return (reach & ~reach_prev).sum(dim=1).long()
 
 
+def get_node_purity(data, k: int = 1) -> torch.Tensor:
+    """Neighborhood purity for every node at receptive field radius k.
+
+    purity(v) = |{u ∈ N_k(v) : label[u] == label[v]}| / |N_k(v)|
+
+    where N_k(v) is the cumulative k-hop neighborhood of v (all nodes
+    reachable within k hops, excluding v itself).  Nodes whose k-hop
+    neighborhood is empty receive NaN.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .y labels)
+    k    : neighbourhood radius in hops
+
+    Returns
+    -------
+    purity : FloatTensor, shape [num_nodes]
+    """
+    from torch_geometric.utils import to_dense_adj
+
+    N   = data.num_nodes
+    A   = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0).bool()
+    A.fill_diagonal_(False)
+
+    reach = A.clone()
+    power = A.float()
+    A_f   = A.float()
+    for _ in range(k - 1):
+        power = power @ A_f
+        reach = reach | power.bool()
+    reach.fill_diagonal_(False)
+
+    labels      = data.y.cpu()                                   # (N,)
+    label_match = (labels.unsqueeze(0) == labels.unsqueeze(1))  # (N, N)
+
+    reach_cpu        = reach.cpu()
+    total_counts     = reach_cpu.sum(dim=1).float()              # |N_k(v)|
+    same_cls_counts  = (reach_cpu & label_match).sum(dim=1).float()
+
+    purity          = torch.full((N,), float("nan"))
+    valid           = total_counts > 0
+    purity[valid]   = same_cls_counts[valid] / total_counts[valid]
+
+    return purity
+
+
 # def get_node_het(data, k: int = 1) -> torch.Tensor:
 #     """Return the raw neighbor-heterogeneity ratio for every node.
 #
