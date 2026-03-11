@@ -145,6 +145,14 @@ def main():
 
     plot_cfg = cfg.get("plot", {})
 
+    # Apply per-model hyperparameter overrides for the main model
+    _main_model = cfg["model"]["name"]
+    for hp_key, hp_val in plot_cfg.get("model_hyperparams", {}).get(_main_model, {}).items():
+        if hp_key in ("lr", "patience"):
+            cfg["train"][hp_key] = hp_val
+        elif hp_key in ("hidden_dim", "dropout"):
+            cfg["model"][hp_key] = hp_val
+
     # k-hop degree is graph-fixed — compute once before the run loop
     khop_k        = plot_cfg.get("khop_k", 2)
     khop_deg_test = get_khop_degree(data, k=khop_k)[data.test_mask].cpu()
