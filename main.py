@@ -206,7 +206,6 @@ def main():
             khop_acc_results,
             cfg,
             k=khop_k,
-            n_bins=plot_cfg.get("khop_n_bins", 8),
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )

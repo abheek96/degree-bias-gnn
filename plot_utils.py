@@ -135,52 +135,6 @@ def _count_bars(ax_main, pos, counts):
     return ax2
 
 
-def _make_degree_bins(all_degrees, counts, n_bins=8):
-    """Bin degree values into n_bins groups each containing roughly equal numbers
-    of test nodes (equal-count / quantile binning).
-
-    Parameters
-    ----------
-    all_degrees : sorted list[int]
-    counts      : list[int], test-node count for each degree (same order)
-    n_bins      : target number of bins
-
-    Returns
-    -------
-    bin_of_degree : dict {degree -> bin_index}
-    bin_labels    : list[str] – human-readable ranges, e.g. "1", "2–3", "≥16"
-    n_actual      : int – actual number of bins produced
-    """
-    arr  = np.array(all_degrees, dtype=int)
-    cnts = np.array(counts, dtype=float)
-
-    if len(arr) <= n_bins:
-        return ({int(d): i for i, d in enumerate(arr)},
-                [str(d) for d in arr],
-                len(arr))
-
-    cum     = np.cumsum(cnts)
-    targets = np.linspace(0, cum[-1], n_bins + 1)[1:-1]
-    bounds  = sorted({int(arr[min(int(np.searchsorted(cum, t)), len(arr) - 1)])
-                      for t in targets})
-
-    bin_of_degree = {int(d): int(np.searchsorted(bounds, d, side="right"))
-                     for d in arr}
-
-    n_actual = max(bin_of_degree.values()) + 1
-    bin_labels = []
-    for b in range(n_actual):
-        in_b = sorted(d for d, bi in bin_of_degree.items() if bi == b)
-        lo, hi = in_b[0], in_b[-1]
-        if lo == hi:
-            bin_labels.append(str(lo))
-        elif b == n_actual - 1:
-            bin_labels.append(f"≥{lo}")
-        else:
-            bin_labels.append(f"{lo}–{hi}")
-    return bin_of_degree, bin_labels, n_actual
-
-
 # ── public entry points ────────────────────────────────────────────────────────
 
 def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
@@ -436,15 +390,14 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 
 # ── accuracy vs cumulative k-hop degree ────────────────────────────────────────
 
-def plot_acc_vs_khop_degree(run_results, cfg, k, n_bins=8, save_dir=None, show=False):
-    """Plot test-node accuracy vs. cumulative k-hop degree (binned).
+def plot_acc_vs_khop_degree(run_results, cfg, k, save_dir=None, show=False):
+    """Plot test-node accuracy vs. cumulative k-hop degree.
 
-    Nodes are grouped into equal-count bins by their cumulative k-hop degree
-    so each bin represents a comparable number of test nodes.
+    Each unique k-hop degree value forms its own group on the x-axis —
+    no binning applied.
 
-    Single run  — scatter plot; bubble size ∝ number of nodes in the bin.
-    Multi-run   — box plot per bin showing the distribution of per-run mean
-                  accuracies across seeds.
+    Single run  — scatter plot; bubble size ∝ node count per degree value.
+    Multi-run   — box plot per degree value showing cross-seed variability.
 
     Parameters
     ----------
@@ -454,64 +407,40 @@ def plot_acc_vs_khop_degree(run_results, cfg, k, n_bins=8, save_dir=None, show=F
     cfg : dict
     k : int
         Neighbourhood radius used when computing the k-hop degree.
-    n_bins : int
-        Target number of equal-count bins (default 8).
     save_dir : str or None
     show : bool
     """
     n_runs = len(run_results)
     all_degrees, deg_data = _collect(run_results)
-
-    raw_counts = [len(deg_data[d][0]) for d in all_degrees]
-    n_test     = sum(raw_counts)
-    prefix     = _fname_prefix(cfg)
-    subtitle   = _subtitle(cfg, n_test, len(all_degrees))
-
-    bin_of_deg, bin_labels, n_actual = _make_degree_bins(all_degrees, raw_counts, n_bins=n_bins)
-    pos = list(range(n_actual))
-
-    # For each bin, collect the per-run mean accuracy across all nodes in that bin
-    bin_data   = []   # bin_data[b] = [mean_acc_run0, mean_acc_run1, ...]
-    bin_counts = []   # number of test nodes in each bin
-    for b in pos:
-        degs_in_bin = [d for d in all_degrees if bin_of_deg[d] == b]
-        bin_counts.append(sum(len(deg_data[d][0]) for d in degs_in_bin))
-        run_means = []
-        for run_i in range(n_runs):
-            arrays = [deg_data[d][run_i] for d in degs_in_bin
-                      if len(deg_data[d][run_i]) > 0]
-            if arrays:
-                run_means.append(float(np.concatenate(arrays).mean()))
-            else:
-                run_means.append(np.nan)
-        bin_data.append(run_means)
+    pos    = list(range(len(all_degrees)))
+    prefix   = _fname_prefix(cfg)
+    n_test   = sum(len(deg_data[d][0]) for d in all_degrees)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
 
     if n_runs == 1:
-        _plot_khop_single(
-            bin_data, bin_counts, bin_labels, pos, k, subtitle, prefix, save_dir, show
-        )
+        _plot_khop_single(all_degrees, pos, deg_data, k, subtitle, prefix, save_dir, show)
     else:
-        _plot_khop_across_runs(
-            bin_data, bin_counts, bin_labels, pos, n_runs, k, subtitle, prefix, save_dir, show
-        )
+        _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, prefix, save_dir, show)
 
 
-def _plot_khop_single(bin_data, bin_counts, bin_labels, pos, k,
-                      subtitle, prefix, save_dir, show):
-    accs    = [m[0] for m in bin_data]
-    n_test  = sum(bin_counts)
-    overall = (sum(a * c for a, c in zip(accs, bin_counts) if not np.isnan(a))
-               / n_test)
+def _plot_khop_single(all_degrees, pos, deg_data, k, subtitle, prefix, save_dir, show):
+    counts   = [len(deg_data[d][0]) for d in all_degrees]
+    mean_acc = [
+        float(deg_data[d][0].mean()) if counts[i] > 0 else np.nan
+        for i, d in enumerate(all_degrees)
+    ]
+    n_test  = sum(counts)
+    overall = (sum(a * c for a, c in zip(mean_acc, counts) if not np.isnan(a)) / n_test)
 
-    max_count   = max(bin_counts) or 1
-    bubble_size = [max(30, 700 * c / max_count) for c in bin_counts]
+    max_count   = max(counts) or 1
+    bubble_size = [max(30, 700 * c / max_count) for c in counts]
 
-    fig, ax = plt.subplots(figsize=(_fig_w(len(pos)), 5))
+    fig, ax = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
 
-    ax.scatter(pos, accs, s=bubble_size, c="#3498db", alpha=0.78,
+    ax.scatter(pos, mean_acc, s=bubble_size, c="#3498db", alpha=0.78,
                edgecolors="white", linewidths=0.6, zorder=3)
 
-    ref_counts = sorted({min(bin_counts), int(np.median(bin_counts)), max(bin_counts)})
+    ref_counts = sorted({min(counts), int(np.median(counts)), max(counts)})
     for rc in ref_counts:
         ax.scatter([], [], s=max(30, 700 * rc / max_count),
                    c="#3498db", alpha=0.65, edgecolors="white", label=f"n = {rc}")
@@ -527,30 +456,33 @@ def _plot_khop_single(bin_data, bin_counts, bin_labels, pos, k,
     ax.set_title(
         f"Accuracy vs. {k}-Hop Degree  —  single run\n{subtitle}", fontsize=11
     )
-    ax.set_xticks(pos)
-    ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
-    ax.set_xlabel(f"Cumulative {k}-hop degree  (equal-count bins)", fontsize=10)
-    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax.set_xlabel(f"Cumulative {k}-hop degree", fontsize=11)
+    _degree_axis(ax, pos, all_degrees)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_single_run.png", show)
 
 
-def _plot_khop_across_runs(bin_data, bin_counts, bin_labels, pos, n_runs, k,
-                           subtitle, prefix, save_dir, show):
-    n_test      = sum(bin_counts)
-    median_accs = [float(np.nanmedian(m)) for m in bin_data]
-    overall     = (sum(a * c for a, c in zip(median_accs, bin_counts) if not np.isnan(a))
-                   / n_test)
+def _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, prefix, save_dir, show):
+    counts = [len(deg_data[d][0]) for d in all_degrees]
+    n_test = sum(counts)
 
-    fig, ax = plt.subplots(figsize=(_fig_w(len(pos)), 5))
+    per_run_means = []
+    for d in all_degrees:
+        means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+        per_run_means.append(means if means else [np.nan])
 
-    bp = ax.boxplot(bin_data, positions=pos, widths=0.6, **_BP_KWARGS)
+    median_accs = [float(np.median(m)) for m in per_run_means]
+    overall     = (sum(a * c for a, c in zip(median_accs, counts) if not np.isnan(a)) / n_test)
+
+    fig, ax = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
+
+    bp = ax.boxplot(per_run_means, positions=pos, widths=0.6, **_BP_KWARGS)
     for patch in bp["boxes"]:
         patch.set_facecolor("#5b9bd5")
         patch.set_alpha(0.72)
 
-    _count_bars(ax, pos, bin_counts)
+    _count_bars(ax, pos, counts)
     ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                label=f"Mean test acc ({overall:.1%})", zorder=2)
     ax.set_ylabel(f"Mean accuracy per run  ({n_runs} seeds)", fontsize=11)
@@ -561,10 +493,8 @@ def _plot_khop_across_runs(bin_data, bin_counts, bin_labels, pos, n_runs, k,
     ax.set_title(
         f"Accuracy vs. {k}-Hop Degree  —  {n_runs} seeds\n{subtitle}", fontsize=11
     )
-    ax.set_xticks(pos)
-    ax.set_xticklabels(bin_labels, rotation=40, ha="right", fontsize=9)
-    ax.set_xlabel(f"Cumulative {k}-hop degree  (equal-count bins)", fontsize=10)
-    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax.set_xlabel(f"Cumulative {k}-hop degree", fontsize=11)
+    _degree_axis(ax, pos, all_degrees)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_across_runs.png", show)
@@ -973,6 +903,51 @@ def _plot_khop_across_runs(bin_data, bin_counts, bin_labels, pos, n_runs, k,
 
 # ── Unused functions ──────────────────────────────────────────────────────────
 
+# def _make_degree_bins(all_degrees, counts, n_bins=8):
+#     """Bin degree values into n_bins groups each containing roughly equal numbers
+#     of test nodes (equal-count / quantile binning).
+#
+#     Parameters
+#     ----------
+#     all_degrees : sorted list[int]
+#     counts      : list[int], test-node count for each degree (same order)
+#     n_bins      : target number of bins
+#
+#     Returns
+#     -------
+#     bin_of_degree : dict {degree -> bin_index}
+#     bin_labels    : list[str] – human-readable ranges, e.g. "1", "2–3", "≥16"
+#     n_actual      : int – actual number of bins produced
+#     """
+#     arr  = np.array(all_degrees, dtype=int)
+#     cnts = np.array(counts, dtype=float)
+#
+#     if len(arr) <= n_bins:
+#         return ({int(d): i for i, d in enumerate(arr)},
+#                 [str(d) for d in arr],
+#                 len(arr))
+#
+#     cum     = np.cumsum(cnts)
+#     targets = np.linspace(0, cum[-1], n_bins + 1)[1:-1]
+#     bounds  = sorted({int(arr[min(int(np.searchsorted(cum, t)), len(arr) - 1)])
+#                       for t in targets})
+#
+#     bin_of_degree = {int(d): int(np.searchsorted(bounds, d, side="right"))
+#                      for d in arr}
+#
+#     n_actual = max(bin_of_degree.values()) + 1
+#     bin_labels = []
+#     for b in range(n_actual):
+#         in_b = sorted(d for d, bi in bin_of_degree.items() if bi == b)
+#         lo, hi = in_b[0], in_b[-1]
+#         if lo == hi:
+#             bin_labels.append(str(lo))
+#         elif b == n_actual - 1:
+#             bin_labels.append(f"≥{lo}")
+#         else:
+#             bin_labels.append(f"{lo}–{hi}")
+#     return bin_of_degree, bin_labels, n_actual
+#
 # def _add_trend(ax, all_degrees, pos, accs, counts=None):
 #     """Fit WLS on (degree, accuracy) weighted by node count and overlay as a
 #     dashed line with a shaded 95 % confidence band.
