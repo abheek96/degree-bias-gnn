@@ -567,9 +567,6 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
 
     fig, ax = plt.subplots(figsize=(_fig_w(n_deg, n_layers), 5))
 
-    rng = np.random.default_rng(0)
-    jitter_w = box_w * 0.18   # jitter width well inside box footprint
-
     for i, L in enumerate(layer_values):
         bpos  = [p + offsets[i] for p in pos]
         data  = [layer_deg_means[L][d] for d in all_degrees]
@@ -579,15 +576,6 @@ def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=Fal
         for patch in bp["boxes"]:
             patch.set_facecolor(color)
             patch.set_alpha(0.65)
-
-        # Jittered strip of individual seed values on top of each box
-        for xi, vals in zip(bpos, data):
-            clean = [v for v in vals if not np.isnan(v)]
-            if not clean:
-                continue
-            jx = xi + rng.uniform(-jitter_w, jitter_w, len(clean))
-            ax.scatter(jx, clean, color=color, s=18, alpha=0.7,
-                       edgecolors="white", linewidths=0.4, zorder=6)
 
         # Legend proxy
         ax.scatter([], [], color=color, s=30, alpha=0.85,
