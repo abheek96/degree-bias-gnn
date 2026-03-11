@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
+import torch
 
 log = logging.getLogger(__name__)
 
@@ -687,6 +688,75 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
 
     fig.tight_layout()
     _save(fig, _subdir(save_dir, "purity_vs_degree"), f"{prefix}_purity_vs_degree_k{k}.png", show)
+
+
+# ── purity evolution vs. k, one line per degree group ─────────────────────────
+
+def plot_purity_vs_k_by_degree(test_deg, purity_by_k, cfg,
+                                save_dir=None, show=False, min_count=3):
+    """Line plot showing how neighborhood purity evolves with k, per degree group.
+
+    X-axis is the neighbourhood radius k; each line represents nodes that share
+    the same 1-hop degree.  Degree groups with fewer than ``min_count`` test
+    nodes are omitted to avoid noisy / unrepresentative lines.
+
+    Parameters
+    ----------
+    test_deg    : 1-D LongTensor of 1-hop degrees for test nodes.
+    purity_by_k : dict { k (int) -> 1-D FloatTensor of purity values }
+                  Purity tensors must be aligned with test_deg (same ordering).
+    cfg         : dict
+    save_dir    : str or None
+    show        : bool
+    min_count   : int — skip degree groups smaller than this (default 3).
+    """
+    deg      = test_deg.cpu()
+    k_values = sorted(purity_by_k.keys())
+
+    unique_degrees = sorted(deg.unique().tolist())
+    # Filter to groups with enough nodes
+    unique_degrees = [d for d in unique_degrees
+                      if int((deg == d).sum()) >= min_count]
+
+    prefix   = _fname_prefix(cfg)
+    n_test   = int(len(deg))
+    subtitle = _subtitle(cfg, n_test, len(unique_degrees))
+
+    cmap   = plt.get_cmap("viridis", max(len(unique_degrees), 1))
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    for i, d in enumerate(unique_degrees):
+        mask  = (deg == d).numpy()
+        count = int(mask.sum())
+
+        mean_purs = []
+        for k in k_values:
+            vals  = purity_by_k[k].cpu().numpy()[mask]
+            valid = vals[~np.isnan(vals)]
+            mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
+
+        ax.plot(k_values, mean_purs,
+                marker="o", linewidth=1.8, markersize=5,
+                color=cmap(i),
+                label=f"deg={d}  (n={count})")
+
+    ax.set_xlabel("Neighbourhood radius  k", fontsize=11)
+    ax.set_ylabel("Mean neighbourhood purity", fontsize=11)
+    ax.set_ylim(-0.05, 1.10)
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax.set_xticks(k_values)
+    ax.grid(axis="both", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.legend(loc="best", fontsize=7, framealpha=0.85, ncol=2,
+              title="Degree group", title_fontsize=7)
+    ax.set_title(
+        f"Purity Evolution by Degree  (k = {k_values[0]}…{k_values[-1]})\n{subtitle}",
+        fontsize=11,
+    )
+
+    fig.tight_layout()
+    k_range = f"k{k_values[0]}-{k_values[-1]}"
+    _save(fig, _subdir(save_dir, "purity_vs_degree"),
+          f"{prefix}_purity_vs_k_by_degree_{k_range}.png", show)
 
 
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
