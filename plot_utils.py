@@ -457,7 +457,9 @@ def _plot_khop_single(all_degrees, pos, deg_data, k, subtitle, prefix, save_dir,
         f"Accuracy vs. {k}-Hop Degree  —  single run\n{subtitle}", fontsize=11
     )
     ax.set_xlabel(f"Cumulative {k}-hop degree", fontsize=11)
-    _degree_axis(ax, pos, all_degrees)
+    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax.set_xticks(pos)
+    ax.set_xticklabels(all_degrees, rotation=55, ha="right", fontsize=8)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_single_run.png", show)
@@ -494,7 +496,9 @@ def _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, pref
         f"Accuracy vs. {k}-Hop Degree  —  {n_runs} seeds\n{subtitle}", fontsize=11
     )
     ax.set_xlabel(f"Cumulative {k}-hop degree", fontsize=11)
-    _degree_axis(ax, pos, all_degrees)
+    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax.set_xticks(pos)
+    ax.set_xticklabels(all_degrees, rotation=55, ha="right", fontsize=8)
 
     fig.tight_layout()
     _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_across_runs.png", show)
