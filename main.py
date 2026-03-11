@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers
 from utils import compute_distances_to_train, get_distance_deg, get_khop_degree
 from train import train
 from test import evaluate
@@ -206,6 +206,30 @@ def main():
             khop_acc_results,
             cfg,
             k=khop_k,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+
+    if plot_cfg.get("acc_vs_degree_by_layers", False):
+        import copy as _copy
+        layer_values = plot_cfg.get("layer_values", [1, 2, 3, 4, 5])
+        results_by_layers = {}
+        for L in layer_values:
+            log.info("=== Training with num_layers=%d ===", L)
+            layer_cfg = _copy.deepcopy(cfg)
+            layer_cfg["model"]["num_layers"] = L
+            layer_deg_results = []
+            for i in tqdm(range(1, num_runs + 1), desc=f"Layers={L}"):
+                seed = base_seed + i - 1
+                set_seed(seed)
+                _, _, pred_L = run(data, layer_cfg, i, device)
+                layer_deg_results.append(
+                    get_accuracy_deg(test_deg, pred_L[data.test_mask], data.y[data.test_mask])
+                )
+            results_by_layers[L] = layer_deg_results
+        plot_acc_vs_degree_by_layers(
+            results_by_layers,
+            cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )

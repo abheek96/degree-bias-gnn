@@ -504,6 +504,103 @@ def _plot_khop_across_runs(all_degrees, pos, deg_data, n_runs, k, subtitle, pref
     _save(fig, save_dir, f"{prefix}_acc_vs_{k}hop_degree_across_runs.png", show)
 
 
+# ── accuracy vs. 1-hop degree: grouped boxplots by num_layers ──────────────────
+
+_LAYER_COLORS = ["#2ecc71", "#3498db", "#9b59b6", "#e67e22", "#e74c3c"]
+
+
+def plot_acc_vs_degree_by_layers(results_by_layers, cfg, save_dir=None, show=False):
+    """Grouped boxplot of accuracy vs. 1-hop degree, one box per num_layers value.
+
+    For each degree group on the x-axis there is one boxplot per layer count.
+    Each boxplot shows the distribution of per-run mean accuracies across seeds.
+
+    Parameters
+    ----------
+    results_by_layers : dict[int, list[dict]]
+        Mapping from num_layers to a list of per-run ``get_accuracy_deg`` dicts.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    """
+    layer_values = sorted(results_by_layers.keys())
+    n_layers     = len(layer_values)
+    if n_layers == 0:
+        return
+
+    # Collect all unique degree values across every layer configuration
+    all_degrees = sorted({d for results in results_by_layers.values()
+                          for run in results for d in run})
+    n_deg  = len(all_degrees)
+    pos    = list(range(n_deg))
+    prefix = _fname_prefix(cfg)
+
+    # Use counts from the first layer (graph-fixed)
+    first_results = results_by_layers[layer_values[0]]
+    _, first_deg_data = _collect(first_results)
+    counts = [len(first_deg_data[d][0]) if d in first_deg_data else 0
+              for d in all_degrees]
+    n_test = sum(counts)
+    subtitle = _subtitle(cfg, n_test, n_deg)
+    n_runs   = len(first_results)
+
+    # Per-layer, per-degree: list of per-run mean accuracies
+    layer_deg_means = {}
+    for L in layer_values:
+        _, deg_data = _collect(results_by_layers[L])
+        layer_deg_means[L] = {}
+        for d in all_degrees:
+            if d in deg_data:
+                means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+                layer_deg_means[L][d] = means if means else [np.nan]
+            else:
+                layer_deg_means[L][d] = [np.nan]
+
+    # Box geometry
+    group_w  = 0.8
+    box_w    = group_w / n_layers
+    offsets  = np.linspace(-group_w / 2 + box_w / 2,
+                            group_w / 2 - box_w / 2, n_layers)
+
+    fig, ax = plt.subplots(figsize=(_fig_w(n_deg, n_layers), 5))
+
+    for i, L in enumerate(layer_values):
+        bpos  = [p + offsets[i] for p in pos]
+        data  = [layer_deg_means[L][d] for d in all_degrees]
+        color = _LAYER_COLORS[i % len(_LAYER_COLORS)]
+
+        bp = ax.boxplot(data, positions=bpos, widths=box_w * 0.85, **_BP_KWARGS)
+        for patch in bp["boxes"]:
+            patch.set_facecolor(color)
+            patch.set_alpha(0.72)
+        # Invisible scatter for legend entry
+        ax.scatter([], [], color=color, alpha=0.85,
+                   label=f"{L} layer{'s' if L != 1 else ''}", s=50)
+
+    _count_bars(ax, pos, counts)
+
+    ax.set_ylabel(f"Mean accuracy per run  ({n_runs} seeds)", fontsize=11)
+    ax.set_ylim(-0.05, 1.10)
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.85, title="# layers",
+              title_fontsize=8)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.set_title(
+        f"Accuracy vs. Node Degree  —  varying num_layers  ({n_runs} seeds)\n{subtitle}",
+        fontsize=11,
+    )
+
+    ax.set_xlabel("Node degree", fontsize=11)
+    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    step = max(1, n_deg // 30)
+    ax.set_xticks(pos[::step])
+    ax.set_xticklabels(all_degrees[::step], rotation=55, ha="right", fontsize=8)
+
+    fig.tight_layout()
+    layer_str = "_".join(str(L) for L in layer_values)
+    _save(fig, save_dir, f"{prefix}_acc_vs_degree_by_layers_{layer_str}.png", show)
+
+
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
 # 
 # def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,

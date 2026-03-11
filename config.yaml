@@ -10,6 +10,8 @@ plot:
   acc_vs_distance: true
   acc_vs_khop_degree: true
   khop_k: 2          # neighbourhood radius for k-hop degree
+  acc_vs_degree_by_layers: true
+  layer_values: [1, 2, 3, 4, 5]
   save: true
   show: false
 
