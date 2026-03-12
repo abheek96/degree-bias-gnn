@@ -312,6 +312,28 @@ def get_khop_degree(data, k: int = 2, exclusive: bool = False) -> torch.Tensor:
     return (reach & ~reach_prev).sum(dim=1).long()
 
 
+def get_labelling_ratio(data) -> torch.Tensor:
+    """For every node, indicate whether it has at least one labeled (training) neighbor.
+
+    Returns a boolean tensor of shape [num_nodes] where True means the node
+    has at least one immediate (1-hop) neighbor in the training set.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index and .train_mask)
+
+    Returns
+    -------
+    has_labeled_neighbor : BoolTensor, shape [num_nodes]
+    """
+    from torch_geometric.utils import to_dense_adj
+
+    N     = data.num_nodes
+    A     = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0)  # (N, N)
+    train = data.train_mask.cpu().float()                               # (N,)
+    return (A.cpu() @ train) > 0                                        # (N,)
+
+
 def get_node_purity(data, k: int = 1) -> torch.Tensor:
     """Neighborhood purity for every node at receptive field radius k.
 

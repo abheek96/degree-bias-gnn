@@ -716,6 +716,70 @@ def plot_acc_trend_by_degree(results_by_label, cfg, save_dir=None, show=False):
           f"{prefix}_acc_trend_by_degree_{models_str}.png", show)
 
 
+# ── labelling ratio vs. degree ────────────────────────────────────────────────
+
+def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
+                                   save_dir=None, show=False):
+    """Fraction of nodes with at least one labeled neighbor, grouped by degree.
+
+    For each degree group d:
+        labelling_ratio(d) = |{v : deg(v)=d, ∃ u∈N_1(v) s.t. u∈train}|
+                             / |{v : deg(v)=d}|
+
+    Parameters
+    ----------
+    all_deg              : 1-D LongTensor of degrees for all nodes.
+    has_labeled_neighbor : 1-D BoolTensor, shape [num_nodes].
+    cfg                  : dict
+    save_dir             : str or None
+    show                 : bool
+    """
+    deg  = all_deg.cpu()
+    has  = has_labeled_neighbor.cpu()
+
+    unique_degrees = sorted(deg.unique().tolist())
+    pos    = list(range(len(unique_degrees)))
+    prefix = _fname_prefix(cfg)
+    n_all  = int(len(deg))
+    subtitle = _subtitle(cfg, n_all, len(unique_degrees))
+
+    counts = []
+    ratios = []
+    for d in unique_degrees:
+        mask = (deg == d)
+        counts.append(int(mask.sum()))
+        ratios.append(float(has[mask].float().mean()))
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    ax_top.plot(pos, ratios, marker="o", linewidth=1.8, markersize=5,
+                color="#2980b9", zorder=3)
+    ax_top.set_ylabel("Labelling ratio", fontsize=11)
+    ax_top.set_ylim(-0.05, 1.10)
+    ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(
+        f"Labelling Ratio vs. Node Degree\n{subtitle}", fontsize=11,
+    )
+
+    ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.set_xlabel("Node degree", fontsize=11)
+    step = max(1, len(unique_degrees) // 30)
+    ax_bot.set_xticks(pos[::step])
+    ax_bot.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
+    ax_bot.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "labelling_ratio"),
+          f"{prefix}_labelling_ratio_vs_degree.png", show)
+
+
 # ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
 
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=False):
