@@ -609,6 +609,113 @@ def plot_acc_vs_degree_by_layers(results_by_label, cfg, save_dir=None, show=Fals
     _save(fig, _subdir(save_dir, "acc_vs_degree_by_layers"), f"{prefix}_acc_vs_degree_by_layers_{models_str}.png", show)
 
 
+# ── accuracy trend with depth per degree group ─────────────────────────────────
+
+def plot_acc_trend_by_degree(results_by_label, cfg, save_dir=None, show=False):
+    """Linear trend of accuracy with depth, plotted per degree group.
+
+    For each degree group, fits a line to mean accuracy vs. layer count
+    and plots the slope on the y-axis.  Positive slope = more layers help
+    nodes of that degree; negative = over-smoothing hurts them.  One line
+    per model, making cross-degree and cross-model comparisons direct.
+
+    Labels in results_by_label must follow "<ModelName> L=<int>" so that
+    layer counts can be parsed.
+
+    Parameters
+    ----------
+    results_by_label : dict[str, list[dict]]
+        Same format as plot_acc_vs_degree_by_layers.
+    cfg : dict
+    save_dir : str or None
+    show : bool
+    """
+    labels = list(results_by_label.keys())
+    if not labels:
+        return
+
+    # Group labels by model name; parse layer count from "ModelName L=<int>"
+    model_labels = {}
+    for lbl in labels:
+        parts = lbl.split(" L=")
+        if len(parts) != 2:
+            continue
+        model_name = parts[0]
+        try:
+            layer_count = int(parts[1])
+        except ValueError:
+            continue
+        model_labels.setdefault(model_name, []).append((layer_count, lbl))
+    for model_name in model_labels:
+        model_labels[model_name].sort(key=lambda x: x[0])
+
+    all_degrees = sorted({d for results in results_by_label.values()
+                          for run in results for d in run})
+    n_deg  = len(all_degrees)
+    pos    = list(range(n_deg))
+    prefix = _fname_prefix(cfg)
+
+    _, first_deg_data = _collect(results_by_label[labels[0]])
+    counts = [len(first_deg_data[d][0]) if d in first_deg_data else 0
+              for d in all_degrees]
+    n_test   = sum(counts)
+    subtitle = _subtitle(cfg, n_test, n_deg)
+
+    # Mean accuracy per (label, degree), averaged over runs
+    label_deg_mean = {}
+    for lbl in labels:
+        _, deg_data = _collect(results_by_label[lbl])
+        label_deg_mean[lbl] = {}
+        for d in all_degrees:
+            if d in deg_data:
+                run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+                label_deg_mean[lbl][d] = float(np.mean(run_means)) if run_means else float("nan")
+            else:
+                label_deg_mean[lbl][d] = float("nan")
+
+    fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
+
+    for i, (model_name, layer_list) in enumerate(model_labels.items()):
+        layer_counts = [lc for lc, _ in layer_list]
+        color = _LAYER_COLORS[i % len(_LAYER_COLORS)]
+
+        slopes = []
+        for d in all_degrees:
+            accs  = [label_deg_mean[lbl][d] for _, lbl in layer_list]
+            valid = [(lc, a) for lc, a in zip(layer_counts, accs) if not np.isnan(a)]
+            if len(valid) >= 2:
+                xs, ys = zip(*valid)
+                slopes.append(float(np.polyfit(xs, ys, 1)[0]))
+            else:
+                slopes.append(float("nan"))
+
+        ax.plot(pos, slopes, marker="o", linewidth=1.8, markersize=5,
+                color=color, label=model_name, zorder=3)
+
+    ax.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2, label="No trend")
+
+    _count_bars(ax, pos, counts)
+
+    ax.set_ylabel("Accuracy slope  (Δ acc / layer)", fontsize=11)
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:+.3f}"))
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.set_title(
+        f"Accuracy Trend with Depth by Degree\n{subtitle}", fontsize=11,
+    )
+
+    ax.set_xlabel("Node degree", fontsize=11)
+    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    step = max(1, n_deg // 30)
+    ax.set_xticks(pos[::step])
+    ax.set_xticklabels(all_degrees[::step], rotation=55, ha="right", fontsize=8)
+
+    fig.tight_layout()
+    models_str = "_".join(model_labels.keys())
+    _save(fig, _subdir(save_dir, "acc_vs_degree_by_layers"),
+          f"{prefix}_acc_trend_by_degree_{models_str}.png", show)
+
+
 # ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
 
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=False):

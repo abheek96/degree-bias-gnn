@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_purity_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree
 from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity
 from train import train
 from test import evaluate
@@ -284,11 +284,12 @@ def main():
                         get_accuracy_deg(test_deg, pred_L[data.test_mask], data.y[data.test_mask])
                     )
                 results_by_label[label] = label_deg_results
+        save_dir = exec_dir if plot_cfg.get("save", True) else None
         plot_acc_vs_degree_by_layers(
-            results_by_label,
-            cfg,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
+            results_by_label, cfg, save_dir=save_dir, show=plot_cfg.get("show", False),
+        )
+        plot_acc_trend_by_degree(
+            results_by_label, cfg, save_dir=save_dir, show=plot_cfg.get("show", False),
         )
 
     if plot_cfg.get("purity_vs_degree", False):
