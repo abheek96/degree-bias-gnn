@@ -801,11 +801,10 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
 
 def plot_purity_delta_by_degree(test_deg, purity_by_k, cfg,
                                 save_dir=None, show=False):
-    """Delta purity (purity[k+1] - purity[k]) per degree group, all transitions.
+    """Overall purity delta (purity[k_max] - purity[k_min]) per degree group.
 
-    Top panel  — one line per consecutive k transition (e.g. k=1→2, k=2→3),
-                 y = mean(purity[k+1]) - mean(purity[k]) for nodes of that degree.
-                 A zero line marks no change.
+    Top panel  — single line: y = mean(purity[k_max]) - mean(purity[k_min])
+                 for nodes of that degree.  A zero line marks no change.
     Bottom panel — node count per degree (bar chart).
 
     Parameters
@@ -821,45 +820,40 @@ def plot_purity_delta_by_degree(test_deg, purity_by_k, cfg,
     if len(k_values) < 2:
         return
 
+    k_min, k_max = k_values[0], k_values[-1]
     unique_degrees = sorted(deg.unique().tolist())
     pos    = list(range(len(unique_degrees)))
     prefix = _fname_prefix(cfg)
     n_test = int(len(deg))
     subtitle = _subtitle(cfg, n_test, len(unique_degrees))
 
-    # Mean purity per (k, degree)
-    mean_purity = {}
     counts = []
+    deltas = []
     for d in unique_degrees:
         mask = (deg == d).numpy()
         counts.append(int(mask.sum()))
-        for k in k_values:
+
+        def _mean(k):
             vals  = purity_by_k[k].cpu().numpy()[mask]
             valid = vals[~np.isnan(vals)]
-            mean_purity[(k, d)] = float(valid.mean()) if len(valid) > 0 else float("nan")
+            return float(valid.mean()) if len(valid) > 0 else float("nan")
 
-    cmap = plt.get_cmap("tab10", len(k_values) - 1)
+        deltas.append(_mean(k_max) - _mean(k_min))
 
     fig, (ax_top, ax_bot) = plt.subplots(
         2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
         sharex=True, gridspec_kw={"height_ratios": [3, 1]},
     )
 
-    for i, (k_lo, k_hi) in enumerate(zip(k_values[:-1], k_values[1:])):
-        deltas = [
-            mean_purity[(k_hi, d)] - mean_purity[(k_lo, d)]
-            for d in unique_degrees
-        ]
-        ax_top.plot(pos, deltas, marker="o", linewidth=1.8, markersize=5,
-                    color=cmap(i), label=f"k={k_lo}→{k_hi}", zorder=3)
-
+    ax_top.plot(pos, deltas, marker="o", linewidth=1.8, markersize=5,
+                color="#e67e22", zorder=3)
     ax_top.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2, label="No change")
-    ax_top.set_ylabel("Δ mean purity  (purity[k+1] − purity[k])", fontsize=11)
+    ax_top.set_ylabel(f"Δ mean purity  (k={k_max} − k={k_min})", fontsize=11)
     ax_top.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:+.2f}"))
     ax_top.legend(loc="upper left", fontsize=8, framealpha=0.85)
     ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_top.set_title(
-        f"Purity Change Across k Transitions by Degree\n{subtitle}", fontsize=11,
+        f"Overall Purity Change (k={k_min}→{k_max}) by Degree\n{subtitle}", fontsize=11,
     )
 
     ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
@@ -873,7 +867,7 @@ def plot_purity_delta_by_degree(test_deg, purity_by_k, cfg,
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
     fig.tight_layout()
-    k_range = f"k{k_values[0]}-{k_values[-1]}"
+    k_range = f"k{k_min}-{k_max}"
     _save(fig, _subdir(save_dir, "purity_vs_degree"),
           f"{prefix}_purity_delta_by_degree_{k_range}.png", show)
 
