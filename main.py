@@ -167,6 +167,7 @@ def main():
 
     # Degree is a fixed property of the graph — compute once for test nodes
     test_deg = graph_degree(data.edge_index[1], data.num_nodes)[data.test_mask].cpu()
+    all_deg  = graph_degree(data.edge_index[1], data.num_nodes).cpu()
 
     # Structural distances are graph-fixed — compute once before the run loop
     dist_to_train, dist_to_same_class = compute_distances_to_train(data)
@@ -191,7 +192,7 @@ def main():
     # Neighborhood purity is graph-fixed — compute once per k value
     purity_k_max = plot_cfg.get("purity_k_max", 4)
     purity_by_k  = {
-        k: get_node_purity(data, k=k)[data.test_mask.cpu()]
+        k: get_node_purity(data, k=k)
         for k in range(1, purity_k_max + 1)
     } if plot_cfg.get("purity_vs_degree", False) else {}
 
@@ -294,15 +295,15 @@ def main():
 
     if plot_cfg.get("purity_vs_degree", False):
         save_dir = exec_dir if plot_cfg.get("save", True) else None
-        for k, purity_test in purity_by_k.items():
+        for k, purity_all in purity_by_k.items():
             plot_purity_vs_degree(
-                test_deg, purity_test, cfg, k,
+                all_deg, purity_all, cfg, k,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
         if len(purity_by_k) > 1:
             plot_purity_delta_by_degree(
-                test_deg, purity_by_k, cfg,
+                all_deg, purity_by_k, cfg,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
