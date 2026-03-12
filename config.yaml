@@ -37,6 +37,6 @@ plot:
   compare_models: []
   labelling_ratio: true
   purity_vs_degree: true
-  purity_k_max: 4
+  purity_k_max: 2
   save: true
   show: false
