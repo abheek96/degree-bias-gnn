@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree
 from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity
 from train import train
 from test import evaluate
@@ -297,6 +297,12 @@ def main():
         for k, purity_test in purity_by_k.items():
             plot_purity_vs_degree(
                 test_deg, purity_test, cfg, k,
+                save_dir=save_dir,
+                show=plot_cfg.get("show", False),
+            )
+        if len(purity_by_k) > 1:
+            plot_purity_delta_by_degree(
+                test_deg, purity_by_k, cfg,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
