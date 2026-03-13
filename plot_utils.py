@@ -716,6 +716,99 @@ def plot_acc_trend_by_degree(results_by_label, cfg, save_dir=None, show=False):
           f"{prefix}_acc_trend_by_degree_{models_str}.png", show)
 
 
+# ── accuracy + labelling ratio vs. degree ─────────────────────────────────────
+
+def plot_acc_and_labelling_ratio_vs_degree(run_results, all_deg,
+                                           has_labeled_neighbor, cfg,
+                                           save_dir=None, show=False):
+    """Accuracy (test nodes) and labelling ratio (all nodes) vs. degree.
+
+    Left y-axis  — median per-degree accuracy across runs (blue).
+    Right y-axis — labelling ratio per degree (orange): fraction of all nodes
+                   at that degree that have at least one training neighbor.
+
+    Parameters
+    ----------
+    run_results          : list[dict]  — output of get_accuracy_deg per run.
+    all_deg              : 1-D LongTensor of degrees for all nodes.
+    has_labeled_neighbor : 1-D BoolTensor, shape [num_nodes].
+    cfg                  : dict
+    save_dir             : str or None
+    show                 : bool
+    """
+    # ── accuracy side ──────────────────────────────────────────────────────────
+    _, deg_data   = _collect(run_results)
+    acc_degrees   = sorted(deg_data.keys())
+
+    # median accuracy across runs per degree
+    acc_by_deg = {}
+    for d in acc_degrees:
+        run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+        acc_by_deg[d] = float(np.median(run_means)) if run_means else float("nan")
+
+    # ── labelling ratio side ───────────────────────────────────────────────────
+    deg = all_deg.cpu()
+    has = has_labeled_neighbor.cpu()
+    all_unique = sorted(deg.unique().tolist())
+    ratio_by_deg = {}
+    counts_by_deg = {}
+    for d in all_unique:
+        mask = (deg == d)
+        ratio_by_deg[d]  = float(has[mask].float().mean())
+        counts_by_deg[d] = int(mask.sum())
+
+    # ── common degree axis ─────────────────────────────────────────────────────
+    all_degrees = sorted(set(acc_degrees) | set(all_unique))
+    pos = list(range(len(all_degrees)))
+
+    acc_vals   = [acc_by_deg.get(d,   float("nan")) for d in all_degrees]
+    ratio_vals = [ratio_by_deg.get(d, float("nan")) for d in all_degrees]
+    counts     = [counts_by_deg.get(d, 0)           for d in all_degrees]
+
+    prefix   = _fname_prefix(cfg)
+    n_runs   = len(run_results)
+    n_test   = sum(len(deg_data[d][0]) for d in acc_degrees)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+
+    fig, ax_acc = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
+
+    # Accuracy line
+    ax_acc.plot(pos, acc_vals, color="#3498db", linewidth=1.8,
+                marker="o", markersize=4, zorder=3, label="Accuracy (median)")
+    ax_acc.set_ylabel("Accuracy", fontsize=11, color="#3498db")
+    ax_acc.tick_params(axis="y", colors="#3498db", labelsize=8)
+    ax_acc.set_ylim(-0.05, 1.10)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    # Labelling ratio on twin axis
+    ax_lr = ax_acc.twinx()
+    ax_lr.plot(pos, ratio_vals, color="#e67e22", linewidth=1.8,
+               marker="s", markersize=4, zorder=3, label="Labelling ratio")
+    ax_lr.set_ylabel("Labelling ratio", fontsize=11, color="#e67e22")
+    ax_lr.tick_params(axis="y", colors="#e67e22", labelsize=8)
+    ax_lr.set_ylim(-0.05, 1.10)
+    ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+
+    # Combined legend
+    handles = [
+        plt.Line2D([0], [0], color="#3498db", lw=2, marker="o", markersize=4,
+                   label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
+        plt.Line2D([0], [0], color="#e67e22", lw=2, marker="s", markersize=4,
+                   label="Labelling ratio  (all nodes)"),
+    ]
+    ax_acc.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.85)
+
+    ax_acc.set_title(
+        f"Accuracy & Labelling Ratio vs. Node Degree\n{subtitle}", fontsize=11,
+    )
+    _degree_axis(ax_acc, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "labelling_ratio"),
+          f"{prefix}_acc_and_labelling_ratio_vs_degree.png", show)
+
+
 # ── labelling ratio vs. degree ────────────────────────────────────────────────
 
 def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,

@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree
 from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity, get_labelling_ratio
 from train import train
 from test import evaluate
@@ -299,6 +299,11 @@ def main():
     if plot_cfg.get("labelling_ratio", False):
         plot_labelling_ratio_vs_degree(
             all_deg, has_labeled_neighbor, cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+        plot_acc_and_labelling_ratio_vs_degree(
+            deg_acc_results, all_deg, has_labeled_neighbor, cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
