@@ -1101,6 +1101,78 @@ def plot_purity_delta_by_degree(test_deg, purity_by_k, cfg,
           f"{prefix}_purity_delta_by_degree_{k_range}.png", show)
 
 
+# ── influence analysis: same-class vs diff-class training nodes ────────────────
+
+def plot_influence_analysis(results, cfg, save_dir=None, show=False):
+    """Grouped bar chart comparing same-class vs different-class training node
+    influence for high-degree misclassified test nodes.
+
+    Nodes are sorted by degree on the x-axis.  For each node, two bars show
+    the total influence attributable to same-class and different-class training
+    nodes within the model's receptive field.  A secondary line shows the
+    fraction of influence coming from different-class nodes.
+
+    Parameters
+    ----------
+    results  : list of dicts from influence.compute_influence_analysis.
+    cfg      : dict
+    save_dir : str or None
+    show     : bool
+    """
+    if not results:
+        return
+
+    results = sorted(results, key=lambda r: r["degree"])
+
+    labels   = [f"n{r['node_idx']}\ndeg={r['degree']}" for r in results]
+    same_inf = np.array([r["same_class_influence"] for r in results])
+    diff_inf = np.array([r["diff_class_influence"] for r in results])
+    total    = same_inf + diff_inf
+    diff_frac = np.where(total > 0, diff_inf / total, float("nan"))
+
+    x     = np.arange(len(results))
+    width = 0.35
+    prefix = _fname_prefix(cfg)
+
+    fig, ax = plt.subplots(figsize=(max(10, len(results) * 0.9), 5))
+
+    ax.bar(x - width / 2, same_inf, width,
+           label="Same-class train nodes", color="#2ecc71", alpha=0.8)
+    ax.bar(x + width / 2, diff_inf, width,
+           label="Diff-class train nodes", color="#e74c3c", alpha=0.8)
+
+    # Fraction of diff-class influence as a line on twin axis
+    ax2 = ax.twinx()
+    ax2.plot(x, diff_frac, color="#c0392b", lw=1.5, ls="--",
+             marker="o", markersize=4, zorder=4,
+             label="Diff-class fraction")
+    ax2.set_ylabel("Diff-class influence fraction", fontsize=10, color="#c0392b")
+    ax2.tick_params(axis="y", colors="#c0392b", labelsize=8)
+    ax2.set_ylim(-0.05, 1.10)
+    ax2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+
+    ax.set_ylabel("Summed influence score", fontsize=11)
+    ax.set_xlabel("Test node  (sorted by degree)", fontsize=11)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    handles1, _ = ax.get_legend_handles_labels()
+    handles2, _ = ax2.get_legend_handles_labels()
+    ax.legend(handles=handles1 + handles2, loc="upper left",
+              fontsize=8, framealpha=0.85)
+
+    ax.set_title(
+        "Influence of Training Nodes on High-Degree Misclassified Test Nodes\n"
+        f"{_fname_prefix(cfg)}  —  same-class vs. diff-class within receptive field",
+        fontsize=11,
+    )
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "influence"),
+          f"{prefix}_influence_analysis.png", show)
+
+
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
 # 
 # def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,

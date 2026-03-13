@@ -39,5 +39,8 @@ plot:
   labelling_ratio: true
   purity_vs_degree: true
   purity_k_max: 2
+  influence_analysis: false
+  influence_degree_percentile: 75
+  influence_top_n: 20
   save: true
   show: false

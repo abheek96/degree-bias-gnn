@@ -14,7 +14,8 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_influence_analysis
+from influence import compute_influence_analysis
 from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train
 from train import train
 from test import evaluate
@@ -341,6 +342,20 @@ def main():
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
+
+
+    if plot_cfg.get("influence_analysis", False):
+        influence_results = compute_influence_analysis(
+            model, data, pred,
+            k_hops=cfg["model"]["num_layers"],
+            degree_percentile=plot_cfg.get("influence_degree_percentile", 75),
+            top_n=plot_cfg.get("influence_top_n", 20),
+        )
+        plot_influence_analysis(
+            influence_results, cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
 
 
 if __name__ == "__main__":
