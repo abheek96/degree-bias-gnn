@@ -169,8 +169,8 @@ def main():
     test_deg = graph_degree(data.edge_index[1], data.num_nodes)[data.test_mask].cpu()
     all_deg  = graph_degree(data.edge_index[1], data.num_nodes).cpu()
 
-    # Labelling ratio is graph-fixed — compute once
-    has_labeled_neighbor = get_labelling_ratio(data)
+    # Labelling ratio is graph-fixed — compute once, sliced to test nodes
+    has_labeled_neighbor = get_labelling_ratio(data)[data.test_mask.cpu()]
 
     # Structural distances are graph-fixed — compute once before the run loop
     dist_to_train, dist_to_same_class = compute_distances_to_train(data)
@@ -298,12 +298,12 @@ def main():
 
     if plot_cfg.get("labelling_ratio", False):
         plot_labelling_ratio_vs_degree(
-            all_deg, has_labeled_neighbor, cfg,
+            test_deg, has_labeled_neighbor, cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
         plot_acc_and_labelling_ratio_vs_degree(
-            deg_acc_results, all_deg, has_labeled_neighbor, cfg,
+            deg_acc_results, test_deg, has_labeled_neighbor, cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
