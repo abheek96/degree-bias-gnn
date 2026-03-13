@@ -784,6 +784,104 @@ def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False):
           f"{prefix}_spl_vs_degree.png", show)
 
 
+def plot_spl_and_acc_vs_degree(run_results, test_deg, avg_spl, cfg,
+                                save_dir=None, show=False):
+    """SPL boxplots with median accuracy overlaid, by degree.
+
+    Top panel
+        Left y-axis  — boxplots of avg SPL distribution per degree (purple).
+        Right y-axis — median accuracy across runs per degree (blue line).
+    Bottom panel — node count per degree (bar chart).
+
+    Parameters
+    ----------
+    run_results : list[dict]  — output of get_accuracy_deg per run.
+    test_deg    : 1-D LongTensor of degrees for test nodes.
+    avg_spl     : 1-D FloatTensor of avg SPL values for test nodes (NaN-safe).
+    cfg         : dict
+    save_dir    : str or None
+    show        : bool
+    """
+    deg = test_deg.cpu()
+    spl = avg_spl.cpu().numpy()
+
+    # ── SPL side ───────────────────────────────────────────────────────────────
+    unique_degrees = sorted(deg.unique().tolist())
+    pos    = list(range(len(unique_degrees)))
+    prefix = _fname_prefix(cfg)
+    n_test = int(len(deg))
+    subtitle = _subtitle(cfg, n_test, len(unique_degrees))
+
+    bp_data = []
+    counts  = []
+    for d in unique_degrees:
+        mask  = (deg == d).numpy()
+        vals  = spl[mask]
+        valid = vals[~np.isnan(vals)]
+        bp_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
+        counts.append(int(mask.sum()))
+
+    # ── accuracy side ──────────────────────────────────────────────────────────
+    _, deg_data = _collect(run_results)
+    n_runs      = len(run_results)
+    acc_by_deg  = {}
+    for d in deg_data:
+        run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+        acc_by_deg[d] = float(np.median(run_means)) if run_means else float("nan")
+    acc_vals = [acc_by_deg.get(d, float("nan")) for d in unique_degrees]
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    # SPL boxplots
+    bp = ax_top.boxplot(bp_data, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp["boxes"]:
+        patch.set_facecolor("#8e44ad")
+        patch.set_alpha(0.65)
+    ax_top.set_ylabel("Avg. shortest path length to training nodes", fontsize=11,
+                      color="#8e44ad")
+    ax_top.tick_params(axis="y", colors="#8e44ad", labelsize=8)
+    ax_top.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    # Accuracy on twin axis
+    ax_acc = ax_top.twinx()
+    ax_acc.plot(pos, acc_vals, color="#3498db", linewidth=1.8,
+                marker="o", markersize=4, zorder=4)
+    ax_acc.set_ylabel("Accuracy  (median)", fontsize=11, color="#3498db")
+    ax_acc.tick_params(axis="y", colors="#3498db", labelsize=8)
+    ax_acc.set_ylim(-0.05, 1.10)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+
+    handles = [
+        plt.matplotlib.patches.Patch(facecolor="#8e44ad", alpha=0.65,
+                                     label="Avg. SPL  (distribution)"),
+        plt.Line2D([0], [0], color="#3498db", lw=2, marker="o", markersize=4,
+                   label=f"Accuracy  ({n_runs} seed{'s' if n_runs > 1 else ''}, median)"),
+    ]
+    ax_top.legend(handles=handles, loc="upper right", fontsize=8, framealpha=0.85)
+    ax_top.set_title(
+        f"Avg. SPL to Training Nodes & Accuracy vs. Degree\n{subtitle}", fontsize=11,
+    )
+
+    # Node count panel
+    ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.set_xlabel("Node degree", fontsize=11)
+    step = max(1, len(unique_degrees) // 30)
+    ax_bot.set_xticks(pos[::step])
+    ax_bot.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
+    ax_bot.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "spl_vs_degree"),
+          f"{prefix}_spl_and_acc_vs_degree.png", show)
+
+
 # ── accuracy + labelling ratio vs. degree ─────────────────────────────────────
 
 def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
