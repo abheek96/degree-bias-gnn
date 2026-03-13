@@ -101,7 +101,11 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
     list of dicts, one per selected node, with keys:
         node_idx, degree, true_label, pred_label,
         same_class_influence, diff_class_influence,
-        n_same_train, n_diff_train
+        n_same_train, n_diff_train,
+        neighbors : list of dicts {node_idx, influence, type}
+            where type ∈ {"same_train", "diff_train", "non_train"},
+            restricted to the k-hop receptive field of the selected node,
+            sorted descending by influence score.
     """
     import numpy as np
 
@@ -153,6 +157,24 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
 
         I_x = influence_distribution(model, data, node_x)
 
+        # Build per-neighbor detail for nodes in the receptive field
+        same_set = set(same_class)
+        diff_set = set(diff_class)
+        neighbor_detail = []
+        for nb in neighbors:
+            if nb in same_set:
+                nb_type = "same_train"
+            elif nb in diff_set:
+                nb_type = "diff_train"
+            else:
+                nb_type = "non_train"
+            neighbor_detail.append({
+                "node_idx":  nb,
+                "influence": float(I_x[nb].item()),
+                "type":      nb_type,
+            })
+        neighbor_detail.sort(key=lambda d: d["influence"], reverse=True)
+
         results.append({
             "node_idx":             node_x,
             "degree":               degree,
@@ -162,6 +184,7 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
             "diff_class_influence": float(I_x[diff_class].sum()) if diff_class else 0.0,
             "n_same_train":         len(same_class),
             "n_diff_train":         len(diff_class),
+            "neighbors":            neighbor_detail,
         })
 
     return results

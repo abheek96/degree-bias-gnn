@@ -1128,7 +1128,7 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
     same_inf = np.array([r["same_class_influence"] for r in results])
     diff_inf = np.array([r["diff_class_influence"] for r in results])
     total    = same_inf + diff_inf
-    diff_frac = np.where(total > 0, diff_inf / total, float("nan"))
+    diff_frac = np.divide(diff_inf, total, out=np.full_like(total, float("nan")), where=total > 0)
 
     x     = np.arange(len(results))
     width = 0.35
@@ -1171,6 +1171,102 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
     fig.tight_layout()
     _save(fig, _subdir(save_dir, "influence"),
           f"{prefix}_influence_analysis.png", show)
+
+
+def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
+    """One figure per selected node: individual influence scores of every
+    k-hop neighbor, colored by neighbor type.
+
+    Colors:
+        green  — same-class training node
+        red    — different-class training node
+        grey   — non-training node
+
+    Neighbors are sorted left-to-right by descending influence score.
+    A dashed horizontal line marks the mean influence of non-training
+    neighbors (if any), for visual reference.
+
+    Parameters
+    ----------
+    results  : list of dicts from influence.compute_influence_analysis,
+               each containing a "neighbors" key.
+    cfg      : dict
+    save_dir : str or None
+    show     : bool
+    """
+    if not results:
+        return
+
+    TYPE_COLOR = {
+        "same_train": "#2ecc71",
+        "diff_train": "#e74c3c",
+        "non_train":  "#95a5a6",
+    }
+    TYPE_LABEL = {
+        "same_train": "Same-class train",
+        "diff_train": "Diff-class train",
+        "non_train":  "Non-training",
+    }
+
+    prefix   = _fname_prefix(cfg)
+    subdir   = _subdir(save_dir, "influence")
+
+    for r in results:
+        neighbors = r.get("neighbors", [])
+        if not neighbors:
+            continue
+
+        node_x   = r["node_idx"]
+        degree   = r["degree"]
+        true_lbl = r["true_label"]
+        pred_lbl = r["pred_label"]
+
+        infl  = np.array([nb["influence"] for nb in neighbors])
+        types = [nb["type"] for nb in neighbors]
+        colors = [TYPE_COLOR[t] for t in types]
+        x      = np.arange(len(neighbors))
+
+        fig, ax = plt.subplots(figsize=(max(8, len(neighbors) * 0.4 + 2), 4))
+
+        ax.bar(x, infl, color=colors, alpha=0.85, width=0.7, zorder=3)
+
+        # Mean influence of non-training neighbors
+        non_train_infl = [nb["influence"] for nb in neighbors if nb["type"] == "non_train"]
+        if non_train_infl:
+            mean_non = np.mean(non_train_infl)
+            ax.axhline(mean_non, ls="--", lw=1.2, color="#7f8c8d", alpha=0.7,
+                       label=f"Mean non-train influence ({mean_non:.4f})")
+
+        # Legend patches
+        seen_types = set(types)
+        legend_patches = [
+            plt.Rectangle((0, 0), 1, 1, color=TYPE_COLOR[t], alpha=0.85, label=TYPE_LABEL[t])
+            for t in ("same_train", "diff_train", "non_train") if t in seen_types
+        ]
+        if non_train_infl:
+            import matplotlib.lines as mlines
+            legend_patches.append(
+                mlines.Line2D([], [], color="#7f8c8d", ls="--", lw=1.2,
+                              label=f"Mean non-train ({mean_non:.4f})")
+            )
+        ax.legend(handles=legend_patches, fontsize=8, framealpha=0.85)
+
+        correct = " (correct)" if true_lbl == pred_lbl else " (misclassified)"
+        ax.set_title(
+            f"Per-neighbor influence — node {node_x}{correct}\n"
+            f"degree={degree}  true={true_lbl}  pred={pred_lbl}  "
+            f"|receptive field|={len(neighbors)}  |dataset={cfg['dataset']['name']} {cfg['model']['name']}|",
+            fontsize=9,
+        )
+        ax.set_xlabel("Neighbor (sorted by influence, descending)", fontsize=10)
+        ax.set_ylabel("Normalised influence score", fontsize=10)
+        ax.set_xticks([])
+        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+        ax.set_xlim(-0.7, len(neighbors) - 0.3)
+
+        fig.tight_layout()
+        fname = f"{prefix}_influence_neighbors_node{node_x}_deg{degree}.png"
+        _save(fig, subdir, fname, show)
 
 
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
