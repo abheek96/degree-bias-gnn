@@ -718,20 +718,20 @@ def plot_acc_trend_by_degree(results_by_label, cfg, save_dir=None, show=False):
 
 # ── accuracy + labelling ratio vs. degree ─────────────────────────────────────
 
-def plot_acc_and_labelling_ratio_vs_degree(run_results, all_deg,
+def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
                                            has_labeled_neighbor, cfg,
                                            save_dir=None, show=False):
-    """Accuracy (test nodes) and labelling ratio (all nodes) vs. degree.
+    """Accuracy (test nodes) and labelling ratio (test nodes) vs. degree.
 
     Left y-axis  — median per-degree accuracy across runs (blue).
-    Right y-axis — labelling ratio per degree (orange): fraction of all nodes
+    Right y-axis — labelling ratio per degree (orange): fraction of test nodes
                    at that degree that have at least one training neighbor.
 
     Parameters
     ----------
     run_results          : list[dict]  — output of get_accuracy_deg per run.
-    all_deg              : 1-D LongTensor of degrees for all nodes.
-    has_labeled_neighbor : 1-D BoolTensor, shape [num_nodes].
+    test_deg             : 1-D LongTensor of degrees for test nodes.
+    has_labeled_neighbor : 1-D BoolTensor, shape [num_test_nodes].
     cfg                  : dict
     save_dir             : str or None
     show                 : bool
@@ -747,7 +747,7 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, all_deg,
         acc_by_deg[d] = float(np.median(run_means)) if run_means else float("nan")
 
     # ── labelling ratio side ───────────────────────────────────────────────────
-    deg = all_deg.cpu()
+    deg = test_deg.cpu()
     has = has_labeled_neighbor.cpu()
     all_unique = sorted(deg.unique().tolist())
     ratio_by_deg = {}
@@ -795,7 +795,7 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, all_deg,
         plt.Line2D([0], [0], color="#3498db", lw=2, marker="o", markersize=4,
                    label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
         plt.Line2D([0], [0], color="#e67e22", lw=2, marker="s", markersize=4,
-                   label="Labelling ratio  (all nodes)"),
+                   label="Labelling ratio  (test nodes)"),
     ]
     ax_acc.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.85)
 
