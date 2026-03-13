@@ -1146,12 +1146,12 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
         h = bar.get_height()
         if np.isfinite(h) and h > 0:
             ax.text(bar.get_x() + bar.get_width() / 2, h,
-                    f"{h:.4f}", ha="center", va="bottom", fontsize=6, color="#1f78b4")
+                    f"{h:.2e}", ha="center", va="bottom", fontsize=6, color="#1f78b4")
     for bar in bars_diff:
         h = bar.get_height()
         if np.isfinite(h) and h > 0:
             ax.text(bar.get_x() + bar.get_width() / 2, h,
-                    f"{h:.4f}", ha="center", va="bottom", fontsize=6, color="#b35806")
+                    f"{h:.2e}", ha="center", va="bottom", fontsize=6, color="#b35806")
 
     # Fraction of diff-class influence as a line on twin axis
     ax2 = ax.twinx()
