@@ -1194,8 +1194,16 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
     if not results:
         return
 
-    TYPE_COLOR = {"same_train": "#1f78b4", "diff_train": "#ff7f00"}
-    TYPE_LABEL = {"same_train": "Same-class train", "diff_train": "Diff-class train"}
+    TYPE_COLOR = {
+        "same_train": "#1f78b4",   # blue
+        "diff_train": "#ff7f00",   # orange
+        "non_train":  "#bdbdbd",   # light grey
+    }
+    TYPE_LABEL = {
+        "same_train": "Same-class train",
+        "diff_train": "Diff-class train",
+        "non_train":  "Non-training",
+    }
 
     prefix = _fname_prefix(cfg)
     subdir = _subdir(save_dir, "influence")
@@ -1215,29 +1223,30 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
         colors = [TYPE_COLOR[t] for t in types]
         x      = np.arange(len(neighbors))
 
-        fig, ax = plt.subplots(figsize=(max(8, len(neighbors) * 0.5 + 2), 4))
-        ax.bar(x, infl, color=colors, alpha=0.85, width=0.7, zorder=3)
+        fig, ax = plt.subplots(figsize=(max(8, len(neighbors) * 0.4 + 2), 4))
+        ax.bar(x, infl, color=colors, alpha=0.88, width=0.7, zorder=3)
 
-        # Legend — only show types that are actually present
+        # Legend — only show types that are present
         seen_types = set(types)
         legend_patches = [
-            plt.Rectangle((0, 0), 1, 1, color=TYPE_COLOR[t], alpha=0.85,
+            plt.Rectangle((0, 0), 1, 1, color=TYPE_COLOR[t], alpha=0.88,
                           label=TYPE_LABEL[t])
-            for t in ("same_train", "diff_train") if t in seen_types
+            for t in ("same_train", "diff_train", "non_train") if t in seen_types
         ]
         ax.legend(handles=legend_patches, fontsize=9, framealpha=0.85)
 
         correct = "correct" if true_lbl == pred_lbl else "misclassified"
         n_same = r["n_same_train"]
         n_diff = r["n_diff_train"]
+        n_non  = sum(1 for t in types if t == "non_train")
         ax.set_title(
-            f"Training-node influence — node {node_x}  [{correct}]\n"
+            f"k-hop neighbor influence — node {node_x}  [{correct}]\n"
             f"degree={degree}  true={true_lbl}  pred={pred_lbl}  "
-            f"same-class train={n_same}  diff-class train={n_diff}  "
+            f"same-class train={n_same}  diff-class train={n_diff}  non-train={n_non}  "
             f"({cfg['dataset']['name']} / {cfg['model']['name']})",
             fontsize=9,
         )
-        ax.set_xlabel("Training neighbor (sorted by influence, descending)", fontsize=10)
+        ax.set_xlabel("k-hop neighbor (sorted by influence, descending)", fontsize=10)
         ax.set_ylabel("Normalised influence score", fontsize=10)
         ax.set_xticks(x)
         ax.set_xticklabels([str(nb["node_idx"]) for nb in neighbors],

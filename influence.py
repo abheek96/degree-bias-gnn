@@ -177,14 +177,20 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
 
         I_x = influence_distribution(model, data, node_x)
 
-        # Per-training-neighbor detail only (no non-training nodes)
-        same_set = set(same_class)
+        # Per-neighbor detail for ALL nodes in the k-hop receptive field
+        same_set  = set(same_class)
+        diff_set  = set(diff_class)
         neighbor_detail = []
-        for t in train_in_field:
-            nb_type = "same_train" if t in same_set else "diff_train"
+        for nb in neighbors:
+            if nb in same_set:
+                nb_type = "same_train"
+            elif nb in diff_set:
+                nb_type = "diff_train"
+            else:
+                nb_type = "non_train"
             neighbor_detail.append({
-                "node_idx":  t,
-                "influence": float(I_x[t].item()),
+                "node_idx":  nb,
+                "influence": float(I_x[nb].item()),
                 "type":      nb_type,
             })
         neighbor_detail.sort(key=lambda d: d["influence"], reverse=True)
