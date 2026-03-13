@@ -291,7 +291,7 @@ def main():
                 for i in tqdm(range(1, num_runs + 1), desc=label):
                     seed = base_seed + i - 1
                     set_seed(seed)
-                    _, _, _, pred_L = run(data, run_cfg, i, device)
+                    _, _, _, pred_L, _ = run(data, run_cfg, i, device)
                     label_deg_results.append(
                         get_accuracy_deg(test_deg, pred_L[data.test_mask], data.y[data.test_mask])
                     )
