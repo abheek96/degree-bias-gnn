@@ -197,9 +197,15 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
 
         same_inf = float(I_x[same_class].sum()) if same_class else 0.0
         diff_inf = float(I_x[diff_class].sum()) if diff_class else 0.0
-        log.info("  same_class_influence=%.6f  diff_class_influence=%.6f  "
-                 "total_train_influence=%.6f",
+        log.info("  same_class_influence=%.4e  diff_class_influence=%.4e  "
+                 "total_train_influence=%.4e",
                  same_inf, diff_inf, same_inf + diff_inf)
+        if same_class:
+            for t in same_class:
+                log.info("    same_train node %-5d  influence=%.4e", t, float(I_x[t].item()))
+        if diff_class:
+            for t in diff_class:
+                log.info("    diff_train node %-5d  influence=%.4e", t, float(I_x[t].item()))
 
         results.append({
             "node_idx":             node_x,
