@@ -42,6 +42,6 @@ plot:
   influence_analysis: false
   influence_degrees: []        # e.g. [3, 4, 5] — exact degrees to investigate; empty = percentile fallback
   influence_degree_percentile: 75
-  influence_top_n: 20
+  influence_top_n:             # leave blank to analyse all nodes at the requested degrees
   save: true
   show: false

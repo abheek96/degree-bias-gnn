@@ -350,7 +350,7 @@ def main():
             model, data, pred,
             k_hops=cfg["model"]["num_layers"],
             degree_percentile=plot_cfg.get("influence_degree_percentile", 75),
-            top_n=plot_cfg.get("influence_top_n", 20),
+            top_n=plot_cfg.get("influence_top_n"),
             target_degrees=target_degrees,
         )
         plot_influence_analysis(

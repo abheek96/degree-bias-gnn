@@ -125,7 +125,7 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
                       if test_deg[i].item() == deg_val]
             # misclassified first, then correctly classified
             at_deg.sort(key=lambda i: (test_pred[i] == test_true[i]).item())
-            selected_local.extend(at_deg[:top_n])
+            selected_local.extend(at_deg if top_n is None else at_deg[:top_n])
     else:
         # Fallback: high-degree misclassified nodes
         misc_local    = (test_pred != test_true).nonzero(as_tuple=False).view(-1).tolist()
@@ -134,7 +134,7 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
         deg_threshold = float(np.percentile(test_deg.numpy(), degree_percentile))
         candidates    = [i for i in misc_local if test_deg[i].item() >= deg_threshold]
         candidates.sort(key=lambda i: test_deg[i].item(), reverse=True)
-        selected_local = candidates[:top_n]
+        selected_local = candidates if top_n is None else candidates[:top_n]
 
     train_set = set(train_idx)
     results   = []
