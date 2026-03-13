@@ -366,6 +366,60 @@ def get_avg_spl_to_train(data) -> torch.Tensor:
     return avg_spl
 
 
+def get_avg_spl_to_same_class_train(data) -> torch.Tensor:
+    """Average shortest path length from every node to same-class training nodes.
+
+    For each node v with label c, averages the BFS distances to all training
+    nodes that also have label c.  Nodes with no reachable same-class training
+    node get NaN.
+
+    Complexity: O(|train| × (V + E)).
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index, .train_mask, .y)
+
+    Returns
+    -------
+    avg_spl : FloatTensor, shape [num_nodes]
+    """
+    from collections import deque
+    from torch_geometric.utils import mask_to_index
+
+    N         = data.num_nodes
+    train_idx = mask_to_index(data.train_mask).cpu().tolist()
+    labels    = data.y.cpu()
+
+    src, dst = data.edge_index.cpu()
+    adj = [[] for _ in range(N)]
+    for u, v in zip(src.tolist(), dst.tolist()):
+        adj[u].append(v)
+
+    sum_dist = torch.zeros(N)
+    count    = torch.zeros(N)
+
+    for t in train_idx:
+        t_label = labels[t].item()
+        dist = [-1] * N
+        dist[t] = 0
+        q = deque([t])
+        while q:
+            u = q.popleft()
+            for v in adj[u]:
+                if dist[v] == -1:
+                    dist[v] = dist[u] + 1
+                    q.append(v)
+        for i, d in enumerate(dist):
+            if d >= 0 and labels[i].item() == t_label:
+                sum_dist[i] += d
+                count[i]    += 1
+
+    avg_spl        = torch.full((N,), float("nan"))
+    valid          = count > 0
+    avg_spl[valid] = sum_dist[valid] / count[valid]
+    return avg_spl
+
+
 def get_labelling_ratio(data) -> torch.Tensor:
     """For every node, indicate whether it has at least one labeled (training) neighbor.
 

@@ -15,7 +15,7 @@ from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
 from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree
-from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity, get_labelling_ratio, get_avg_spl_to_train
+from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train
 from train import train
 from test import evaluate
 
@@ -175,7 +175,8 @@ def main():
     has_labeled_neighbor = get_labelling_ratio(data)[data.test_mask.cpu()]
 
     # Average SPL to training nodes is graph-fixed — compute once, sliced to test nodes
-    avg_spl = get_avg_spl_to_train(data)[data.test_mask.cpu()]
+    avg_spl            = get_avg_spl_to_train(data)[data.test_mask.cpu()]
+    avg_spl_same_class = get_avg_spl_to_same_class_train(data)[data.test_mask.cpu()]
 
     # Structural distances are graph-fixed — compute once before the run loop
     dist_to_train, dist_to_same_class = compute_distances_to_train(data)
@@ -307,8 +308,11 @@ def main():
         save_dir = exec_dir if plot_cfg.get("save", True) else None
         plot_spl_vs_degree(
             test_deg, avg_spl, cfg,
-            save_dir=save_dir,
-            show=plot_cfg.get("show", False),
+            save_dir=save_dir, show=plot_cfg.get("show", False),
+        )
+        plot_spl_vs_degree(
+            test_deg, avg_spl_same_class, cfg,
+            save_dir=save_dir, show=plot_cfg.get("show", False), same_class=True,
         )
 
     if plot_cfg.get("labelling_ratio", False):

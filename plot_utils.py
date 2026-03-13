@@ -718,7 +718,8 @@ def plot_acc_trend_by_degree(results_by_label, cfg, save_dir=None, show=False):
 
 # ── average shortest path length vs. degree ───────────────────────────────────
 
-def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False):
+def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False,
+                       same_class=False):
     """Boxplots of average shortest path length to training nodes, by degree.
 
     For each degree group, the distribution of per-node average SPL across
@@ -727,11 +728,12 @@ def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False):
 
     Parameters
     ----------
-    test_deg : 1-D LongTensor of degrees for test nodes.
-    avg_spl  : 1-D FloatTensor of average SPL values for test nodes (NaN-safe).
-    cfg      : dict
-    save_dir : str or None
-    show     : bool
+    test_deg   : 1-D LongTensor of degrees for test nodes.
+    avg_spl    : 1-D FloatTensor of average SPL values for test nodes (NaN-safe).
+    cfg        : dict
+    save_dir   : str or None
+    show       : bool
+    same_class : bool — if True, labels reflect same-class training nodes only.
     """
     deg = test_deg.cpu()
     spl = avg_spl.cpu().numpy()
@@ -761,11 +763,12 @@ def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False):
         patch.set_facecolor("#8e44ad")
         patch.set_alpha(0.65)
 
-    ax_top.set_ylabel("Avg. shortest path length to training nodes", fontsize=11)
+    target = "Same-Class Training Nodes" if same_class else "Training Nodes"
+    ax_top.set_ylabel(f"Avg. shortest path length to {target.lower()}", fontsize=11)
     ax_top.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_top.set_title(
-        f"Avg. Shortest Path Length to Training Nodes vs. Degree\n{subtitle}",
+        f"Avg. SPL to {target} vs. Degree\n{subtitle}",
         fontsize=11,
     )
 
@@ -780,8 +783,9 @@ def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False):
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
     fig.tight_layout()
+    suffix = "same_class" if same_class else "all_train"
     _save(fig, _subdir(save_dir, "spl_vs_degree"),
-          f"{prefix}_spl_vs_degree.png", show)
+          f"{prefix}_spl_vs_degree_{suffix}.png", show)
 
 
 # ── accuracy + labelling ratio vs. degree ─────────────────────────────────────
