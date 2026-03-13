@@ -1136,10 +1136,22 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
 
     fig, ax = plt.subplots(figsize=(max(10, len(results) * 0.9), 5))
 
-    ax.bar(x - width / 2, same_inf, width,
-           label="Same-class train nodes", color="#1f78b4", alpha=0.9)
-    ax.bar(x + width / 2, diff_inf, width,
-           label="Diff-class train nodes", color="#ff7f00", alpha=0.9)
+    bars_same = ax.bar(x - width / 2, same_inf, width,
+                       label="Same-class train nodes", color="#1f78b4", alpha=0.9)
+    bars_diff = ax.bar(x + width / 2, diff_inf, width,
+                       label="Diff-class train nodes", color="#ff7f00", alpha=0.9)
+
+    # Value labels above every bar so small values stay readable
+    for bar in bars_same:
+        h = bar.get_height()
+        if np.isfinite(h) and h > 0:
+            ax.text(bar.get_x() + bar.get_width() / 2, h,
+                    f"{h:.4f}", ha="center", va="bottom", fontsize=6, color="#1f78b4")
+    for bar in bars_diff:
+        h = bar.get_height()
+        if np.isfinite(h) and h > 0:
+            ax.text(bar.get_x() + bar.get_width() / 2, h,
+                    f"{h:.4f}", ha="center", va="bottom", fontsize=6, color="#b35806")
 
     # Fraction of diff-class influence as a line on twin axis
     ax2 = ax.twinx()
@@ -1209,7 +1221,9 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
     subdir = _subdir(save_dir, "influence")
 
     for r in results:
-        neighbors = r.get("neighbors", [])
+        # Only show training nodes in the per-neighbor plot
+        neighbors = [nb for nb in r.get("neighbors", [])
+                     if nb["type"] in ("same_train", "diff_train")]
         if not neighbors:
             continue
 

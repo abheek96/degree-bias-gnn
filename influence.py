@@ -195,13 +195,19 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
             })
         neighbor_detail.sort(key=lambda d: d["influence"], reverse=True)
 
+        same_inf = float(I_x[same_class].sum()) if same_class else 0.0
+        diff_inf = float(I_x[diff_class].sum()) if diff_class else 0.0
+        log.info("  same_class_influence=%.6f  diff_class_influence=%.6f  "
+                 "total_train_influence=%.6f",
+                 same_inf, diff_inf, same_inf + diff_inf)
+
         results.append({
             "node_idx":             node_x,
             "degree":               degree,
             "true_label":           true_lbl,
             "pred_label":           pred_lbl,
-            "same_class_influence": float(I_x[same_class].sum()) if same_class else 0.0,
-            "diff_class_influence": float(I_x[diff_class].sum()) if diff_class else 0.0,
+            "same_class_influence": same_inf,
+            "diff_class_influence": diff_inf,
             "n_same_train":         len(same_class),
             "n_diff_train":         len(diff_class),
             "neighbors":            neighbor_detail,
