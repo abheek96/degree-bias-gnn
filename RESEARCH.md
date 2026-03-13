@@ -379,6 +379,40 @@ Studying this systematically — running the influence analysis at k=3 and k=4 f
 
 ---
 
+### 7.5 What the plots actually establish — and what they don't
+
+It is important to be precise about the evidentiary status of each metric, because the structural metrics and the model-behaviour metrics are answering fundamentally different questions.
+
+#### What the plots structurally confirm
+
+**Purity vs degree** gives the clearest and most direct structural trend. Purity decreases as degree increases, and the delta purity (k=2 minus k=1) is negative and steeper for high-degree nodes. This directly says: the neighbourhood of a high-degree node is more class-heterogeneous, and the heterogeneity worsens as the receptive field expands. This is a clean, graph-structural explanation for *why* high-degree nodes should be harder to classify — the input signal they receive is noisier by construction.
+
+**SPL to same-class training nodes** provides a complementary structural view. If high-degree nodes have longer average paths to same-class training nodes (even when their raw dist_to_train is short), that confirms the same-class label signal arrives more diluted and mixed with cross-class signal from intermediate nodes.
+
+**Labelling ratio overlaid with accuracy** shows whether having a direct labelled neighbour correlates with correct classification. A strong co-variation confirms that first-hop label availability is a meaningful driver of accuracy — and its absence disproportionately affects certain degree groups.
+
+Together, these three metrics tell a consistent and plausible structural story: high-degree nodes have noisier neighbourhoods, are farther from same-class label sources, and are less likely to have a directly labelled neighbour whose signal arrives undiluted.
+
+#### What the plots have not yet established
+
+The critical gap is that **all of the above are structural properties of the graph, not observations about what the trained model actually does**. Purity does not inspect the model — it describes the neighbourhood composition. SPL does not inspect the model either — it describes the graph topology. These metrics explain why the *input signal available* to high-degree nodes is structurally worse, but they do not confirm that this is what actually causes the model to fail on those nodes.
+
+The only model-behaviour observation so far is the influence analysis for a single node (node 1362, degree 22). That is one node, one run, one split. It is a compelling data point but not yet a trend.
+
+#### What is missing to close the causal argument
+
+To move from "structural metrics suggest high-degree nodes receive worse signal" to "this is why the model fails", three things are needed:
+
+1. **Influence analysis across many high-degree nodes.** A single node could be an outlier. Running the analysis across all high-degree misclassified nodes (across multiple selected degrees and runs) and showing that same_class_influence ≈ 0 is a consistent pattern — not a coincidence — would establish it as a systematic model behaviour rather than a one-off observation.
+
+2. **Correlation between influence and correctness.** A scatter plot or binned comparison of same_class_influence vs classification outcome (correct vs misclassified) across many test nodes would directly test whether near-zero same-class influence predicts misclassification. If correctly classified high-degree nodes consistently have higher same_class_influence than misclassified ones, the causal link from aggregation bias to accuracy drop is established.
+
+3. **Cross-graph validation.** On a heterophilic graph (e.g. Chameleon, Squirrel), more connections do not imply noisier class signal — in fact, the opposite may hold. If the accuracy drop for high-degree nodes disappears or reverses on heterophilic graphs, that isolates class-mixing (not degree per se) as the true driver. This would be strong evidence that it is specifically the neighbourhood heterogeneity that causes the problem, not high degree in isolation.
+
+Until these are done, the current state is: the structural metrics motivate the hypothesis well, and the single influence observation is consistent with it — but the causal chain from neighbourhood structure to model failure has not yet been demonstrated as a general trend from the plots.
+
+---
+
 ## 8. Open Questions / To Explore
 
 *(See also `NOTES.md` for detailed discussion of each.)*
