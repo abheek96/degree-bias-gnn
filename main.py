@@ -91,8 +91,10 @@ def run(data, cfg, run_id, device):
             patience_counter += 1
 
         epoch_bar.set_postfix(loss=f"{loss:.4f}", val=f"{results['val']:.4f}", test=f"{results['test']:.4f}")
-        log.debug("  [Run %d] Epoch %d  loss=%.4f  val=%.4f  test=%.4f",
-                  run_id, epoch, loss, results["val"], results["test"])
+        interval = max(1, train_cfg["epochs"] // 10)
+        if epoch % interval == 0:
+            log.info("  [Run %d] Epoch %d  loss=%.4f  val=%.4f  test=%.4f",
+                     run_id, epoch, loss, results["val"], results["test"])
 
         if patience > 0 and patience_counter >= patience:
             epoch_bar.close()
@@ -209,8 +211,6 @@ def main():
         set_seed(seed)  # only affects model initialisation
         run_name = f"run{i:02d}_seed{seed}"
         setup_logger(log_dir=exec_dir, run_name=run_name)
-        log.info("Experiment: %s", exec_name)
-        log.info("Config: %s", cfg)
         log.info("=== Run %d/%d (seed=%d) ===", i, num_runs, seed)
         val_acc, test_acc, best_loss, pred = run(data, cfg, i, device)
         val_accs.append(val_acc)
@@ -229,6 +229,9 @@ def main():
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
 
     setup_logger(log_dir=exec_dir, run_name="summary")
+    log.info("Dataset: %s  |  Model: %s  |  Layers: %d  |  Split: %s",
+             cfg["dataset"]["name"], cfg["model"]["name"],
+             cfg["model"]["num_layers"], cfg.get("split", "random"))
     log.info("Results over %d runs:", num_runs)
     log.info("  Val:  %.4f +/- %.4f", val_mean, val_std)
     log.info("  Test: %.4f +/- %.4f", test_mean, test_std)

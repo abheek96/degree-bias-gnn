@@ -6,7 +6,7 @@ from datetime import datetime
 def setup_logger(log_dir: str = "./results", run_name: str | None = None) -> logging.Logger:
     """Configure and return the root logger.
 
-    Attaches a console handler (INFO) and a file handler (DEBUG).
+    Attaches a console handler (INFO) and a file handler (INFO).
     Creates ``log_dir/<run_name>/`` and writes the log file there.
     """
     if run_name is None:
@@ -18,7 +18,7 @@ def setup_logger(log_dir: str = "./results", run_name: str | None = None) -> log
     log_path = os.path.join(run_dir, f"{run_name}.log")
 
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     # Avoid adding duplicate handlers if called more than once
     if logger.handlers:
@@ -31,7 +31,7 @@ def setup_logger(log_dir: str = "./results", run_name: str | None = None) -> log
     console.setFormatter(fmt)
 
     file_handler = logging.FileHandler(log_path)
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(fmt)
 
     logger.addHandler(console)
