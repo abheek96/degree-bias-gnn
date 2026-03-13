@@ -231,10 +231,19 @@ def main():
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
 
+    from models import get_model as _get_model
+    _mc = cfg["model"]
+    _model_for_log = _get_model(
+        _mc["name"], in_dim=data.num_node_features,
+        hidden_dim=_mc["hidden_dim"], out_dim=int(data.y.max().item()) + 1,
+        num_layers=_mc["num_layers"], dropout=_mc["dropout"],
+    )
+
     setup_logger(log_dir=exec_dir, run_name="summary")
     log.info("Dataset: %s  |  Model: %s  |  Layers: %d  |  Split: %s",
-             cfg["dataset"]["name"], cfg["model"]["name"],
-             cfg["model"]["num_layers"], cfg.get("split", "random"))
+             cfg["dataset"]["name"], _mc["name"],
+             _mc["num_layers"], cfg.get("split", "random"))
+    log.info("Model architecture:\n%s", _model_for_log)
     log.info("Results over %d runs:", num_runs)
     log.info("  Val:  %.4f +/- %.4f", val_mean, val_std)
     log.info("  Test: %.4f +/- %.4f", test_mean, test_std)
