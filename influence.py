@@ -68,8 +68,15 @@ def _khop_neighbors(edge_index, node_x: int, k: int, num_nodes: int) -> set:
 
 def compute_influence_analysis(model, data, pred, k_hops: int,
                                 degree_percentile: int = 75,
-                                top_n: int = 20) -> list:
-    """Select high-degree misclassified test nodes and analyse influence.
+                                top_n: int = 20,
+                                target_degrees: list = None) -> list:
+    """Select test nodes and analyse same-class vs diff-class training influence.
+
+    Node selection:
+      - If ``target_degrees`` is provided, selects up to ``top_n`` test nodes
+        per listed degree value, prioritising misclassified ones.
+      - Otherwise, falls back to the top ``top_n`` misclassified test nodes
+        whose degree is at or above ``degree_percentile``.
 
     For each selected node x:
       1. Identify training nodes within its k-hop receptive field.
@@ -83,8 +90,11 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
     data              : PyG Data object
     pred              : LongTensor [N], model predictions for all nodes
     k_hops            : receptive field radius (= number of model layers)
-    degree_percentile : lower-bound percentile for "high degree" (default 75)
-    top_n             : maximum number of nodes to analyse
+    degree_percentile : percentile threshold for fallback selection (default 75)
+    top_n             : max nodes to analyse; when target_degrees is set this
+                        is the cap *per degree value*
+    target_degrees    : list of exact 1-hop degree values to investigate,
+                        e.g. [3, 4, 5].  None → use percentile-based fallback.
 
     Returns
     -------
@@ -95,30 +105,36 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
     """
     import numpy as np
 
-    N           = data.num_nodes
-    y           = data.y.cpu()
-    pred        = pred.cpu()
-    train_idx   = data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
-    test_idx    = data.test_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
+    N         = data.num_nodes
+    y         = data.y.cpu()
+    pred      = pred.cpu()
+    train_idx = data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
+    test_idx  = data.test_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
 
     all_deg  = graph_degree(data.edge_index[1], N).cpu()
     test_deg = all_deg[data.test_mask.cpu()]
 
-    # Misclassified test nodes
-    test_true  = y[data.test_mask.cpu()]
-    test_pred  = pred[data.test_mask.cpu()]
-    misc_local = (test_pred != test_true).nonzero(as_tuple=False).view(-1).tolist()
+    test_true = y[data.test_mask.cpu()]
+    test_pred = pred[data.test_mask.cpu()]
 
-    if not misc_local:
-        return []
-
-    # Filter to high-degree
-    deg_threshold = float(np.percentile(test_deg.numpy(), degree_percentile))
-    high_deg_misc = [i for i in misc_local if test_deg[i].item() >= deg_threshold]
-
-    # Sort by degree descending, cap at top_n
-    high_deg_misc.sort(key=lambda i: test_deg[i].item(), reverse=True)
-    selected_local = high_deg_misc[:top_n]
+    if target_degrees is not None:
+        # Select up to top_n nodes per requested degree, misclassified first
+        selected_local = []
+        for deg_val in target_degrees:
+            at_deg = [i for i in range(len(test_idx))
+                      if test_deg[i].item() == deg_val]
+            # misclassified first, then correctly classified
+            at_deg.sort(key=lambda i: (test_pred[i] == test_true[i]).item())
+            selected_local.extend(at_deg[:top_n])
+    else:
+        # Fallback: high-degree misclassified nodes
+        misc_local    = (test_pred != test_true).nonzero(as_tuple=False).view(-1).tolist()
+        if not misc_local:
+            return []
+        deg_threshold = float(np.percentile(test_deg.numpy(), degree_percentile))
+        candidates    = [i for i in misc_local if test_deg[i].item() >= deg_threshold]
+        candidates.sort(key=lambda i: test_deg[i].item(), reverse=True)
+        selected_local = candidates[:top_n]
 
     train_set = set(train_idx)
     results   = []

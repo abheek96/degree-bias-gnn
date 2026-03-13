@@ -345,11 +345,13 @@ def main():
 
 
     if plot_cfg.get("influence_analysis", False):
+        target_degrees = plot_cfg.get("influence_degrees") or None
         influence_results = compute_influence_analysis(
             model, data, pred,
             k_hops=cfg["model"]["num_layers"],
             degree_percentile=plot_cfg.get("influence_degree_percentile", 75),
             top_n=plot_cfg.get("influence_top_n", 20),
+            target_degrees=target_degrees,
         )
         plot_influence_analysis(
             influence_results, cfg,
