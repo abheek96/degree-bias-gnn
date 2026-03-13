@@ -1137,17 +1137,17 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
     fig, ax = plt.subplots(figsize=(max(10, len(results) * 0.9), 5))
 
     ax.bar(x - width / 2, same_inf, width,
-           label="Same-class train nodes", color="#2ecc71", alpha=0.8)
+           label="Same-class train nodes", color="#1f78b4", alpha=0.9)
     ax.bar(x + width / 2, diff_inf, width,
-           label="Diff-class train nodes", color="#e74c3c", alpha=0.8)
+           label="Diff-class train nodes", color="#ff7f00", alpha=0.9)
 
     # Fraction of diff-class influence as a line on twin axis
     ax2 = ax.twinx()
-    ax2.plot(x, diff_frac, color="#c0392b", lw=1.5, ls="--",
+    ax2.plot(x, diff_frac, color="#b35806", lw=1.5, ls="--",
              marker="o", markersize=4, zorder=4,
              label="Diff-class fraction")
-    ax2.set_ylabel("Diff-class influence fraction", fontsize=10, color="#c0392b")
-    ax2.tick_params(axis="y", colors="#c0392b", labelsize=8)
+    ax2.set_ylabel("Diff-class influence fraction", fontsize=10, color="#b35806")
+    ax2.tick_params(axis="y", colors="#b35806", labelsize=8)
     ax2.set_ylim(-0.05, 1.10)
     ax2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
@@ -1194,7 +1194,7 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
     if not results:
         return
 
-    TYPE_COLOR = {"same_train": "#2ecc71", "diff_train": "#e74c3c"}
+    TYPE_COLOR = {"same_train": "#1f78b4", "diff_train": "#ff7f00"}
     TYPE_LABEL = {"same_train": "Same-class train", "diff_train": "Diff-class train"}
 
     prefix = _fname_prefix(cfg)
