@@ -107,7 +107,7 @@ def run(data, cfg, run_id, device):
     with torch.no_grad():
         pred = model(data.x, data.edge_index).argmax(dim=1)
 
-    return best_val_acc, best_test_acc, best_loss, pred
+    return best_val_acc, best_test_acc, best_loss, pred, model
 
 
 def main():
@@ -215,7 +215,7 @@ def main():
         run_name = f"run{i:02d}_seed{seed}"
         setup_logger(log_dir=exec_dir, run_name=run_name)
         log.info("=== Run %d/%d (seed=%d) ===", i, num_runs, seed)
-        val_acc, test_acc, best_loss, pred = run(data, cfg, i, device)
+        val_acc, test_acc, best_loss, pred, model = run(data, cfg, i, device)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
         log.info("Best Val: %.4f  Test: %.4f  Loss: %.4f", val_acc, test_acc, best_loss)
@@ -231,19 +231,11 @@ def main():
     val_mean, val_std = np.mean(val_accs), np.std(val_accs)
     test_mean, test_std = np.mean(test_accs), np.std(test_accs)
 
-    from models import get_model as _get_model
-    _mc = cfg["model"]
-    _model_for_log = _get_model(
-        _mc["name"], in_dim=data.num_node_features,
-        hidden_dim=_mc["hidden_dim"], out_dim=int(data.y.max().item()) + 1,
-        num_layers=_mc["num_layers"], dropout=_mc["dropout"],
-    )
-
     setup_logger(log_dir=exec_dir, run_name="summary")
     log.info("Dataset: %s  |  Model: %s  |  Layers: %d  |  Split: %s",
-             cfg["dataset"]["name"], _mc["name"],
-             _mc["num_layers"], cfg.get("split", "random"))
-    log.info("Model architecture:\n%s", _model_for_log)
+             cfg["dataset"]["name"], cfg["model"]["name"],
+             cfg["model"]["num_layers"], cfg.get("split", "random"))
+    log.info(model)
     log.info("Results over %d runs:", num_runs)
     log.info("  Val:  %.4f +/- %.4f", val_mean, val_std)
     log.info("  Test: %.4f +/- %.4f", test_mean, test_std)
