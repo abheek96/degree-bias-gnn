@@ -297,7 +297,97 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 
 ---
 
-## 7. Open Questions / To Explore
+## 7. The Emerging Story of Degree Bias
+
+### 7.1 Narrative: how the evidence accumulates
+
+The investigation started with a simple empirical question: does degree predict accuracy? The answer is not a clean "yes" or "no" — it is a more nuanced story that unfolds in layers.
+
+**Layer 1 — The accuracy signal is real but not monotone.**
+Low-degree nodes are not consistently worse; they are *unstable*. A node with degree 1 has exactly one neighbour. If that neighbour is a same-class training node, the node is almost certainly classified correctly. If it is not, the node has almost no signal at all. The outcome is effectively a coin flip conditioned on the random split. High-degree nodes, by contrast, show a systematic drift toward lower accuracy as degree increases, independent of the specific split seed.
+
+**Layer 2 — The structural reason: neighbourhood quality degrades with degree.**
+Purity analysis confirms that high-degree nodes have more heterogeneous neighbourhoods. On Cora — a citation network where papers cite across topic boundaries — nodes that are heavily connected are hubs that span multiple research communities. Their k-hop neighbourhood therefore samples a wider cross-section of classes. As GNN layers stack, the effective neighbourhood (the receptive field) grows, and the class signal becomes progressively noisier. The delta-purity plots show this degradation is steeper for high-degree nodes than for low-degree ones, directly predicting that additional layers should hurt high-degree nodes disproportionately.
+
+**Layer 3 — The training signal story: same-class signal is sparse and far away.**
+The SPL and distance metrics reveal a subtler structural disadvantage. High-degree test nodes are not necessarily far from training nodes in terms of raw hop-distance — they often have short paths to labelled nodes because they have many edges. But many of those nearby training nodes are of a *different class*. The distance to the nearest same-class training node is larger and more variable for high-degree nodes. This means the first same-class label signal that reaches a high-degree test node through message passing has already been diluted and mixed with cross-class signal from the intermediate nodes along the path.
+
+**Layer 4 — The model internalises and amplifies the imbalance.**
+The influence analysis delivers the most striking finding: for a degree-22 misclassified test node with 4 same-class and 11 diff-class training nodes within its 2-hop receptive field, the trained model assigns near-zero influence (order 1e-7) to the same-class training nodes and non-trivial influence (~0.05) to the diff-class ones. This is not just a structural observation — the model has *learned* to essentially ignore the same-class training signal available to it. The structural imbalance (more diff-class neighbours) is present at the input, but the learned weight matrices appear to reinforce rather than correct it.
+
+---
+
+### 7.2 Most probable explanation for the bias
+
+Based on all evidence gathered so far, the most probable explanation is a **compounding cascade of four factors**:
+
+1. **Neighbourhood class imbalance (structural).** High-degree nodes in Cora sit at the intersection of multiple research communities. Even with 20 training nodes per class, the probability that a high-degree node has more same-class training neighbours than diff-class is lower than for a low-degree node in a more homophilic local region. The training signal available in the immediate neighbourhood is structurally biased against these nodes.
+
+2. **Degree-normalised aggregation dilutes individual signals (architectural).** GCN normalises each neighbour's contribution by `1/sqrt(deg_u * deg_v)`. For a degree-22 node, every neighbour's message is scaled down by at least `1/sqrt(22) ≈ 0.21`. With 15 training-node neighbours, none of them individually dominates the aggregation — but diff-class nodes win by sheer count (11 vs 4). There is no mechanism in standard GCN to upweight same-class signal.
+
+3. **Learned weight suppression reinforces the input bias (optimisation).** The model is trained to minimise cross-entropy over the training nodes, not the test nodes. If the global loss landscape is better served by weight matrices that process the dominant (diff-class-heavy) high-degree signal in a certain way, the weights converge accordingly. The result is that same-class training nodes in the neighbourhood of high-degree test nodes end up in a low-gradient region — the model has learned not to use them, not because they were absent, but because using them was not consistently rewarded during training given the broader dataset statistics.
+
+4. **Propagation distance amplifies noise (depth).** Even at 2 layers, the same-class training signal for a high-degree test node must often travel through intermediate non-training nodes before reaching the target. Each hop introduces averaging over that intermediate node's full neighbourhood, further diluting the class-specific component. For high-degree nodes whose nearest same-class training node is 2 hops away (rather than 1), this two-step dilution is enough to make the same-class signal computationally negligible relative to the noisier but volumetrically larger diff-class signal from 11 nearby training nodes.
+
+**In short:** it is not one mechanism but the combination of all four — structural neighbourhood imbalance, architectural aggregation normalisation, learned weight suppression, and propagation dilution — that explains why high-degree nodes are systematically harder. Each factor alone might be compensable, but together they create a self-reinforcing cycle: biased structure → biased training signal → biased weights → biased predictions.
+
+---
+
+### 7.3 Is training-signal neighbourhood analysis sufficient to explain the anomalies?
+
+**Partially, but not completely.**
+
+The neighbourhood training-signal analysis (SPL, labelling ratio, purity, influence) captures the *proximal* cause: the signal arriving at the node during inference is dominated by diff-class information. This explains individual misclassification events like node 1362.
+
+However, there are aspects it does not yet explain:
+
+- **Why some high-degree nodes are correctly classified.** If the neighbourhood imbalance were the only factor, all high-degree nodes should fail. Some do not. The analysis needs to determine what distinguishes well-classified high-degree nodes from misclassified ones — whether it is local purity, specific training node placement, or feature-space properties.
+
+- **The role of node features.** The influence analysis uses a Jacobian over the *input features* `h^(0) = x`. If the node's own features are highly class-discriminative, the model may classify correctly even with poor neighbourhood signal. The current analysis does not separate feature-driven classification from neighbourhood-driven classification.
+
+- **Cross-run consistency.** A finding observed at one node in one run may not generalise. Whether the same nodes are consistently misclassified across seeds (and whether the influence pattern is consistent) has not yet been verified.
+
+- **Whether the model *could* correct for the bias but doesn't, or structurally cannot.** The learned-weight-suppression hypothesis suggests the model *learns* to ignore same-class nodes. But it is possible that for some configurations, the same-class signal is too weak to be recovered even with ideal weights. Distinguishing these two scenarios requires intervention experiments (e.g., manually upweighting same-class gradients) that have not been run.
+
+---
+
+### 7.4 Should higher hops and larger receptive fields be investigated?
+
+**Yes, and for specific reasons — but with important caveats.**
+
+#### Why it is worth doing
+
+At 2 layers (the current setting), the receptive field of node 1362 is its 2-hop neighbourhood. The influence analysis shows that 4 same-class training nodes exist within this field but carry near-zero influence. A natural question is: what happens at 3 or 4 layers? There are two competing hypotheses:
+
+- **More layers help:** a 3-layer GCN can see 3-hop neighbours. If same-class training nodes that are currently 3 hops away carry stronger signal than the ones at 2 hops (e.g., because the 3-hop same-class nodes are in a more homophilic local region), adding a layer could recover same-class signal and improve classification of high-degree nodes.
+
+- **More layers hurt:** a 3-layer receptive field is even larger. For a degree-22 node, the 3-hop neighbourhood could contain hundreds of nodes. More nodes means more averaging, more class mixing, and potentially worse purity. The diff-class training nodes that already dominate at 2 hops will continue to dominate at 3 hops, and new diff-class training nodes at 3 hops may join them, worsening the imbalance.
+
+The purity analysis already provides a structural prediction: delta purity is negative and steeper for high-degree nodes, suggesting more layers should hurt. But the influence analysis would confirm whether this structural prediction translates into the model's actual gradient routing behaviour.
+
+Studying this systematically — running the influence analysis at k=3 and k=4 for the same selected nodes — would directly test whether the near-zero same-class influence is a property of the specific 2-hop neighbourhood or a deeper feature of how the graph is structured around high-degree nodes at all scales.
+
+#### Why to be cautious
+
+- **Computational cost.** The influence analysis uses an exact Jacobian (`torch.autograd.functional.jacobian`), which requires one backward pass per output dimension. At 2 layers with 512 hidden dim and 7 output classes, this is already expensive. At k=4 layers, the receptive field for a degree-22 node could contain thousands of nodes. The Jacobian still has the same shape `[7, N, 1433]` regardless of k, but the model is deeper and the computation is heavier. This is feasible for a handful of selected nodes but not for a sweep.
+
+- **Over-smoothing conflation.** As layers increase, the model also becomes susceptible to over-smoothing (all node embeddings converging to similar values), which is a separate failure mode from degree bias. Influence scores at k=4 might be near-zero for *all* neighbours — same and diff class alike — not because of degree bias but because the model has over-smoothed. The two effects must be disentangled, which requires comparing against a model that does not over-smooth (e.g., GCNII at the same depth).
+
+- **Selecting the right nodes.** At higher k, the receptive field grows so large that the concept of "same-class training nodes within the field" becomes almost trivially true — almost all training nodes are eventually reachable. The interesting regime is specifically where same-class training nodes exist in the field but carry low influence despite being reachable. This selection needs to be preserved carefully as k increases.
+
+**Recommendation:** run the influence analysis for the same selected high-degree nodes across k = 2, 3, 4 layers, using both GCN and GCNII side by side. For GCN, expect the same-class influence to remain near zero or decrease further as k grows (over-smoothing + purity degradation compounding). For GCNII, the initial residual connection may preserve some same-class signal even at greater depth, providing a contrastive baseline. If GCNII shows higher same-class influence at k=4 than GCN does at k=2, that is strong evidence that the architectural choice — not just the structural neighbourhood — determines whether the model can recover the same-class signal that is structurally present.
+
+---
+
+## 8. Open Questions / To Explore
+
+*(See also `NOTES.md` for detailed discussion of each.)*
+
+- How do diff-class nodes dominate aggregation numerically? (ratio analysis, per-layer message decomposition, weight-matrix analysis)
+- Do diff-class training neighbours have higher degree than same-class ones? Does higher-degree training node degree correlate with faster/better-trained embeddings?
+- **Learned weight suppression:** do the trained weight matrices systematically project same-class neighbour features into low-magnitude directions?
+- **Broader study:** replicate findings across multiple random splits and public splits; across datasets (CiteSeer, PubMed, ogbn-arxiv, Chameleon, Squirrel); across model architectures (GCN, GCNII, GAT).
+- **Higher hops:** run influence analysis at k=3 and k=4 for the same selected nodes; compare GCN vs GCNII to separate over-smoothing from degree bias.
 
 *(See also `NOTES.md` for detailed discussion of each.)*
 
