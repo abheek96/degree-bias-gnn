@@ -312,6 +312,60 @@ def get_khop_degree(data, k: int = 2, exclusive: bool = False) -> torch.Tensor:
     return (reach & ~reach_prev).sum(dim=1).long()
 
 
+def get_avg_spl_to_train(data) -> torch.Tensor:
+    """Average shortest path length from every node to all training nodes.
+
+    For each node v, runs BFS from every training node and averages the
+    resulting distances.  Unreachable pairs are excluded from the average
+    (returned as NaN for nodes with no reachable training node).
+
+    Complexity: O(|train| × (V + E)).  Feasible for the citation graphs
+    used here (~140 training nodes, ~2 700 nodes, ~5 400 edges for Cora).
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index and .train_mask)
+
+    Returns
+    -------
+    avg_spl : FloatTensor, shape [num_nodes]
+    """
+    from collections import deque
+    from torch_geometric.utils import mask_to_index
+
+    N         = data.num_nodes
+    train_idx = mask_to_index(data.train_mask).cpu().tolist()
+
+    # Build undirected adjacency list
+    src, dst = data.edge_index.cpu()
+    adj = [[] for _ in range(N)]
+    for u, v in zip(src.tolist(), dst.tolist()):
+        adj[u].append(v)
+
+    sum_dist = torch.zeros(N)
+    count    = torch.zeros(N)
+
+    for t in train_idx:
+        dist = [-1] * N
+        dist[t] = 0
+        q = deque([t])
+        while q:
+            u = q.popleft()
+            for v in adj[u]:
+                if dist[v] == -1:
+                    dist[v] = dist[u] + 1
+                    q.append(v)
+        for i, d in enumerate(dist):
+            if d >= 0:
+                sum_dist[i] += d
+                count[i]    += 1
+
+    avg_spl          = torch.full((N,), float("nan"))
+    valid            = count > 0
+    avg_spl[valid]   = sum_dist[valid] / count[valid]
+    return avg_spl
+
+
 def get_labelling_ratio(data) -> torch.Tensor:
     """For every node, indicate whether it has at least one labeled (training) neighbor.
 

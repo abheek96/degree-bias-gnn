@@ -716,6 +716,74 @@ def plot_acc_trend_by_degree(results_by_label, cfg, save_dir=None, show=False):
           f"{prefix}_acc_trend_by_degree_{models_str}.png", show)
 
 
+# ── average shortest path length vs. degree ───────────────────────────────────
+
+def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False):
+    """Boxplots of average shortest path length to training nodes, by degree.
+
+    For each degree group, the distribution of per-node average SPL across
+    all test nodes at that degree is shown as a boxplot.  Bottom panel shows
+    node count per degree.
+
+    Parameters
+    ----------
+    test_deg : 1-D LongTensor of degrees for test nodes.
+    avg_spl  : 1-D FloatTensor of average SPL values for test nodes (NaN-safe).
+    cfg      : dict
+    save_dir : str or None
+    show     : bool
+    """
+    deg = test_deg.cpu()
+    spl = avg_spl.cpu().numpy()
+
+    unique_degrees = sorted(deg.unique().tolist())
+    pos    = list(range(len(unique_degrees)))
+    prefix = _fname_prefix(cfg)
+    n_test = int(len(deg))
+    subtitle = _subtitle(cfg, n_test, len(unique_degrees))
+
+    bp_data = []
+    counts  = []
+    for d in unique_degrees:
+        mask  = (deg == d).numpy()
+        vals  = spl[mask]
+        valid = vals[~np.isnan(vals)]
+        bp_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
+        counts.append(int(mask.sum()))
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    bp = ax_top.boxplot(bp_data, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp["boxes"]:
+        patch.set_facecolor("#8e44ad")
+        patch.set_alpha(0.65)
+
+    ax_top.set_ylabel("Avg. shortest path length to training nodes", fontsize=11)
+    ax_top.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(
+        f"Avg. Shortest Path Length to Training Nodes vs. Degree\n{subtitle}",
+        fontsize=11,
+    )
+
+    ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.set_xlabel("Node degree", fontsize=11)
+    step = max(1, len(unique_degrees) // 30)
+    ax_bot.set_xticks(pos[::step])
+    ax_bot.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
+    ax_bot.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "spl_vs_degree"),
+          f"{prefix}_spl_vs_degree.png", show)
+
+
 # ── accuracy + labelling ratio vs. degree ─────────────────────────────────────
 
 def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
