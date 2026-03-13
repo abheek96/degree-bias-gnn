@@ -11,7 +11,6 @@ train:
   patience: 100
 
 plot:
-  acc_vs_degree_by_layers: true
   layer_values: [16, 32, 64]
   compare_models: [GCNII]
   model_layer_values:
