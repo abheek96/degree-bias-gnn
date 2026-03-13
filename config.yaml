@@ -40,8 +40,6 @@ plot:
   purity_vs_degree: true
   purity_k_max: 2
   influence_analysis: false
-  influence_degrees: []        # e.g. [3, 4, 5] — exact degrees to investigate; empty = percentile fallback
-  influence_degree_percentile: 75
-  influence_top_n:             # leave blank to analyse all nodes at the requested degrees
+  influence_degrees: []        # exact degree values to investigate, e.g. [3, 5, 10]
   save: true
   show: false
