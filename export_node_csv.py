@@ -19,7 +19,6 @@ Usage
 
 import argparse
 import copy
-import json
 import logging
 import os
 import random
@@ -274,6 +273,7 @@ def write_dictionary(out_dir, cfg, num_runs):
     dataset_name = cfg["dataset"]["name"]
     model_name   = cfg["model"]["name"]
 
+    # ── build content dicts (same as before) ──────────────────────────────────
     doc = {
         "setup": {
             "description": (
@@ -418,13 +418,37 @@ def write_dictionary(out_dir, cfg, num_runs):
                 "Use this file to inspect properties of training nodes "
                 "(e.g. degree distribution, purity of the labelled set)."
             ),
-            "attribute_dictionary.json": "This file.",
+            "attribute_dictionary.xlsx": "This file.",
         },
     }
 
-    path = os.path.join(out_dir, "attribute_dictionary.json")
-    with open(path, "w") as f:
-        json.dump(doc, f, indent=2)
+    # ── write as a multi-sheet Excel workbook ─────────────────────────────────
+    path = os.path.join(out_dir, "attribute_dictionary.xlsx")
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+
+        # Sheet 1 — Setup
+        setup_rows = [{"parameter": k, "value": str(v)}
+                      for k, v in doc["setup"].items()]
+        pd.DataFrame(setup_rows).to_excel(writer, sheet_name="Setup", index=False)
+
+        # Sheet 2 — Columns
+        col_rows = [{"column": k, "description": v}
+                    for k, v in doc["columns"].items()]
+        pd.DataFrame(col_rows).to_excel(writer, sheet_name="Columns", index=False)
+
+        # Sheet 3 — Files
+        file_rows = [{"file": k, "description": v}
+                     for k, v in doc["files"].items()]
+        pd.DataFrame(file_rows).to_excel(writer, sheet_name="Files", index=False)
+
+        # Auto-fit column widths for readability
+        for sheet in writer.sheets.values():
+            for col in sheet.columns:
+                max_len = max(
+                    (len(str(cell.value)) for cell in col if cell.value), default=10
+                )
+                sheet.column_dimensions[col[0].column_letter].width = min(max_len + 4, 80)
+
     log.info("Saved %s", path)
 
 
