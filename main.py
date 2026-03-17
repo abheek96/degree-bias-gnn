@@ -298,7 +298,7 @@ def main():
         results_by_label = {}
         for model_name in compare_models:
             for L in model_layer_values.get(model_name, layer_values):
-                label = f"{model_name} L={L}"
+                label = f"{model_name} L={L - 1}"
                 log.info("=== Training %s ===", label)
                 run_cfg = _copy.deepcopy(cfg)
                 run_cfg["model"]["name"]       = model_name
