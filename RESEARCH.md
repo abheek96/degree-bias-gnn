@@ -117,7 +117,7 @@ H^(l+1) = σ( D̃^{-1/2} Ã D̃^{-1/2} H^(l) W^(l) )
 
 where `Ã = A + I` (adjacency with self-loops) and `D̃` is the corresponding degree matrix. The `1/sqrt(deg_u * deg_v)` normalisation is the key aggregation mechanism — high-degree nodes average over more neighbours, potentially diluting the signal from any individual neighbour.
 
-The architecture has `num_layers - 1` GCNConv layers followed by one `nn.Linear(hidden_dim, out_dim)` classification head. Setting `num_layers=3` gives 2 graph convolution layers and 1 linear layer.
+The architecture has `num_layers - 1` GCNConv layers followed by one `nn.Linear(hidden_dim, out_dim)` classification head. Setting `num_layers=3` gives 2 graph convolution layers and 1 linear layer. The **receptive field (k-hop neighborhood)** is therefore `num_layers - 1`, not `num_layers`. All k-hop analyses in the code use `k = num_layers - 1`.
 
 ### GCNII (Chen et al., 2020)
 Extends GCN with two modifications per layer:

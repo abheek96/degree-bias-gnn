@@ -213,9 +213,12 @@ def main():
         for k in range(1, purity_k_max + 1)
     } if plot_cfg.get("purity_vs_degree", False) else {}
 
+    # k_hops = num_layers - 1 because the final layer is nn.Linear (no message passing)
+    k_hops = cfg["model"]["num_layers"] - 1
+
     # Training-neighbor degree stats are graph-fixed — compute once
     train_nb_deg_stats = (
-        get_training_neighbor_degree_stats(data, k=cfg["model"]["num_layers"])
+        get_training_neighbor_degree_stats(data, k=k_hops)
         if plot_cfg.get("train_neighbor_degree", False) else None
     )
 
@@ -364,7 +367,7 @@ def main():
     if plot_cfg.get("train_neighbor_degree", False) and train_nb_deg_stats is not None:
         plot_train_neighbor_degree_stats(
             train_nb_deg_stats, test_deg, pred, data, cfg,
-            k=cfg["model"]["num_layers"],
+            k=k_hops,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
@@ -373,7 +376,7 @@ def main():
         target_degrees = plot_cfg.get("influence_degrees") or []
         influence_results = compute_influence_analysis(
             model, data, pred,
-            k_hops=cfg["model"]["num_layers"],
+            k_hops=k_hops,
             target_degrees=target_degrees,
         )
         plot_influence_analysis(
