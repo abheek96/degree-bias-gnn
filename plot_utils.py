@@ -1273,6 +1273,159 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
         _save(fig, subdir, fname, show)
 
 
+def plot_train_neighbor_degree_stats(
+    stats, test_deg, pred, data, cfg, k=2, save_dir=None, show=False
+):
+    """Two-panel figure: degree of same-class vs diff-class training neighbors.
+
+    Investigates whether the relative degree of same-class vs diff-class
+    training nodes in a test node's k-hop neighborhood correlates with
+    classification outcome.
+
+    Panel 1 (top): For each test-node degree group, side-by-side boxplots of
+    the mean degree of same-class (blue) and diff-class (orange) training nodes
+    within the k-hop receptive field.
+
+    Panel 2 (bottom): For each test-node degree group, the "degree advantage"
+    (mean_deg_same − mean_deg_diff) for correctly classified (green) vs
+    misclassified (red) test nodes. A positive advantage means same-class
+    training nodes have higher average degree; negative means diff-class do.
+    In GCN, higher-degree nodes contribute less per edge (1/sqrt(deg) weight),
+    so a positive advantage implies the same-class signal is more diluted.
+
+    Parameters
+    ----------
+    stats    : dict from get_training_neighbor_degree_stats
+    test_deg : LongTensor [num_test_nodes]
+    pred     : LongTensor [num_nodes] — predicted labels for all nodes
+    data     : PyG Data
+    cfg      : dict
+    k        : receptive field radius used to compute stats
+    save_dir : str or None
+    show     : bool
+    """
+    test_mask = data.test_mask.cpu()
+    true_y = data.y.cpu()[test_mask]
+    pred_y = pred.cpu()[test_mask]
+    correct = (pred_y == true_y).numpy()
+
+    test_deg_np = test_deg.cpu().numpy().astype(int)
+    all_degrees = sorted(set(test_deg_np.tolist()))
+    pos = list(range(len(all_degrees)))
+
+    same_md = stats["same_mean_deg"]
+    diff_md = stats["diff_mean_deg"]
+
+    same_by_deg      = {d: [] for d in all_degrees}
+    diff_by_deg      = {d: [] for d in all_degrees}
+    adv_corr_by_deg  = {d: [] for d in all_degrees}
+    adv_wrong_by_deg = {d: [] for d in all_degrees}
+
+    for i, d in enumerate(test_deg_np.tolist()):
+        s, f = same_md[i], diff_md[i]
+        if not np.isnan(s):
+            same_by_deg[d].append(s)
+        if not np.isnan(f):
+            diff_by_deg[d].append(f)
+        if not np.isnan(s) and not np.isnan(f):
+            adv = s - f
+            if correct[i]:
+                adv_corr_by_deg[d].append(adv)
+            else:
+                adv_wrong_by_deg[d].append(adv)
+
+    def _clean(arr):
+        return arr if arr else [float("nan")]
+
+    prefix   = _fname_prefix(cfg)
+    n_test   = len(test_deg_np)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1,
+        figsize=(_fig_w(len(all_degrees)), 9),
+        gridspec_kw={"height_ratios": [1.2, 1]},
+    )
+    fig.subplots_adjust(hspace=0.38)
+
+    # ── Panel 1: mean degree of same vs diff training neighbors ─────────────
+    offset = 0.22
+    same_data = [_clean(same_by_deg[d]) for d in all_degrees]
+    diff_data = [_clean(diff_by_deg[d]) for d in all_degrees]
+    pos_same  = [p - offset for p in pos]
+    pos_diff  = [p + offset for p in pos]
+
+    bp_s = ax_top.boxplot(same_data, positions=pos_same, widths=0.35, **_BP_KWARGS)
+    for patch in bp_s["boxes"]:
+        patch.set_facecolor("#1f78b4")
+        patch.set_alpha(0.80)
+
+    bp_d = ax_top.boxplot(diff_data, positions=pos_diff, widths=0.35, **_BP_KWARGS)
+    for patch in bp_d["boxes"]:
+        patch.set_facecolor("#ff7f00")
+        patch.set_alpha(0.80)
+
+    ax_top.legend(
+        handles=[
+            plt.Rectangle((0, 0), 1, 1, color="#1f78b4", alpha=0.80,
+                           label="Same-class train neighbors"),
+            plt.Rectangle((0, 0), 1, 1, color="#ff7f00", alpha=0.80,
+                           label="Diff-class train neighbors"),
+        ],
+        fontsize=9, framealpha=0.85, loc="upper left",
+        title=f"{k}-hop neighborhood", title_fontsize=8,
+    )
+    ax_top.set_ylabel("Mean degree of k-hop training neighbors", fontsize=10)
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(
+        f"Mean degree of same-class vs diff-class training nodes in {k}-hop neighborhood\n"
+        f"{subtitle}",
+        fontsize=10,
+    )
+    _degree_axis(ax_top, pos, all_degrees)
+
+    # ── Panel 2: degree advantage split by correct / misclassified ─────────
+    corr_data  = [_clean(adv_corr_by_deg[d])  for d in all_degrees]
+    wrong_data = [_clean(adv_wrong_by_deg[d]) for d in all_degrees]
+    pos_corr  = [p - offset for p in pos]
+    pos_wrong = [p + offset for p in pos]
+
+    bp_c = ax_bot.boxplot(corr_data, positions=pos_corr, widths=0.35, **_BP_KWARGS)
+    for patch in bp_c["boxes"]:
+        patch.set_facecolor("#2ca02c")
+        patch.set_alpha(0.80)
+
+    bp_w = ax_bot.boxplot(wrong_data, positions=pos_wrong, widths=0.35, **_BP_KWARGS)
+    for patch in bp_w["boxes"]:
+        patch.set_facecolor("#d62728")
+        patch.set_alpha(0.80)
+
+    ax_bot.axhline(0, color="black", linewidth=1.0, linestyle="--", zorder=5)
+    ax_bot.legend(
+        handles=[
+            plt.Rectangle((0, 0), 1, 1, color="#2ca02c", alpha=0.80,
+                           label="Correctly classified"),
+            plt.Rectangle((0, 0), 1, 1, color="#d62728", alpha=0.80,
+                           label="Misclassified"),
+            plt.Line2D([0], [0], color="black", linewidth=1.0, linestyle="--",
+                       label="Advantage = 0  (same = diff degree)"),
+        ],
+        fontsize=9, framealpha=0.85, loc="upper left",
+    )
+    ax_bot.set_ylabel("Degree advantage\n(mean_deg_same − mean_deg_diff)", fontsize=10)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_bot.set_title(
+        "Degree advantage of same-class vs diff-class training neighbors: "
+        "correct vs misclassified",
+        fontsize=10,
+    )
+    _degree_axis(ax_bot, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "train_neighbor_degree"),
+          f"{prefix}_train_neighbor_degree_k{k}.png", show)
+
+
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
 # 
 # def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,

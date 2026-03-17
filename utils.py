@@ -442,6 +442,70 @@ def get_labelling_ratio(data) -> torch.Tensor:
     return (A.cpu() @ train) > 0                                        # (N,)
 
 
+def get_training_neighbor_degree_stats(data, k: int = 2) -> dict:
+    """Degree statistics of same-class and diff-class training nodes in each
+    test node's k-hop neighborhood.
+
+    For each test node, finds all training nodes within k hops and records
+    the mean degree of same-class vs diff-class training nodes.  This is used
+    to investigate whether the relative degree of same-class vs diff-class
+    training neighbors correlates with classification outcome.
+
+    In GCN the aggregation weight for edge (u→v) is ``1/sqrt(deg_u * deg_v)``,
+    so higher-degree training nodes contribute *less* per edge.  If same-class
+    training nodes consistently have higher degree than diff-class ones, their
+    per-edge signal is more diluted, which may contribute to misclassification.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data
+    k    : hop radius for the receptive field (should match model's num_layers)
+
+    Returns
+    -------
+    dict with numpy arrays aligned to test nodes (same order as test_mask):
+        same_mean_deg : mean degree of same-class training neighbors (NaN if none)
+        diff_mean_deg : mean degree of diff-class training neighbors (NaN if none)
+        same_count    : number of same-class training nodes in k-hop neighborhood
+        diff_count    : number of diff-class training nodes in k-hop neighborhood
+    """
+    from torch_geometric.utils import k_hop_subgraph
+    from torch_geometric.utils import degree as pyg_degree
+
+    N = data.num_nodes
+    y = data.y.cpu()
+    train_mask = data.train_mask.cpu()
+    deg = pyg_degree(data.edge_index[1].cpu(), N).numpy()
+
+    test_nodes = data.test_mask.nonzero(as_tuple=True)[0].tolist()
+
+    same_mean_degs, diff_mean_degs = [], []
+    same_counts, diff_counts = [], []
+
+    for node in test_nodes:
+        node_label = int(y[node])
+        nbs, _, _, _ = k_hop_subgraph(
+            node_idx=int(node), num_hops=k,
+            edge_index=data.edge_index, num_nodes=N,
+        )
+        nbs_set = set(nbs.cpu().tolist()) - {node}
+
+        same_train = [n for n in nbs_set if train_mask[n] and int(y[n]) == node_label]
+        diff_train = [n for n in nbs_set if train_mask[n] and int(y[n]) != node_label]
+
+        same_mean_degs.append(float(np.mean([deg[n] for n in same_train])) if same_train else np.nan)
+        diff_mean_degs.append(float(np.mean([deg[n] for n in diff_train])) if diff_train else np.nan)
+        same_counts.append(len(same_train))
+        diff_counts.append(len(diff_train))
+
+    return {
+        "same_mean_deg": np.array(same_mean_degs, dtype=float),
+        "diff_mean_deg": np.array(diff_mean_degs, dtype=float),
+        "same_count":    np.array(same_counts, dtype=int),
+        "diff_count":    np.array(diff_counts, dtype=int),
+    }
+
+
 def get_node_purity(data, k: int = 1) -> torch.Tensor:
     """Neighborhood purity for every node at receptive field radius k.
 

@@ -10,8 +10,7 @@ class GCN(nn.Module):
         self.layers.append(GCNConv(in_dim, hidden_dim))
         for _ in range(num_layers - 2):
             self.layers.append(GCNConv(hidden_dim, hidden_dim))
-        # self.convs.append(GCNConv(hidden_dim, out_dim))
-        self.layers.append(nn.Linear(hidden_dim, out_dim))
+        self.layers.append(GCNConv(hidden_dim, out_dim))
         self.dropout = dropout
 
     def forward(self, x, edge_index):
@@ -19,5 +18,5 @@ class GCN(nn.Module):
             x = layer(x, edge_index)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.layers[-1](x)
+        x = self.layers[-1](x, edge_index)
         return x

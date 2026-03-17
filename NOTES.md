@@ -104,7 +104,7 @@ It means the **trained model's weights** have converged to a state where essenti
 
 3. **Learned weight suppression.** After training, the weight matrices may project the same-class neighbours' features into a direction that has near-zero magnitude for this node's final representation.
 
-The fact that `same_class_influence ≈ 0` for a **misclassified** node with 4 same-class and 11 diff-class training neighbours is precisely the degree-bias signal this analysis is designed to surface: the model cannot effectively route same-class information to high-degree nodes because diff-class nodes dominate aggregation numerically.
+The fact that `same_class_influence ≈ 0` for a **misclassified** node with 4 same-class and 11 diff-class training neighbours is precisely the anomaly this analysis is designed to surface: for this specific node, the model cannot effectively route same-class information because diff-class nodes dominate aggregation numerically. Note that this is an anomaly — most high-degree nodes are correctly classified. Node 1362 represents a case where the neighbourhood class imbalance is severe enough, combined with the other compounding factors, to tip the model into misclassification despite the node's high connectivity.
 
 ### Does `same_class_influence ≈ 0` mean those training nodes weren't trained?
 
@@ -144,7 +144,7 @@ A secondary question: does higher degree in training nodes correlate with faster
 
 ### High-degree test node anomalies — broader study
 
-**To investigate.** The influence analysis so far has been run on a single dataset (Cora) with a fixed random split. To determine whether the observed anomalies are general:
+**To investigate.** The influence analysis so far has been run on a single dataset (Cora) with the public split. The general trend (higher-degree nodes achieve higher accuracy) is established, but the specific anomalous misclassifications motivate a broader study. To determine whether these anomalies are general:
 
 - **Across training splits:** repeat the influence analysis across multiple random splits and public splits — do the same high-degree test nodes consistently show near-zero same-class influence, or does it vary with which nodes are labelled?
 - **Across datasets:** run on CiteSeer, PubMed, ogbn-arxiv, and heterophilic graphs (e.g. Chameleon, Squirrel) — does the diff-class dominance pattern hold, and is it stronger on homophilic vs heterophilic graphs?
