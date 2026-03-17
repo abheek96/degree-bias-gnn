@@ -79,6 +79,22 @@ The Jacobian is computed exactly via `torch.autograd.functional.jacobian`.
 Summing the absolute values over all output dimensions `i` and all input feature dimensions `f` gives a scalar "how much does y's input affect x's output".
 Normalising over all nodes gives a probability distribution over the graph — `I_x(y)` is the fraction of x's total sensitivity attributable to node y.
 
+### How are `same_class_influence` and `diff_class_influence` reported?
+
+Two levels of reporting are produced:
+
+**Raw scores** — the sum of `I_x(y)` over same-class (or diff-class) training nodes in the receptive field. These are fractions of the full-graph influence (which sums to 1 over all N nodes), so they are typically very small (e.g. `1e-7` for same, `5e-2` for diff).
+
+**Normalised scores** — the raw scores divided by `total_train_influence = same + diff`. These sum to 1 between the two groups and are the primary values used for comparison and plotting. A normalised value of `same=0.04, diff=0.96` directly reads as "96% of the influence from training nodes in the receptive field comes from diff-class nodes".
+
+The log prints both:
+```
+raw:  same=1.2e-07  diff=5.1e-02  total_train=5.1e-02
+norm: same=0.0000   diff=1.0000   (fraction of training-node influence)
+```
+
+Plots use the normalised scores so bars across different nodes are on a common [0, 1] scale.
+
 ### What is `influence_top_n` / why was it there?
 
 It was a cap on the number of nodes analysed per degree value, to limit compute when many nodes share a degree.
@@ -91,7 +107,7 @@ No, they are **counts**:
 - `same_train=4` — there are **4 training nodes** of the **same class** as the selected node inside its k-hop receptive field.
 - `diff_train=11` — there are **11 training nodes** of a **different class** inside the same receptive field.
 
-`same_class_influence` and `diff_class_influence` are the actual scores — the sum of normalised influence values `I_x(y)` over the respective groups.
+`same_class_influence` and `diff_class_influence` are the actual scores — the sum of `I_x(y)` over the respective groups, further normalised by the total training-node influence so they sum to 1 between them (see above).
 
 ### Why is `same_class_influence ≈ 0` when `same_train=4`?
 
@@ -152,4 +168,4 @@ A secondary question: does higher degree in training nodes correlate with faster
 
 ---
 
-*Last updated: 2026-03-13*
+*Last updated: 2026-03-17*
