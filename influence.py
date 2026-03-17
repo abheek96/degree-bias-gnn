@@ -195,28 +195,49 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
             })
         neighbor_detail.sort(key=lambda d: d["influence"], reverse=True)
 
-        same_inf = float(I_x[same_class].sum()) if same_class else 0.0
-        diff_inf = float(I_x[diff_class].sum()) if diff_class else 0.0
-        log.info("  same_class_influence=%.4e  diff_class_influence=%.4e  "
-                 "total_train_influence=%.4e",
-                 same_inf, diff_inf, same_inf + diff_inf)
+        same_inf  = float(I_x[same_class].sum()) if same_class else 0.0
+        diff_inf  = float(I_x[diff_class].sum()) if diff_class else 0.0
+        total_inf = same_inf + diff_inf
+
+        # Normalize relative to total training-node influence in the receptive
+        # field so same and diff scores are directly comparable (sum to 1).
+        norm_same = same_inf / total_inf if total_inf > 0 else 0.0
+        norm_diff = diff_inf / total_inf if total_inf > 0 else 0.0
+
+        log.info("  raw:  same=%.4e  diff=%.4e  total_train=%.4e",
+                 same_inf, diff_inf, total_inf)
+        log.info("  norm: same=%.4f  diff=%.4f  (fraction of training-node influence)",
+                 norm_same, norm_diff)
         if same_class:
             for t in same_class:
-                log.info("    same_train node %-5d  influence=%.4e", t, float(I_x[t].item()))
+                raw  = float(I_x[t].item())
+                norm = raw / total_inf if total_inf > 0 else 0.0
+                log.info("    same_train node %-5d  raw=%.4e  norm=%.4f", t, raw, norm)
         if diff_class:
             for t in diff_class:
-                log.info("    diff_train node %-5d  influence=%.4e", t, float(I_x[t].item()))
+                raw  = float(I_x[t].item())
+                norm = raw / total_inf if total_inf > 0 else 0.0
+                log.info("    diff_train node %-5d  raw=%.4e  norm=%.4f", t, raw, norm)
+
+        # Store normalized influence in neighbor detail for the per-neighbor plot
+        for nb in neighbor_detail:
+            nb["influence_norm"] = (
+                nb["influence"] / total_inf if total_inf > 0 else 0.0
+            )
 
         results.append({
-            "node_idx":             node_x,
-            "degree":               degree,
-            "true_label":           true_lbl,
-            "pred_label":           pred_lbl,
-            "same_class_influence": same_inf,
-            "diff_class_influence": diff_inf,
-            "n_same_train":         len(same_class),
-            "n_diff_train":         len(diff_class),
-            "neighbors":            neighbor_detail,
+            "node_idx":                  node_x,
+            "degree":                    degree,
+            "true_label":                true_lbl,
+            "pred_label":                pred_lbl,
+            "same_class_influence":      same_inf,
+            "diff_class_influence":      diff_inf,
+            "same_class_influence_norm": norm_same,
+            "diff_class_influence_norm": norm_diff,
+            "total_train_influence":     total_inf,
+            "n_same_train":              len(same_class),
+            "n_diff_train":              len(diff_class),
+            "neighbors":                 neighbor_detail,
         })
 
     return results

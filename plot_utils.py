@@ -1124,10 +1124,11 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
 
     results = sorted(results, key=lambda r: r["degree"])
 
-    labels   = [f"n{r['node_idx']}\ndeg={r['degree']}" for r in results]
-    same_inf = np.array([r["same_class_influence"] for r in results])
-    diff_inf = np.array([r["diff_class_influence"] for r in results])
-    total    = same_inf + diff_inf
+    labels    = [f"n{r['node_idx']}\ndeg={r['degree']}" for r in results]
+    # Use scores normalised to total training-node influence (sum to 1 per node)
+    same_inf  = np.array([r["same_class_influence_norm"] for r in results])
+    diff_inf  = np.array([r["diff_class_influence_norm"] for r in results])
+    total     = same_inf + diff_inf   # should be 1.0 wherever both exist
     diff_frac = np.divide(diff_inf, total, out=np.full_like(total, float("nan")), where=total > 0)
 
     x     = np.arange(len(results))
@@ -1141,17 +1142,17 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
     bars_diff = ax.bar(x + width / 2, diff_inf, width,
                        label="Diff-class train nodes", color="#ff7f00", alpha=0.9)
 
-    # Value labels above every bar so small values stay readable
+    # Value labels above every bar
     for bar in bars_same:
         h = bar.get_height()
         if np.isfinite(h) and h > 0:
             ax.text(bar.get_x() + bar.get_width() / 2, h,
-                    f"{h:.2e}", ha="center", va="bottom", fontsize=6, color="#1f78b4")
+                    f"{h:.3f}", ha="center", va="bottom", fontsize=6, color="#1f78b4")
     for bar in bars_diff:
         h = bar.get_height()
         if np.isfinite(h) and h > 0:
             ax.text(bar.get_x() + bar.get_width() / 2, h,
-                    f"{h:.2e}", ha="center", va="bottom", fontsize=6, color="#b35806")
+                    f"{h:.3f}", ha="center", va="bottom", fontsize=6, color="#b35806")
 
     # Fraction of diff-class influence as a line on twin axis
     ax2 = ax.twinx()
@@ -1163,7 +1164,7 @@ def plot_influence_analysis(results, cfg, save_dir=None, show=False):
     ax2.set_ylim(-0.05, 1.10)
     ax2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
-    ax.set_ylabel("Summed influence score", fontsize=11)
+    ax.set_ylabel("Normalised influence score\n(fraction of total training-node influence)", fontsize=10)
     ax.set_xlabel("Test node  (sorted by degree)", fontsize=11)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
@@ -1232,7 +1233,7 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
         true_lbl = r["true_label"]
         pred_lbl = r["pred_label"]
 
-        infl   = np.array([nb["influence"] for nb in neighbors])
+        infl   = np.array([nb["influence_norm"] for nb in neighbors])
         types  = [nb["type"] for nb in neighbors]
         colors = [TYPE_COLOR[t] for t in types]
         x      = np.arange(len(neighbors))
@@ -1261,7 +1262,7 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
             fontsize=9,
         )
         ax.set_xlabel("k-hop neighbor (sorted by influence, descending)", fontsize=10)
-        ax.set_ylabel("Normalised influence score", fontsize=10)
+        ax.set_ylabel("Normalised influence score\n(fraction of total training-node influence)", fontsize=9)
         ax.set_xticks(x)
         ax.set_xticklabels([str(nb["node_idx"]) for nb in neighbors],
                            rotation=90, fontsize=6)
