@@ -320,6 +320,10 @@ def main():
                     )
                 results_by_label[label] = label_deg_results
         save_dir = exec_dir if plot_cfg.get("save", True) else None
+        plot_acc_vs_degree(
+            deg_acc_results, cfg,
+            save_dir=save_dir, show=plot_cfg.get("show", False),
+        )
         plot_acc_vs_degree_by_layers(
             results_by_label, cfg, save_dir=save_dir, show=plot_cfg.get("show", False),
         )
