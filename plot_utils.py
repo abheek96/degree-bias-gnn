@@ -1392,20 +1392,20 @@ def plot_train_neighbor_degree_stats(
 
     bp_c = ax_bot.boxplot(corr_data, positions=pos_corr, widths=0.35, **_BP_KWARGS)
     for patch in bp_c["boxes"]:
-        patch.set_facecolor("#2ca02c")
-        patch.set_alpha(0.80)
+        patch.set_facecolor("#00b4d8")   # vivid cyan-blue
+        patch.set_alpha(0.88)
 
     bp_w = ax_bot.boxplot(wrong_data, positions=pos_wrong, widths=0.35, **_BP_KWARGS)
     for patch in bp_w["boxes"]:
-        patch.set_facecolor("#d62728")
-        patch.set_alpha(0.80)
+        patch.set_facecolor("#e63946")   # vivid crimson
+        patch.set_alpha(0.88)
 
     ax_bot.axhline(0, color="black", linewidth=1.0, linestyle="--", zorder=5)
     ax_bot.legend(
         handles=[
-            plt.Rectangle((0, 0), 1, 1, color="#2ca02c", alpha=0.80,
+            plt.Rectangle((0, 0), 1, 1, color="#00b4d8", alpha=0.88,
                            label="Correctly classified"),
-            plt.Rectangle((0, 0), 1, 1, color="#d62728", alpha=0.80,
+            plt.Rectangle((0, 0), 1, 1, color="#e63946", alpha=0.88,
                            label="Misclassified"),
             plt.Line2D([0], [0], color="black", linewidth=1.0, linestyle="--",
                        label="Advantage = 0  (same = diff degree)"),
