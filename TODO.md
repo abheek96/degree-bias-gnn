@@ -49,4 +49,29 @@ Open investigation tasks that have not yet been implemented. Each item includes 
 
 ---
 
-*Last updated: 2026-03-17*
+## 4. Literature citations for each structural metric and factor
+
+**Question:** For each metric and structural factor used in this investigation, what is the earliest / most authoritative source that introduces or motivates it in the context of GNNs or graph-based learning?
+
+**Motivation:** The current codebase and documentation describe each metric clearly but without references. Adding citations would (a) situate each choice in the existing literature, (b) make it easier to position this work relative to prior art, and (c) identify which metrics are genuinely novel contributions of this repository vs. established tools being applied in a new context.
+
+**Metrics / factors to source:**
+
+- **Degree-bias in GNNs** — which papers first formally studied accuracy as a function of node degree?
+- **Neighbourhood purity** — is this metric used elsewhere under the same or a different name?
+- **Average SPL to training nodes** — has this been used as a diagnostic metric in semi-supervised GNN papers?
+- **Labelling ratio (fraction with direct labelled neighbour)** — is this formalised in any label-propagation or GNN literature?
+- **GCN degree-normalised aggregation** (`1/sqrt(deg_u * deg_v)`) — cite Kipf & Welling (2017) and trace whether the dilution effect on high-degree nodes is noted there or in subsequent work.
+- **Influence / sensitivity analysis via Jacobian** — cite the definition (Definition 3.1 in the codebase); identify the paper this definition comes from.
+- **Over-smoothing and depth** — cite the relevant over-smoothing literature (Li et al., 2018; Oono & Suzuki, 2020; or others) for the claim that more layers hurt high-degree nodes more.
+- **GCNII (initial residual + identity mapping)** — cite Chen et al. (2020).
+- **Training-neighbor degree distribution** — is there prior work decomposing the aggregation imbalance into count vs. degree components?
+
+**Approach:**
+- For each bullet above, find the primary source and at least one follow-up or survey that uses the same concept.
+- Annotate `RESEARCH.md` §3 (Models), §4 (Metrics), and §7 (Narrative) with inline citations.
+- Optionally add a `REFERENCES.md` or a references section at the bottom of `RESEARCH.md` with full BibTeX-style entries.
+
+---
+
+*Last updated: 2026-03-18*
