@@ -272,6 +272,8 @@ def main():
     if plot_cfg.get("neighborhood_cardinality", False) and cardinality_by_k:
         plot_neighborhood_cardinality_vs_degree(
             test_deg, cardinality_by_k, deg_acc_results, cfg,
+            all_deg=all_deg,
+            purity_by_k=purity_by_k if len(purity_by_k) >= 2 else None,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )

@@ -398,32 +398,46 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
 
 def plot_neighborhood_cardinality_vs_degree(
     test_deg, cardinality_by_k, deg_acc_results, cfg,
+    all_deg=None, purity_by_k=None,
     save_dir=None, show=False,
 ):
-    """Neighbourhood cardinality (k=1 and k=2) vs. 1-hop degree, with accuracy overlay.
+    """Neighbourhood cardinality (k=1, k=2) and accuracy vs. 1-hop degree.
 
-    Left y-axis  — mean neighbourhood cardinality ± 1 std for k=1 (blue) and
-                   k=2 (orange), grouped by 1-hop degree of test nodes.
-    Right y-axis — median classification accuracy across runs (green), with
-                   IQR shading.
+    Top panel
+        Left y-axis  — mean neighbourhood cardinality ± 1 std for k=1 (blue)
+                       and k=2 (orange), grouped by 1-hop degree.
+        Right y-axis — median classification accuracy ± IQR across runs (green).
+
+    Bottom panel  (only shown when ``all_deg`` and ``purity_by_k`` are provided)
+        Mean delta purity (purity[k_max] − purity[k_min]) ± 1 std per degree
+        group (purple), with a zero reference line.  Uses ALL graph nodes so
+        the purity estimate is not limited to the test split.
 
     Parameters
     ----------
-    test_deg         : LongTensor [N_test]  — 1-hop degrees of test nodes.
-    cardinality_by_k : dict {k: LongTensor [N_test]} — k-hop neighbourhood
-                       size for each test node at each k value.
+    test_deg         : LongTensor [N_test]
+    cardinality_by_k : dict {k: LongTensor [N_test]}
     deg_acc_results  : list[dict]  — output of get_accuracy_deg per run.
     cfg              : dict
+    all_deg          : LongTensor [N_all], optional — degrees of every graph
+                       node; required for the delta-purity bottom panel.
+    purity_by_k      : dict {k: FloatTensor [N_all]}, optional — per-node
+                       purity at each k; required for the delta-purity panel.
     save_dir         : str or None
     show             : bool
     """
     deg = test_deg.cpu()
     all_degrees = sorted(deg.unique().tolist())
-    pos = list(range(len(all_degrees)))
+    pos    = list(range(len(all_degrees)))
     n_test = len(deg)
 
+    _CARD_COLORS = {1: "#2196F3", 2: "#FF5722"}   # blue, deep-orange
+    _ACC_COLOR   = "#388E3C"                        # dark green
+    _PURITY_COLOR = "#7B1FA2"                       # purple
+
     # ── cardinality stats per degree group ────────────────────────────────────
-    card_stats = {}  # k -> {means, stds}
+    card_stats = {}
+    k_values   = sorted(cardinality_by_k.keys())
     for k, card_tensor in cardinality_by_k.items():
         card = card_tensor.cpu().float()
         means, stds = [], []
@@ -438,10 +452,7 @@ def plot_neighborhood_cardinality_vs_degree(
     n_runs = len(deg_acc_results)
     acc_median, acc_q1, acc_q3 = [], [], []
     for d in all_degrees:
-        if d in deg_data:
-            run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
-        else:
-            run_means = []
+        run_means = [float(a.mean()) for a in deg_data.get(d, []) if len(a) > 0]
         if run_means:
             acc_median.append(float(np.median(run_means)))
             acc_q1.append(float(np.percentile(run_means, 25)))
@@ -451,78 +462,107 @@ def plot_neighborhood_cardinality_vs_degree(
             acc_q1.append(float("nan"))
             acc_q3.append(float("nan"))
     acc_median = np.array(acc_median)
-    acc_q1     = np.array(acc_q1)
-    acc_q3     = np.array(acc_q3)
+    acc_q1, acc_q3 = np.array(acc_q1), np.array(acc_q3)
 
-    # ── counts for each degree group ─────────────────────────────────────────
-    counts = [(deg == d).sum().item() for d in all_degrees]
+    # ── delta purity stats per degree group (uses ALL nodes) ─────────────────
+    has_purity = (all_deg is not None and purity_by_k is not None
+                  and len(purity_by_k) >= 2)
+    if has_purity:
+        full_deg = all_deg.cpu()
+        k_ks     = sorted(purity_by_k.keys())
+        k_lo, k_hi = k_ks[0], k_ks[-1]
+        p_lo = purity_by_k[k_lo].cpu().float()
+        p_hi = purity_by_k[k_hi].cpu().float()
+        delta_all = p_hi - p_lo   # per-node delta, shape [N_all]
 
-    prefix   = _fname_prefix(cfg)
-    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+        dp_means, dp_stds = [], []
+        for d in all_degrees:
+            mask  = full_deg == d
+            vals  = delta_all[mask]
+            valid = vals[~torch.isnan(vals)]
+            if len(valid) > 0:
+                dp_means.append(float(valid.mean()))
+                dp_stds.append(float(valid.std()) if len(valid) > 1 else 0.0)
+            else:
+                dp_means.append(float("nan"))
+                dp_stds.append(0.0)
+        dp_means = np.array(dp_means)
+        dp_stds  = np.array(dp_stds)
 
-    _CARD_COLORS = {1: "#2196F3", 2: "#FF5722"}   # blue, deep-orange
-    _ACC_COLOR   = "#388E3C"                        # dark green
+    # ── figure layout ─────────────────────────────────────────────────────────
+    fig_w = _fig_w(len(all_degrees))
+    if has_purity:
+        fig, (ax_card, ax_dp) = plt.subplots(
+            2, 1, figsize=(fig_w, 7),
+            sharex=True, gridspec_kw={"height_ratios": [3, 1.4]},
+        )
+    else:
+        fig, ax_card = plt.subplots(figsize=(fig_w, 5))
+        ax_dp = None
 
-    fig, ax_card = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
-
-    # ── cardinality lines (left axis) ────────────────────────────────────────
-    k_values = sorted(cardinality_by_k.keys())
+    # ── top panel: cardinality lines ─────────────────────────────────────────
     for k in k_values:
         color = _CARD_COLORS.get(k, "#9C27B0")
-        m = card_stats[k]["means"]
-        s = card_stats[k]["stds"]
+        m, s  = card_stats[k]["means"], card_stats[k]["stds"]
         ax_card.plot(pos, m, color=color, linewidth=1.8,
                      marker="o", markersize=4, zorder=3,
                      label=f"{k}-hop cardinality (mean)")
         ax_card.fill_between(pos, m - s, m + s,
-                             color=color, alpha=0.18, zorder=2,
-                             label=f"±1 std  (k={k})")
+                             color=color, alpha=0.18, zorder=2)
 
     ax_card.set_ylabel("Neighbourhood cardinality  (# nodes)", fontsize=11)
     ax_card.set_ylim(bottom=0)
-    ax_card.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax_card.yaxis.set_major_formatter(
+        ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax_card.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
-    # ── accuracy line (right axis) ────────────────────────────────────────────
+    # ── top panel: accuracy twin axis ────────────────────────────────────────
     ax_acc = ax_card.twinx()
     ax_acc.plot(pos, acc_median, color=_ACC_COLOR, linewidth=1.8,
-                marker="s", markersize=4, zorder=4,
-                label=f"Accuracy (median, {n_runs} runs)")
+                marker="s", markersize=4, zorder=4)
     ax_acc.fill_between(pos, acc_q1, acc_q3,
-                        color=_ACC_COLOR, alpha=0.15, zorder=3,
-                        label="Accuracy IQR")
+                        color=_ACC_COLOR, alpha=0.15, zorder=3)
     ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
     ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
     ax_acc.set_ylim(-0.05, 1.10)
     ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
-    # ── node count annotations below x-axis ──────────────────────────────────
-    # light grey count text along x ticks
-    ax_card.tick_params(axis="x", labelsize=8)
-    for xi, (d, c) in enumerate(zip(all_degrees, counts)):
-        if xi % max(1, len(all_degrees) // 30) == 0:
-            ax_card.annotate(f"n={c}", xy=(xi, 0), xycoords=("data", "axes fraction"),
-                             xytext=(0, -22), textcoords="offset points",
-                             ha="center", va="top", fontsize=6, color="grey")
-
-    # ── combined legend ───────────────────────────────────────────────────────
-    handles_card = [
-        plt.Line2D([0], [0], color=_CARD_COLORS.get(k, "#9C27B0"), lw=2,
-                   marker="o", markersize=4, label=f"{k}-hop cardinality (mean ± 1 std)")
-        for k in k_values
-    ]
-    handles_acc = [
-        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
-                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
-    ]
-    ax_card.legend(handles=handles_card + handles_acc,
-                   loc="upper left", fontsize=8, framealpha=0.88)
-
-    ax_card.set_title(
-        f"Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree\n{subtitle}",
-        fontsize=11,
+    # ── top panel: combined legend ────────────────────────────────────────────
+    handles = (
+        [plt.Line2D([0], [0], color=_CARD_COLORS.get(k, "#9C27B0"), lw=2,
+                    marker="o", markersize=4,
+                    label=f"{k}-hop cardinality (mean ± 1 std)")
+         for k in k_values]
+        + [plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
+                      label=f"Accuracy (median ± IQR, {n_runs} runs)")]
     )
-    _degree_axis(ax_card, pos, all_degrees)
+    ax_card.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.88)
+
+    title = (f"Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree"
+             + ("\n+ Δ Purity" if has_purity else ""))
+    prefix   = _fname_prefix(cfg)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+    ax_card.set_title(f"{title}\n{subtitle}", fontsize=11)
+
+    # ── bottom panel: delta purity ────────────────────────────────────────────
+    if has_purity and ax_dp is not None:
+        ax_dp.plot(pos, dp_means, color=_PURITY_COLOR, linewidth=1.8,
+                   marker="o", markersize=4, zorder=3,
+                   label=f"Δ purity  (k={k_hi} − k={k_lo})  mean")
+        ax_dp.fill_between(pos, dp_means - dp_stds, dp_means + dp_stds,
+                           color=_PURITY_COLOR, alpha=0.18, zorder=2,
+                           label="±1 std")
+        ax_dp.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2,
+                      label="No change")
+        ax_dp.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=10)
+        ax_dp.yaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda x, _: f"{x:+.2f}"))
+        ax_dp.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+        ax_dp.legend(loc="upper right", fontsize=7, framealpha=0.85)
+        _degree_axis(ax_dp, pos, all_degrees)
+    else:
+        # no purity panel — add x-axis to the top panel directly
+        _degree_axis(ax_card, pos, all_degrees)
 
     fig.tight_layout()
     _save(fig, _subdir(save_dir, "neighborhood_cardinality"),
