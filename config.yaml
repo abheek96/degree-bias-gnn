@@ -39,7 +39,7 @@ plot:
   purity_vs_degree: true
   purity_k_max: 2
   influence_analysis: true
-  influence_degrees: []        # exact degree values to investigate, e.g. [3, 5, 10]
+  influence_degrees: [22]        # exact degree values to investigate, e.g. [3, 5, 10]
   train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
   save: true
   show: false
