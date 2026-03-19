@@ -93,11 +93,17 @@ def _fig_w(n_deg, n_runs=1):
     return max(10, min(n_deg * max(0.5, 0.35 * n_runs), 48))
 
 
+# Shared plot colours
+_ACC_COLOR     = "#388E3C"                 # dark green — accuracy
+_PURITY_COLOR  = "#7B1FA2"                 # purple     — purity
+_ANOMALY_COLOR = "#C62828"                 # dark crimson — anomaly highlights
+_CARD_COLORS   = {1: "#2196F3", 2: "#FF5722"}  # blue, deep-orange — cardinality
+
 # SPL combined plot colours
 _SPL_ALL_COLOR = "#1976D2"   # blue   — any training node
 _SPL_SC_COLOR  = "#E53935"   # red    — same-class training node
-_SPL_ACC_COLOR = "#388E3C"   # green  — accuracy overlay (= _ACC_COLOR inside neighbourhood fn)
-_SPL_PUR_COLOR = "#7B1FA2"   # purple — purity overlay
+_SPL_ACC_COLOR = _ACC_COLOR
+_SPL_PUR_COLOR = _PURITY_COLOR
 
 _BP_KWARGS = dict(
     patch_artist=True,
@@ -445,10 +451,6 @@ def plot_neighborhood_cardinality_vs_degree(
     save_dir         : str or None
     show             : bool
     """
-    _CARD_COLORS   = {1: "#2196F3", 2: "#FF5722"}   # blue, deep-orange
-    _ACC_COLOR     = "#388E3C"                        # dark green
-    _PURITY_COLOR  = "#7B1FA2"                        # purple
-    _ANOMALY_COLOR = "#C62828"                        # dark crimson
 
     deg = test_deg.cpu()
     all_degrees = sorted(deg.unique().tolist())
