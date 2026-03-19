@@ -1,6 +1,7 @@
 import logging
 import os
 
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
@@ -91,6 +92,12 @@ def _fig_w(n_deg, n_runs=1):
     """Figure width that scales with the number of degree groups and runs."""
     return max(10, min(n_deg * max(0.5, 0.35 * n_runs), 48))
 
+
+# SPL combined plot colours
+_SPL_ALL_COLOR = "#1976D2"   # blue   — any training node
+_SPL_SC_COLOR  = "#E53935"   # red    — same-class training node
+_SPL_ACC_COLOR = "#388E3C"   # green  — accuracy overlay (= _ACC_COLOR inside neighbourhood fn)
+_SPL_PUR_COLOR = "#7B1FA2"   # purple — purity overlay
 
 _BP_KWARGS = dict(
     patch_artist=True,
@@ -925,6 +932,184 @@ def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False,
     suffix = "same_class" if same_class else "all_train"
     _save(fig, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_vs_degree_{suffix}.png", show)
+
+
+def plot_spl_combined_vs_degree(
+    test_deg, avg_spl, avg_spl_same_class, cfg,
+    deg_acc_results=None, purity_by_k=None, all_deg=None,
+    save_dir=None, show=False,
+):
+    """Two combined SPL figures with side-by-side boxplots per degree group.
+
+    Figure 1 — base:
+        Side-by-side boxplots of avg SPL to any training node (blue) and to
+        same-class training nodes only (red), per degree group.
+        Bottom panel: node count per degree.
+
+    Figure 2 — with overlays (when deg_acc_results, purity_by_k, and all_deg
+        are provided):
+        Same side-by-side boxplots, plus accuracy (median ± IQR, green) and
+        k=1 neighbourhood purity mean (purple) on a twin right axis (0–1).
+
+    Parameters
+    ----------
+    test_deg           : 1-D LongTensor — degrees of test nodes.
+    avg_spl            : 1-D FloatTensor — avg SPL to any training node.
+    avg_spl_same_class : 1-D FloatTensor — avg SPL to same-class training node.
+    cfg                : dict
+    deg_acc_results    : list[dict] — per-run output of get_accuracy_deg.
+    purity_by_k        : dict {k: FloatTensor[N_all]} — node purity for all nodes.
+    all_deg            : 1-D LongTensor — degrees of all graph nodes.
+    save_dir           : str or None
+    show               : bool
+    """
+    deg     = test_deg.cpu()
+    spl_all = avg_spl.cpu().numpy()
+    spl_sc  = avg_spl_same_class.cpu().numpy()
+
+    unique_degrees = sorted(deg.unique().tolist())
+    n_deg  = len(unique_degrees)
+    pos    = np.array(list(range(n_deg)))
+    prefix   = _fname_prefix(cfg)
+    n_test   = int(len(deg))
+    subtitle = _subtitle(cfg, n_test, n_deg)
+
+    # ── per-degree boxplot data ────────────────────────────────────────────────
+    bp_all, bp_sc, counts = [], [], []
+    for d in unique_degrees:
+        mask = (deg == d).numpy()
+        counts.append(int(mask.sum()))
+        for spl, lst in [(spl_all, bp_all), (spl_sc, bp_sc)]:
+            v     = spl[mask]
+            valid = v[~np.isnan(v)]
+            lst.append(valid if len(valid) > 0 else np.array([float("nan")]))
+
+    pos_all = pos - 0.2
+    pos_sc  = pos + 0.2
+    box_w   = 0.35
+
+    def _draw_boxplots(ax):
+        bpa = ax.boxplot(bp_all, positions=pos_all, widths=box_w, **_BP_KWARGS)
+        for patch in bpa["boxes"]:
+            patch.set_facecolor(_SPL_ALL_COLOR); patch.set_alpha(0.65)
+        bps = ax.boxplot(bp_sc, positions=pos_sc, widths=box_w, **_BP_KWARGS)
+        for patch in bps["boxes"]:
+            patch.set_facecolor(_SPL_SC_COLOR); patch.set_alpha(0.65)
+        ax.set_ylabel("Avg. shortest path length", fontsize=11)
+        ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+        ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+
+    def _x_axis(ax):
+        step = max(1, n_deg // 30)
+        ax.set_xticks(pos[::step])
+        ax.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
+        ax.set_xlabel("Node degree", fontsize=11)
+
+    spl_handles = [
+        mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
+                       label="Avg. SPL to any train node"),
+        mpatches.Patch(color=_SPL_SC_COLOR,  alpha=0.65,
+                       label="Avg. SPL to same-class train node"),
+    ]
+
+    fig_w = _fig_w(n_deg)
+
+    # ── Figure 1: base ────────────────────────────────────────────────────────
+    fig1, (ax_top1, ax_bot1) = plt.subplots(
+        2, 1, figsize=(fig_w, 7), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1]},
+    )
+    _draw_boxplots(ax_top1)
+    ax_top1.set_title(f"Avg. SPL to Training Nodes vs. Degree\n{subtitle}", fontsize=11)
+    ax_top1.legend(handles=spl_handles, fontsize=9, loc="upper left", framealpha=0.9)
+    plt.setp(ax_top1.get_xticklabels(), visible=True)
+
+    ax_bot1.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot1.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot1.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot1.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    _x_axis(ax_bot1)
+
+    fig1.tight_layout()
+    _save(fig1, _subdir(save_dir, "spl_vs_degree"),
+          f"{prefix}_spl_combined_vs_degree.png", show)
+
+    # ── Figure 2: with accuracy + purity overlays ─────────────────────────────
+    has_acc    = deg_acc_results is not None
+    has_purity = (purity_by_k is not None and all_deg is not None
+                  and 1 in purity_by_k)
+    if not (has_acc or has_purity):
+        return
+
+    fig2, (ax_top2, ax_bot2) = plt.subplots(
+        2, 1, figsize=(fig_w, 7), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1]},
+    )
+    _draw_boxplots(ax_top2)
+    ax_top2.set_title(
+        f"Avg. SPL  +  Accuracy & Purity vs. Degree\n{subtitle}", fontsize=11,
+    )
+
+    ax_ov = ax_top2.twinx()
+    ax_ov.set_ylim(-0.05, 1.10)
+    ax_ov.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_ov.tick_params(axis="y", labelsize=8)
+    ax_ov.set_ylabel("Accuracy / Purity", fontsize=10)
+
+    ov_handles = []
+
+    if has_acc:
+        _, deg_data = _collect(deg_acc_results)
+        n_runs = len(deg_acc_results)
+        acc_median, acc_q1, acc_q3 = [], [], []
+        for d in unique_degrees:
+            vals = np.concatenate([deg_data[d][r] for r in range(n_runs)
+                                   if len(deg_data[d][r]) > 0])
+            if len(vals) == 0:
+                acc_median.append(np.nan); acc_q1.append(np.nan); acc_q3.append(np.nan)
+            else:
+                acc_median.append(float(np.median(vals)))
+                acc_q1.append(float(np.percentile(vals, 25)))
+                acc_q3.append(float(np.percentile(vals, 75)))
+        acc_median = np.array(acc_median)
+        acc_q1     = np.array(acc_q1)
+        acc_q3     = np.array(acc_q3)
+        ax_ov.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
+                   markersize=4, zorder=5)
+        ax_ov.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
+                           alpha=0.15, zorder=4)
+        ov_handles.append(plt.Line2D(
+            [0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
+            label=f"Accuracy  (median ± IQR, {n_runs} runs)"))
+
+    if has_purity:
+        full_deg  = all_deg.cpu() if hasattr(all_deg, "cpu") else torch.as_tensor(all_deg)
+        pur_vals  = purity_by_k[1].cpu().float()
+        pur_means = np.array([
+            float(pur_vals[full_deg == d].mean())
+            if (full_deg == d).any() else float("nan")
+            for d in unique_degrees
+        ])
+        ax_ov.plot(pos, pur_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
+                   markersize=4, zorder=5)
+        ov_handles.append(plt.Line2D(
+            [0], [0], color=_SPL_PUR_COLOR, lw=2, marker="o", markersize=4,
+            label="k=1 purity  (mean)"))
+
+    ax_top2.legend(handles=spl_handles + ov_handles,
+                   fontsize=9, loc="upper left", framealpha=0.9)
+    plt.setp(ax_top2.get_xticklabels(), visible=True)
+
+    ax_bot2.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot2.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot2.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    _x_axis(ax_bot2)
+
+    fig2.tight_layout()
+    _save(fig2, _subdir(save_dir, "spl_vs_degree"),
+          f"{prefix}_spl_combined_with_overlays_vs_degree.png", show)
 
 
 # ── accuracy + labelling ratio vs. degree ─────────────────────────────────────

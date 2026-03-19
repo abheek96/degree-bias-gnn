@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree
 from influence import compute_influence_analysis
 from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality
 from train import train
@@ -332,13 +332,12 @@ def main():
 
     if plot_cfg.get("spl_vs_degree", False):
         save_dir = exec_dir if plot_cfg.get("save", True) else None
-        plot_spl_vs_degree(
-            test_deg, avg_spl, cfg,
+        plot_spl_combined_vs_degree(
+            test_deg, avg_spl, avg_spl_same_class, cfg,
+            deg_acc_results=deg_acc_results,
+            purity_by_k=purity_by_k if len(purity_by_k) >= 1 else None,
+            all_deg=all_deg,
             save_dir=save_dir, show=plot_cfg.get("show", False),
-        )
-        plot_spl_vs_degree(
-            test_deg, avg_spl_same_class, cfg,
-            save_dir=save_dir, show=plot_cfg.get("show", False), same_class=True,
         )
 
     if plot_cfg.get("labelling_ratio", False):
