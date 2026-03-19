@@ -481,14 +481,12 @@ def plot_neighborhood_cardinality_vs_degree(
         k_lo, k_hi = k_ks[0], k_ks[-1]
         delta_all = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
 
-        dp_means, dp_stds = [], []
+        dp_means = []
         for d in all_degrees:
             vals  = delta_all[full_deg == d]
             valid = vals[~torch.isnan(vals)]
             dp_means.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
-            dp_stds.append(float(valid.std()) if len(valid) > 1 else 0.0)
         dp_means = np.array(dp_means)
-        dp_stds  = np.array(dp_stds)
 
     # ── anomaly detection ─────────────────────────────────────────────────────
     # Flag degree groups where three signals simultaneously indicate stress:
@@ -607,9 +605,7 @@ def plot_neighborhood_cardinality_vs_degree(
     if has_purity and ax_dp is not None:
         ax_dp.plot(pos, dp_means, color=_PURITY_COLOR, linewidth=1.8,
                    marker="o", markersize=4, zorder=3,
-                   label=f"Δ purity  (k={k_hi}−k={k_lo})  mean ± 1 std")
-        ax_dp.fill_between(pos, dp_means - dp_stds, dp_means + dp_stds,
-                           color=_PURITY_COLOR, alpha=0.18, zorder=2)
+                   label=f"Δ purity  (k={k_hi}−k={k_lo})  mean")
         ax_dp.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2,
                       label="No change")
         # Anomaly accent markers on the delta purity line
