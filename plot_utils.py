@@ -489,23 +489,35 @@ def plot_neighborhood_cardinality_vs_degree(
         dp_means = np.array(dp_means)
 
     # ── anomaly detection ─────────────────────────────────────────────────────
-    # Flag degree groups where three signals simultaneously indicate stress:
-    #   1. Accuracy below the cross-degree median        (model fails here)
-    #   2. k=2 cardinality above the cross-degree mean   (neighbourhood explodes)
-    #   3. Δ purity more negative than the cross-degree mean  (signal degrades)
-    # Conditions 1 & 2 are always applied; condition 3 only when purity data
-    # is available.  Require ≥ 3 test nodes to suppress single-node noise.
+    # Two complementary criteria, both require ≥ 3 test nodes:
+    #
+    # Criterion A — three-signal conjunction:
+    #   1. Accuracy below the cross-degree median
+    #   2. k=2 cardinality above the cross-degree mean
+    #   3. Δ purity more negative than the cross-degree mean  (purity only)
+    #
+    # Criterion B — sharp structural deterioration:
+    #   1. Accuracy below the cross-degree median
+    #   2. Δ purity drops sharply step-to-step (diff < mean − 1 std)  (purity only)
+    #
+    # Anomaly set = union of both criteria, sorted by accuracy, capped at 5.
     counts = np.array([(deg == d).sum().item() for d in all_degrees])
     anomaly_idx = []
     if len(all_degrees) > 3:
         enough_nodes = counts >= 3
-        low_acc  = acc_median < np.nanmedian(acc_median)
-        k2_means = card_stats.get(2, card_stats[max(k_values)])["means"]
+        low_acc   = acc_median < np.nanmedian(acc_median)
+        k2_means  = card_stats.get(2, card_stats[max(k_values)])["means"]
         high_card = k2_means > np.nanmean(k2_means)
 
         if has_purity:
-            neg_dp  = dp_means < np.nanmean(dp_means)
-            combined = low_acc & high_card & neg_dp & enough_nodes
+            # Criterion A
+            neg_dp   = dp_means < np.nanmean(dp_means)
+            crit_a   = low_acc & high_card & neg_dp & enough_nodes
+            # Criterion B — step-to-step drop in Δpurity
+            dp_diff  = np.concatenate([[0.0], np.diff(dp_means)])
+            sharp_dp = dp_diff < (np.nanmean(dp_diff) - np.nanstd(dp_diff))
+            crit_b   = low_acc & sharp_dp & enough_nodes
+            combined = crit_a | crit_b
         else:
             combined = low_acc & high_card & enough_nodes
 
@@ -548,6 +560,10 @@ def plot_neighborhood_cardinality_vs_degree(
     ax_card.yaxis.set_major_formatter(
         ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax_card.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    # Show degree labels on top panel even when sharex=True suppresses them
+    if has_purity:
+        _degree_axis(ax_card, pos, all_degrees)
+        plt.setp(ax_card.get_xticklabels(), visible=True)
 
     # ── top panel: accuracy twin axis ────────────────────────────────────────
     ax_acc = ax_card.twinx()
@@ -562,7 +578,7 @@ def plot_neighborhood_cardinality_vs_degree(
         ax_acc.scatter([pos[ai] for ai in anomaly_idx],
                        [acc_median[ai] for ai in anomaly_idx],
                        color=_ANOMALY_COLOR, marker="*", s=120,
-                       zorder=6, label="Anomaly (acc↓ card↑ Δpur↓)")
+                       zorder=6, label="_nolegend_")
     ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
     ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
     ax_acc.set_ylim(-0.05, 1.10)
@@ -588,7 +604,7 @@ def plot_neighborhood_cardinality_vs_degree(
     ]
     handles_anom = (
         [plt.Line2D([0], [0], color=_ANOMALY_COLOR, lw=0, marker="*",
-                    markersize=9, label="Anomaly: acc↓  k=2 card↑  Δpur↓")]
+                    markersize=9, label="Anomaly: acc↓  (card↑ + Δpur↓)  or  Δpur sharp drop")]
         if anomaly_idx else []
     )
     ax_card.legend(handles=handles_card + handles_acc + handles_anom,
