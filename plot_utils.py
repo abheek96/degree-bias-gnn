@@ -401,17 +401,26 @@ def plot_neighborhood_cardinality_vs_degree(
     all_deg=None, purity_by_k=None,
     save_dir=None, show=False,
 ):
-    """Neighbourhood cardinality (k=1, k=2) and accuracy vs. 1-hop degree.
+    """Neighbourhood cardinality (k=1, k=2), accuracy, and Δ purity vs. 1-hop degree.
 
     Top panel
         Left y-axis  — mean neighbourhood cardinality ± 1 std for k=1 (blue)
                        and k=2 (orange), grouped by 1-hop degree.
         Right y-axis — median classification accuracy ± IQR across runs (green).
 
-    Bottom panel  (only shown when ``all_deg`` and ``purity_by_k`` are provided)
-        Mean delta purity (purity[k_max] − purity[k_min]) ± 1 std per degree
-        group (purple), with a zero reference line.  Uses ALL graph nodes so
-        the purity estimate is not limited to the test split.
+    Bottom panel  (when ``all_deg`` and ``purity_by_k`` are provided)
+        Mean Δ purity (purity[k_max] − purity[k_min]) ± 1 std per degree group
+        (purple), with a zero reference line.  Uses ALL graph nodes.
+
+    Anomaly highlights
+        Degree groups where ALL three structural signals align — accuracy below
+        the cross-degree median, k=2 cardinality above average, and Δ purity
+        more negative than average — are flagged with a dashed crimson vertical
+        line spanning both panels, a ★ marker on the accuracy curve, and a
+        degree label at the top of the upper panel.  Up to five anomalies are
+        shown (the worst by accuracy).  Requires ≥ 3 test nodes per group to
+        suppress single-node noise.  When purity data is absent, only the
+        first two criteria are used.
 
     Parameters
     ----------
@@ -419,21 +428,20 @@ def plot_neighborhood_cardinality_vs_degree(
     cardinality_by_k : dict {k: LongTensor [N_test]}
     deg_acc_results  : list[dict]  — output of get_accuracy_deg per run.
     cfg              : dict
-    all_deg          : LongTensor [N_all], optional — degrees of every graph
-                       node; required for the delta-purity bottom panel.
-    purity_by_k      : dict {k: FloatTensor [N_all]}, optional — per-node
-                       purity at each k; required for the delta-purity panel.
+    all_deg          : LongTensor [N_all], optional
+    purity_by_k      : dict {k: FloatTensor [N_all]}, optional
     save_dir         : str or None
     show             : bool
     """
+    _CARD_COLORS   = {1: "#2196F3", 2: "#FF5722"}   # blue, deep-orange
+    _ACC_COLOR     = "#388E3C"                        # dark green
+    _PURITY_COLOR  = "#7B1FA2"                        # purple
+    _ANOMALY_COLOR = "#C62828"                        # dark crimson
+
     deg = test_deg.cpu()
     all_degrees = sorted(deg.unique().tolist())
     pos    = list(range(len(all_degrees)))
     n_test = len(deg)
-
-    _CARD_COLORS = {1: "#2196F3", 2: "#FF5722"}   # blue, deep-orange
-    _ACC_COLOR   = "#388E3C"                        # dark green
-    _PURITY_COLOR = "#7B1FA2"                       # purple
 
     # ── cardinality stats per degree group ────────────────────────────────────
     card_stats = {}
@@ -471,23 +479,43 @@ def plot_neighborhood_cardinality_vs_degree(
         full_deg = all_deg.cpu()
         k_ks     = sorted(purity_by_k.keys())
         k_lo, k_hi = k_ks[0], k_ks[-1]
-        p_lo = purity_by_k[k_lo].cpu().float()
-        p_hi = purity_by_k[k_hi].cpu().float()
-        delta_all = p_hi - p_lo   # per-node delta, shape [N_all]
+        delta_all = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
 
         dp_means, dp_stds = [], []
         for d in all_degrees:
-            mask  = full_deg == d
-            vals  = delta_all[mask]
+            vals  = delta_all[full_deg == d]
             valid = vals[~torch.isnan(vals)]
-            if len(valid) > 0:
-                dp_means.append(float(valid.mean()))
-                dp_stds.append(float(valid.std()) if len(valid) > 1 else 0.0)
-            else:
-                dp_means.append(float("nan"))
-                dp_stds.append(0.0)
+            dp_means.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
+            dp_stds.append(float(valid.std()) if len(valid) > 1 else 0.0)
         dp_means = np.array(dp_means)
         dp_stds  = np.array(dp_stds)
+
+    # ── anomaly detection ─────────────────────────────────────────────────────
+    # Flag degree groups where three signals simultaneously indicate stress:
+    #   1. Accuracy below the cross-degree median        (model fails here)
+    #   2. k=2 cardinality above the cross-degree mean   (neighbourhood explodes)
+    #   3. Δ purity more negative than the cross-degree mean  (signal degrades)
+    # Conditions 1 & 2 are always applied; condition 3 only when purity data
+    # is available.  Require ≥ 3 test nodes to suppress single-node noise.
+    counts = np.array([(deg == d).sum().item() for d in all_degrees])
+    anomaly_idx = []
+    if len(all_degrees) > 3:
+        enough_nodes = counts >= 3
+        low_acc  = acc_median < np.nanmedian(acc_median)
+        k2_means = card_stats.get(2, card_stats[max(k_values)])["means"]
+        high_card = k2_means > np.nanmean(k2_means)
+
+        if has_purity:
+            neg_dp  = dp_means < np.nanmean(dp_means)
+            combined = low_acc & high_card & neg_dp & enough_nodes
+        else:
+            combined = low_acc & high_card & enough_nodes
+
+        candidates = np.where(combined)[0]
+        if len(candidates) > 0:
+            # Sort by accuracy (most anomalous = lowest accuracy first), cap at 5
+            order = np.argsort(acc_median[candidates])
+            anomaly_idx = candidates[order][:5].tolist()
 
     # ── figure layout ─────────────────────────────────────────────────────────
     fig_w = _fig_w(len(all_degrees))
@@ -500,13 +528,20 @@ def plot_neighborhood_cardinality_vs_degree(
         fig, ax_card = plt.subplots(figsize=(fig_w, 5))
         ax_dp = None
 
+    # ── top panel: anomaly vertical lines (behind all other elements) ─────────
+    all_axes = [ax_card] + ([ax_dp] if ax_dp is not None else [])
+    for ai in anomaly_idx:
+        for ax in all_axes:
+            ax.axvline(pos[ai], color=_ANOMALY_COLOR, lw=0.9,
+                       ls="--", alpha=0.40, zorder=1)
+
     # ── top panel: cardinality lines ─────────────────────────────────────────
     for k in k_values:
         color = _CARD_COLORS.get(k, "#9C27B0")
         m, s  = card_stats[k]["means"], card_stats[k]["stds"]
         ax_card.plot(pos, m, color=color, linewidth=1.8,
                      marker="o", markersize=4, zorder=3,
-                     label=f"{k}-hop cardinality (mean)")
+                     label=f"{k}-hop cardinality (mean ± 1 std)")
         ax_card.fill_between(pos, m - s, m + s,
                              color=color, alpha=0.18, zorder=2)
 
@@ -518,42 +553,71 @@ def plot_neighborhood_cardinality_vs_degree(
 
     # ── top panel: accuracy twin axis ────────────────────────────────────────
     ax_acc = ax_card.twinx()
+    # Regular accuracy line
     ax_acc.plot(pos, acc_median, color=_ACC_COLOR, linewidth=1.8,
-                marker="s", markersize=4, zorder=4)
+                marker="s", markersize=4, zorder=4,
+                label=f"Accuracy (median ± IQR, {n_runs} runs)")
     ax_acc.fill_between(pos, acc_q1, acc_q3,
                         color=_ACC_COLOR, alpha=0.15, zorder=3)
+    # Anomaly accent markers on the accuracy line
+    if anomaly_idx:
+        ax_acc.scatter([pos[ai] for ai in anomaly_idx],
+                       [acc_median[ai] for ai in anomaly_idx],
+                       color=_ANOMALY_COLOR, marker="*", s=120,
+                       zorder=6, label="Anomaly (acc↓ card↑ Δpur↓)")
     ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
     ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
     ax_acc.set_ylim(-0.05, 1.10)
     ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
-    # ── top panel: combined legend ────────────────────────────────────────────
-    handles = (
-        [plt.Line2D([0], [0], color=_CARD_COLORS.get(k, "#9C27B0"), lw=2,
-                    marker="o", markersize=4,
-                    label=f"{k}-hop cardinality (mean ± 1 std)")
-         for k in k_values]
-        + [plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
-                      label=f"Accuracy (median ± IQR, {n_runs} runs)")]
-    )
-    ax_card.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.88)
+    # Degree labels at the top of the upper panel for each anomaly
+    for ai in anomaly_idx:
+        ax_card.text(pos[ai], 1.01, f"d={all_degrees[ai]}",
+                     transform=ax_card.get_xaxis_transform(),
+                     ha="center", va="bottom", fontsize=7,
+                     color=_ANOMALY_COLOR, rotation=90)
 
-    title = (f"Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree"
-             + ("\n+ Δ Purity" if has_purity else ""))
+    # ── top panel: combined legend ────────────────────────────────────────────
+    handles_card = [
+        plt.Line2D([0], [0], color=_CARD_COLORS.get(k, "#9C27B0"), lw=2,
+                   marker="o", markersize=4,
+                   label=f"{k}-hop cardinality (mean ± 1 std)")
+        for k in k_values
+    ]
+    handles_acc = [
+        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
+    ]
+    handles_anom = (
+        [plt.Line2D([0], [0], color=_ANOMALY_COLOR, lw=0, marker="*",
+                    markersize=9, label="Anomaly: acc↓  k=2 card↑  Δpur↓")]
+        if anomaly_idx else []
+    )
+    ax_card.legend(handles=handles_card + handles_acc + handles_anom,
+                   loc="upper left", fontsize=8, framealpha=0.88)
+
     prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
+    title    = "Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree"
+    if has_purity:
+        title += "  +  Δ Purity"
     ax_card.set_title(f"{title}\n{subtitle}", fontsize=11)
 
     # ── bottom panel: delta purity ────────────────────────────────────────────
     if has_purity and ax_dp is not None:
         ax_dp.plot(pos, dp_means, color=_PURITY_COLOR, linewidth=1.8,
                    marker="o", markersize=4, zorder=3,
-                   label=f"Δ purity  (k={k_hi} − k={k_lo})  mean")
+                   label=f"Δ purity  (k={k_hi}−k={k_lo})  mean ± 1 std")
         ax_dp.fill_between(pos, dp_means - dp_stds, dp_means + dp_stds,
-                           color=_PURITY_COLOR, alpha=0.18, zorder=2,
-                           label="±1 std")
+                           color=_PURITY_COLOR, alpha=0.18, zorder=2)
         ax_dp.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2,
                       label="No change")
+        # Anomaly accent markers on the delta purity line
+        if anomaly_idx:
+            ax_dp.scatter([pos[ai] for ai in anomaly_idx],
+                          [dp_means[ai] for ai in anomaly_idx],
+                          color=_ANOMALY_COLOR, marker="*", s=120,
+                          zorder=6)
         ax_dp.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=10)
         ax_dp.yaxis.set_major_formatter(
             ticker.FuncFormatter(lambda x, _: f"{x:+.2f}"))
@@ -561,7 +625,6 @@ def plot_neighborhood_cardinality_vs_degree(
         ax_dp.legend(loc="upper right", fontsize=7, framealpha=0.85)
         _degree_axis(ax_dp, pos, all_degrees)
     else:
-        # no purity panel — add x-axis to the top panel directly
         _degree_axis(ax_card, pos, all_degrees)
 
     fig.tight_layout()
