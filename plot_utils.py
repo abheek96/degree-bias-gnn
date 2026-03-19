@@ -316,17 +316,21 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
 
-    # ── Accuracy: aggregate across all runs ───────────────────────────────────
+    # ── Accuracy: per-run means → median / IQR across runs ───────────────────
+    # Compute the mean accuracy for each degree within each run first, then
+    # take median and IQR across those per-run means.  Concatenating raw 0/1
+    # values before taking the median would collapse the binary array and give
+    # 100% for any group where more than half the (node × run) pairs are correct.
     acc_median, acc_q1, acc_q3 = [], [], []
     for d in all_degrees:
-        vals = np.concatenate([deg_data[d][r] for r in range(n_runs)
-                               if len(deg_data[d][r]) > 0])
-        if len(vals) == 0:
+        means = [float(deg_data[d][r].mean()) for r in range(n_runs)
+                 if len(deg_data[d][r]) > 0]
+        if not means:
             acc_median.append(np.nan); acc_q1.append(np.nan); acc_q3.append(np.nan)
         else:
-            acc_median.append(float(np.median(vals)))
-            acc_q1.append(float(np.percentile(vals, 25)))
-            acc_q3.append(float(np.percentile(vals, 75)))
+            acc_median.append(float(np.median(means)))
+            acc_q1.append(float(np.percentile(means, 25)))
+            acc_q3.append(float(np.percentile(means, 75)))
     acc_median = np.array(acc_median)
     acc_q1     = np.array(acc_q1)
     acc_q3     = np.array(acc_q3)
@@ -1060,14 +1064,14 @@ def plot_spl_combined_vs_degree(
         n_runs = len(deg_acc_results)
         acc_median, acc_q1, acc_q3 = [], [], []
         for d in unique_degrees:
-            vals = np.concatenate([deg_data[d][r] for r in range(n_runs)
-                                   if len(deg_data[d][r]) > 0])
-            if len(vals) == 0:
+            means = [float(deg_data[d][r].mean()) for r in range(n_runs)
+                     if len(deg_data[d][r]) > 0]
+            if not means:
                 acc_median.append(np.nan); acc_q1.append(np.nan); acc_q3.append(np.nan)
             else:
-                acc_median.append(float(np.median(vals)))
-                acc_q1.append(float(np.percentile(vals, 25)))
-                acc_q3.append(float(np.percentile(vals, 75)))
+                acc_median.append(float(np.median(means)))
+                acc_q1.append(float(np.percentile(means, 25)))
+                acc_q3.append(float(np.percentile(means, 75)))
         acc_median = np.array(acc_median)
         acc_q1     = np.array(acc_q1)
         acc_q3     = np.array(acc_q3)
