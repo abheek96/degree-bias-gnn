@@ -14,9 +14,9 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_khop_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats
 from influence import compute_influence_analysis
-from utils import compute_distances_to_train, get_distance_deg, get_khop_degree, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats
+from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats
 from train import train
 from test import evaluate
 
@@ -202,10 +202,6 @@ def main():
         elif hp_key in ("hidden_dim", "dropout"):
             cfg["model"][hp_key] = hp_val
 
-    # k-hop degree is graph-fixed — compute once before the run loop
-    khop_k        = plot_cfg.get("khop_k", 2)
-    khop_deg_test = get_khop_degree(data, k=khop_k)[data.test_mask].cpu()
-
     # Neighborhood purity is graph-fixed — compute once per k value
     purity_k_max = plot_cfg.get("purity_k_max", 4)
     purity_by_k  = {
@@ -223,8 +219,7 @@ def main():
     )
 
     val_accs, test_accs, train_accs = [], [], []
-    deg_acc_results  = []
-    khop_acc_results = []
+    deg_acc_results = []
     run_labels = []
 
     for i in tqdm(range(1, num_runs + 1), desc="Runs"):
@@ -242,9 +237,6 @@ def main():
 
         deg_acc_results.append(
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
-        )
-        khop_acc_results.append(
-            get_accuracy_deg(khop_deg_test, pred[data.test_mask], data.y[data.test_mask])
         )
         run_labels.append(run_name)
 
@@ -278,15 +270,6 @@ def main():
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
             run_labels=run_labels,
-        )
-
-    if plot_cfg.get("acc_vs_khop_degree", False):
-        plot_acc_vs_khop_degree(
-            khop_acc_results,
-            cfg,
-            k=khop_k,
-            save_dir=exec_dir if plot_cfg.get("save", True) else None,
-            show=plot_cfg.get("show", False),
         )
 
     if plot_cfg.get("acc_vs_degree_by_layers", False):

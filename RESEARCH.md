@@ -1,6 +1,6 @@
 # Degree Bias in Graph Neural Networks — Research Documentation
 
-> Last updated: 2026-03-17
+> Last updated: 2026-03-19
 
 ---
 
@@ -138,13 +138,7 @@ For each unique test-node degree, the classification accuracy is computed per ru
 
 **Why:** The primary metric for characterising degree bias. The general trend — whether accuracy increases, decreases, or is flat with degree — establishes the baseline. Deviations from this trend at specific degree values (nodes that are anomalously worse or better than their degree group) are the focal point: they indicate that degree alone does not determine performance and that other structural or model properties are at play.
 
-### 4.2 k-hop degree (`acc_vs_khop_degree`)
-
-The k-hop degree of a node is the number of distinct nodes reachable within at most k hops (k = `khop_k`, default 2). This equals the size of the node's receptive field for a k-layer GNN.
-
-**Why:** 1-hop degree measures direct connectivity, but a GNN's actual receptive field is its k-hop neighbourhood. Two nodes with the same 1-hop degree can have very different 2-hop degrees (and thus very different amounts of aggregated information). Studying accuracy vs. k-hop degree separates structural richness from raw connectivity.
-
-### 4.3 Distance to training nodes (`acc_vs_distance`)
+### 4.2 Distance to training nodes (`acc_vs_distance`)
 
 Two hop-distances per test node:
 
@@ -155,7 +149,7 @@ Grouped by test-node degree and plotted as median + IQR boxplots.
 
 **Why:** A GNN can only propagate information from labelled nodes through edges. A test node that is 4 hops from the nearest same-class training node receives heavily diluted and potentially corrupted label signal. This metric links structural distance to training data with the degree of the test node.
 
-### 4.4 Average Shortest Path Length (SPL) (`spl_vs_degree`)
+### 4.3 Average Shortest Path Length (SPL) (`spl_vs_degree`)
 
 Two variants:
 
@@ -166,7 +160,7 @@ Computed for all test nodes and plotted degree-wise as boxplots.
 
 **Why:** Distance to the nearest training node is a binary threshold. Average SPL gives a richer picture — a test node might have one nearby training node but be far from all others, meaning it receives strong signal from only a tiny fraction of the training set. If high-degree nodes also tend to have higher average SPL to same-class training nodes, that is a compounding disadvantage.
 
-### 4.5 Labelling ratio (`labelling_ratio`)
+### 4.4 Labelling ratio (`labelling_ratio`)
 
 A binary indicator per test node: does it have at least one direct (1-hop) training node as a neighbour?
 
@@ -174,7 +168,7 @@ Plotted both as a standalone degree-wise line and overlaid with accuracy (twin-a
 
 **Why:** A test node with a labelled immediate neighbour receives direct, un-diluted label signal in layer 1 of the GNN. Nodes without any labelled neighbour must rely entirely on indirect signal propagated through non-training intermediaries. The labelling ratio captures this critical first-hop availability.
 
-### 4.6 Neighbourhood purity (`purity_vs_degree`)
+### 4.5 Neighbourhood purity (`purity_vs_degree`)
 
 For a node v at expansion radius k:
 
@@ -188,7 +182,7 @@ Computed for **all nodes** (not just test nodes) for k = 1 to `purity_k_max` (de
 
 **Delta purity** (`plot_purity_delta_by_degree`): plots `purity(k_max) - purity(k_min)` per degree group. A negative delta means that expanding the neighbourhood reduces class homogeneity — the signal gets noisier as more layers are added. This is expected for high-degree nodes in a heterophilic portion of the graph.
 
-### 4.7 Influence scores (`influence_analysis`)
+### 4.6 Influence scores (`influence_analysis`)
 
 For a selected test node x (chosen by degree from `influence_degrees` in config), the exact influence distribution is computed:
 
@@ -201,7 +195,7 @@ This is computed via an exact Jacobian (`torch.autograd.functional.jacobian`). T
 
 **Why:** Accuracy and structural metrics describe *what* happens to a node but not *why* the model fails. The influence distribution directly asks: which input nodes is the trained model actually using to form its prediction for node x? If a misclassified high-degree node receives near-zero influence from its same-class training neighbours and high influence from diff-class neighbours, that is causal evidence of the aggregation mechanism failing for that node.
 
-### 4.8 Training-neighbor degree distribution (`train_neighbor_degree`)
+### 4.7 Training-neighbor degree distribution (`train_neighbor_degree`)
 
 For each test node, finds all training nodes in its k-hop receptive field and records the **mean degree** of same-class vs diff-class training neighbors. Reports per-test-node:
 
@@ -233,15 +227,7 @@ The "degree advantage" is defined as `same_mean_deg − diff_mean_deg`.
 
 ---
 
-### 5.3 `acc_vs_khop_degree`
-
-**What:** Same format as `acc_vs_degree` but grouped by 2-hop degree instead of 1-hop degree.
-
-**Why:** The k-hop degree is the actual size of the GNN's receptive field. **The idea behind behind this is to evaluate how the model performs on nodes whose receptive fields has been increase by k+1, i.e, from original from 1-hop to 2-hop in this case.**  A node with 1-hop degree 3 but 2-hop degree 300 is in a densely connected region and behaves differently to a node with 1-hop degree 3 and 2-hop degree 5. This separates "locally sparse, globally dense" nodes from "locally sparse, globally sparse" ones.
-
----
-
-### 5.4 `acc_vs_degree_by_layers`
+### 5.3 `acc_vs_degree_by_layers`
 
 **What:** For each (model, number of layers) combination, the mean accuracy per degree group is shown as one line. A secondary "trend" plot shows the slope of accuracy vs. layer count per degree group.
 
@@ -249,7 +235,7 @@ The "degree advantage" is defined as `same_mean_deg − diff_mean_deg`.
 
 ---
 
-### 5.5 `spl_vs_degree` (two variants)
+### 5.4 `spl_vs_degree` (two variants)
 
 **What:** Boxplots of average SPL per degree group. Produced once for SPL to all training nodes, once for SPL to same-class training nodes only.
 
@@ -261,7 +247,7 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 
 ---
 
-### 5.6 `labelling_ratio_vs_degree` and `acc_and_labelling_ratio_vs_degree`
+### 5.5 `labelling_ratio_vs_degree` and `acc_and_labelling_ratio_vs_degree`
 
 **What:** (1) Fraction of test nodes per degree group that have at least one direct training neighbour. (2) Median accuracy (blue) and labelling ratio (orange) on the same plot with a twin y-axis.
 
@@ -269,7 +255,7 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 
 ---
 
-### 5.7 `purity_vs_degree` and `purity_delta_by_degree`
+### 5.6 `purity_vs_degree` and `purity_delta_by_degree`
 
 **What:** (1) Mean purity per degree group for each k value (1 to `purity_k_max`). (2) Delta purity = `purity(k_max) - purity(k_1)` per degree group, summarising how purity degrades as the neighbourhood expands.
 
@@ -277,7 +263,7 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 
 ---
 
-### 5.8 `influence_analysis` (aggregate bar plot)
+### 5.7 `influence_analysis` (aggregate bar plot)
 
 **What:** For the selected test node(s), two side-by-side bars show the total normalised influence attributable to same-class training nodes (blue) vs diff-class training nodes (orange) within the k-hop receptive field. A secondary line shows the fraction of influence from diff-class nodes. Numeric labels are shown above each bar so small values remain readable.
 
@@ -285,7 +271,7 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 
 ---
 
-### 5.9 `influence_per_neighbor` (per-node bar chart)
+### 5.8 `influence_per_neighbor` (per-node bar chart)
 
 **What:** One figure per selected node. Each bar is one training node in the k-hop receptive field, coloured blue (same-class) or orange (diff-class). Sorted left-to-right by descending influence score. X-axis labels are node indices.
 
@@ -293,7 +279,7 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 
 ---
 
-### 5.10 `train_neighbor_degree` (two-panel degree comparison)
+### 5.9 `train_neighbor_degree` (two-panel degree comparison)
 
 **What:** Two stacked panels per run.
 
