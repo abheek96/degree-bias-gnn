@@ -394,7 +394,140 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
         _save(fig, _subdir(save_dir, "acc_vs_distance"), f"{prefix}_combined_vs_degree_{label}.png", show)
 
 
-# ── accuracy vs cumulative k-hop degree ────────────────────────────────────────
+# ── neighbourhood cardinality vs degree ────────────────────────────────────────
+
+def plot_neighborhood_cardinality_vs_degree(
+    test_deg, cardinality_by_k, deg_acc_results, cfg,
+    save_dir=None, show=False,
+):
+    """Neighbourhood cardinality (k=1 and k=2) vs. 1-hop degree, with accuracy overlay.
+
+    Left y-axis  — mean neighbourhood cardinality ± 1 std for k=1 (blue) and
+                   k=2 (orange), grouped by 1-hop degree of test nodes.
+    Right y-axis — median classification accuracy across runs (green), with
+                   IQR shading.
+
+    Parameters
+    ----------
+    test_deg         : LongTensor [N_test]  — 1-hop degrees of test nodes.
+    cardinality_by_k : dict {k: LongTensor [N_test]} — k-hop neighbourhood
+                       size for each test node at each k value.
+    deg_acc_results  : list[dict]  — output of get_accuracy_deg per run.
+    cfg              : dict
+    save_dir         : str or None
+    show             : bool
+    """
+    deg = test_deg.cpu()
+    all_degrees = sorted(deg.unique().tolist())
+    pos = list(range(len(all_degrees)))
+    n_test = len(deg)
+
+    # ── cardinality stats per degree group ────────────────────────────────────
+    card_stats = {}  # k -> {means, stds}
+    for k, card_tensor in cardinality_by_k.items():
+        card = card_tensor.cpu().float()
+        means, stds = [], []
+        for d in all_degrees:
+            vals = card[deg == d]
+            means.append(float(vals.mean()))
+            stds.append(float(vals.std()) if len(vals) > 1 else 0.0)
+        card_stats[k] = {"means": np.array(means), "stds": np.array(stds)}
+
+    # ── accuracy stats per degree group ──────────────────────────────────────
+    _, deg_data = _collect(deg_acc_results)
+    n_runs = len(deg_acc_results)
+    acc_median, acc_q1, acc_q3 = [], [], []
+    for d in all_degrees:
+        if d in deg_data:
+            run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
+        else:
+            run_means = []
+        if run_means:
+            acc_median.append(float(np.median(run_means)))
+            acc_q1.append(float(np.percentile(run_means, 25)))
+            acc_q3.append(float(np.percentile(run_means, 75)))
+        else:
+            acc_median.append(float("nan"))
+            acc_q1.append(float("nan"))
+            acc_q3.append(float("nan"))
+    acc_median = np.array(acc_median)
+    acc_q1     = np.array(acc_q1)
+    acc_q3     = np.array(acc_q3)
+
+    # ── counts for each degree group ─────────────────────────────────────────
+    counts = [(deg == d).sum().item() for d in all_degrees]
+
+    prefix   = _fname_prefix(cfg)
+    subtitle = _subtitle(cfg, n_test, len(all_degrees))
+
+    _CARD_COLORS = {1: "#2196F3", 2: "#FF5722"}   # blue, deep-orange
+    _ACC_COLOR   = "#388E3C"                        # dark green
+
+    fig, ax_card = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
+
+    # ── cardinality lines (left axis) ────────────────────────────────────────
+    k_values = sorted(cardinality_by_k.keys())
+    for k in k_values:
+        color = _CARD_COLORS.get(k, "#9C27B0")
+        m = card_stats[k]["means"]
+        s = card_stats[k]["stds"]
+        ax_card.plot(pos, m, color=color, linewidth=1.8,
+                     marker="o", markersize=4, zorder=3,
+                     label=f"{k}-hop cardinality (mean)")
+        ax_card.fill_between(pos, m - s, m + s,
+                             color=color, alpha=0.18, zorder=2,
+                             label=f"±1 std  (k={k})")
+
+    ax_card.set_ylabel("Neighbourhood cardinality  (# nodes)", fontsize=11)
+    ax_card.set_ylim(bottom=0)
+    ax_card.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax_card.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    # ── accuracy line (right axis) ────────────────────────────────────────────
+    ax_acc = ax_card.twinx()
+    ax_acc.plot(pos, acc_median, color=_ACC_COLOR, linewidth=1.8,
+                marker="s", markersize=4, zorder=4,
+                label=f"Accuracy (median, {n_runs} runs)")
+    ax_acc.fill_between(pos, acc_q1, acc_q3,
+                        color=_ACC_COLOR, alpha=0.15, zorder=3,
+                        label="Accuracy IQR")
+    ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
+    ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
+    ax_acc.set_ylim(-0.05, 1.10)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+
+    # ── node count annotations below x-axis ──────────────────────────────────
+    # light grey count text along x ticks
+    ax_card.tick_params(axis="x", labelsize=8)
+    for xi, (d, c) in enumerate(zip(all_degrees, counts)):
+        if xi % max(1, len(all_degrees) // 30) == 0:
+            ax_card.annotate(f"n={c}", xy=(xi, 0), xycoords=("data", "axes fraction"),
+                             xytext=(0, -22), textcoords="offset points",
+                             ha="center", va="top", fontsize=6, color="grey")
+
+    # ── combined legend ───────────────────────────────────────────────────────
+    handles_card = [
+        plt.Line2D([0], [0], color=_CARD_COLORS.get(k, "#9C27B0"), lw=2,
+                   marker="o", markersize=4, label=f"{k}-hop cardinality (mean ± 1 std)")
+        for k in k_values
+    ]
+    handles_acc = [
+        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
+    ]
+    ax_card.legend(handles=handles_card + handles_acc,
+                   loc="upper left", fontsize=8, framealpha=0.88)
+
+    ax_card.set_title(
+        f"Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree\n{subtitle}",
+        fontsize=11,
+    )
+    _degree_axis(ax_card, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "neighborhood_cardinality"),
+          f"{prefix}_neighborhood_cardinality_vs_degree.png", show)
+
 
 # ── accuracy vs. 1-hop degree: grouped boxplots by num_layers ──────────────────
 

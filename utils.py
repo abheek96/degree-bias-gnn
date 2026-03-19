@@ -247,6 +247,42 @@ def get_distance_deg(
     return result
 
 
+def get_khop_cardinality(data, k: int) -> torch.Tensor:
+    """Number of distinct nodes within k hops of each node (excluding self).
+
+    For k=1 this equals the standard 1-hop degree.  Used to study how
+    neighbourhood size grows with k and how that relates to degree bias.
+
+    Uses boolean adjacency-matrix powers; feasible for Cora-scale graphs
+    (~2,700 nodes).  Avoid on large graphs.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data
+    k    : neighbourhood radius in hops
+
+    Returns
+    -------
+    cardinality : LongTensor [num_nodes]
+    """
+    from torch_geometric.utils import to_dense_adj
+
+    N   = data.num_nodes
+    A   = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0).bool()
+    A.fill_diagonal_(False)
+
+    reach = A.clone()
+    power = A.float()
+    A_f   = A.float()
+
+    for _ in range(k - 1):
+        power = power @ A_f
+        reach = reach | power.bool()
+
+    reach.fill_diagonal_(False)
+    return reach.sum(dim=1).long()
+
+
 def get_avg_spl_to_train(data) -> torch.Tensor:
     """Average shortest path length from every node to all training nodes.
 

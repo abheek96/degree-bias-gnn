@@ -14,9 +14,9 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats
+from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree
 from influence import compute_influence_analysis
-from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats
+from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality
 from train import train
 from test import evaluate
 
@@ -218,6 +218,13 @@ def main():
         if plot_cfg.get("train_neighbor_degree", False) else None
     )
 
+    # Neighbourhood cardinality (k=1, k=2) is graph-fixed — compute once
+    cardinality_by_k = (
+        {k: get_khop_cardinality(data, k)[data.test_mask].cpu()
+         for k in [1, 2]}
+        if plot_cfg.get("neighborhood_cardinality", False) else {}
+    )
+
     val_accs, test_accs, train_accs = [], [], []
     deg_acc_results = []
     run_labels = []
@@ -258,6 +265,13 @@ def main():
         plot_acc_vs_degree(
             deg_acc_results,
             cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+
+    if plot_cfg.get("neighborhood_cardinality", False) and cardinality_by_k:
+        plot_neighborhood_cardinality_vs_degree(
+            test_deg, cardinality_by_k, deg_acc_results, cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )

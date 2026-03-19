@@ -27,6 +27,7 @@ train:
 
 plot:
   acc_vs_degree: true
+  neighborhood_cardinality: true
   acc_vs_distance: true
   acc_vs_degree_by_layers: true
   layer_values: [1, 2, 3, 4, 5]
