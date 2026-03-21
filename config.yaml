@@ -22,8 +22,8 @@ model:
 train:
   lr: 0.001
   weight_decay: 5e-4
-  epochs: 200
-  patience: 50
+  epochs: 10000      # safety cap; loop stops early when train acc = 100%
+  patience: 0        # disabled — stopping criterion is train accuracy, not val
 
 plot:
   acc_vs_degree: true
