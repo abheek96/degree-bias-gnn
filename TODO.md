@@ -74,4 +74,32 @@ Open investigation tasks that have not yet been implemented. Each item includes 
 
 ---
 
-*Last updated: 2026-03-18*
+## 5. Information-to-noise ratio across homophilous and heterophilous graphs
+
+**Question:** Can we define a per-node and per-graph information-to-noise ratio (INR) that quantifies how much useful (same-class) signal a GNN receives relative to the misleading (diff-class) signal during aggregation? Does this ratio predict classification accuracy better than any single structural metric, and does it generalise across graphs with fundamentally different homophily levels?
+
+**Motivation:** The current metrics (purity, SPL, labelling ratio, cardinality) each capture a different facet of the signal-quality problem, but none combines them into a single interpretable quantity. An INR would:
+- Unify the structural narrative: a node with low INR receives more noise than signal regardless of which specific structural factor dominates.
+- Be meaningful on heterophilous graphs (e.g. Chameleon, Squirrel) where high purity is not expected — the INR framing adapts naturally because "information" becomes relative to the graph's own homophily baseline rather than an absolute same-class majority.
+- Expose degree-bias as a special case: high-degree nodes in homophilous graphs often have lower INR despite having more connections, because the absolute diff-class count grows faster than same-class count.
+
+**Approach — per-node INR:**
+- Define same-class signal strength: weighted count of same-class training nodes in the k-hop receptive field, where weights follow GCN normalisation (`1/sqrt(deg_u * deg_v)` per edge, compounded over hops).
+- Define diff-class noise strength: same quantity for diff-class training nodes.
+- INR(v) = same_signal(v) / (diff_signal(v) + ε).
+- Plot INR vs degree, INR vs accuracy; check whether INR > 1 (same-class majority in weighted sense) reliably predicts correct classification.
+
+**Approach — graph-level INR and homophily sweep:**
+- Compute mean and distribution of per-node INR for each graph.
+- Datasets to include: Cora, CiteSeer, PubMed (homophilous); Chameleon, Squirrel, Actor (heterophilous); ogbn-arxiv (large-scale homophilous).
+- For heterophilous graphs, verify that the INR framing still identifies high-accuracy nodes: on heterophilous graphs, accuracy may correlate with low INR (the model learns to exploit diff-class signal) or with a different threshold than 1.0.
+- Plot graph-level homophily (edge homophily ratio) vs mean INR vs mean test accuracy: does INR mediate the relationship between homophily and GNN performance?
+
+**Connections to existing metrics:**
+- INR ≈ purity when all training nodes are equidistant (1 hop) and have equal degree.
+- INR diverges from purity when degree normalisation is significant (high-degree training nodes contribute less per edge).
+- INR can be seen as a continuous generalisation of the binary same_count > diff_count criterion from TODO §1.
+
+---
+
+*Last updated: 2026-03-21*
