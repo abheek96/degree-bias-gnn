@@ -306,7 +306,7 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     run_labels : list[str] or None
         Unused; kept for backward compatibility.
     """
-    num_layers = cfg["model"]["num_layers"]
+    num_layers = cfg["model"]["num_layers"] - 1   # GCNConv layers only; last layer is nn.Linear
     n_runs = len(run_results)
     all_degrees, deg_data = _collect(run_results)
 
