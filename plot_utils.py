@@ -1041,24 +1041,53 @@ def plot_spl_combined_vs_degree(
     _save(fig1, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_combined_vs_degree.png", show)
 
-    # ── Figure 2: SPL boxplots + accuracy (top) + Δ purity (bottom) ──────────
+    # ── Figure 2: all-train SPL + accuracy + Δ purity (single panel) ─────────
     has_acc    = deg_acc_results is not None
     has_purity = (purity_by_k is not None and all_deg is not None
                   and len(purity_by_k) >= 2)
     if not (has_acc or has_purity):
         return
 
-    fig2, (ax_top2, ax_bot2) = plt.subplots(
-        2, 1, figsize=(fig_w, 7), sharex=True,
-        gridspec_kw={"height_ratios": [3, 1.4]},
-    )
-    _draw_boxplots(ax_top2)
-    ax_top2.set_title(
-        f"Avg. SPL  +  Accuracy & Δ Purity vs. Degree\n{subtitle}", fontsize=11,
-    )
+    # Pre-compute Δ purity so the right-axis range can accommodate it
+    dp_means = None
+    k_lo = k_hi = None
+    if has_purity:
+        full_deg  = all_deg.cpu() if hasattr(all_deg, "cpu") else torch.as_tensor(all_deg)
+        k_keys    = sorted(purity_by_k.keys())
+        k_lo, k_hi = k_keys[0], k_keys[-1]
+        delta_all = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
+        dp_means  = np.array([
+            float(delta_all[full_deg == d][~torch.isnan(delta_all[full_deg == d])].mean())
+            if (full_deg == d).any() else float("nan")
+            for d in unique_degrees
+        ])
 
-    # Twin right axis — accuracy
-    ov_handles = []
+    fig2, ax2 = plt.subplots(figsize=(fig_w, 5))
+    ax2.set_title(f"Avg. SPL  +  Accuracy & Δ Purity vs. Degree\n{subtitle}", fontsize=11)
+
+    # All-train SPL boxplots only (centred, wider than the side-by-side variant)
+    bpa2 = ax2.boxplot(bp_all, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bpa2["boxes"]:
+        patch.set_facecolor(_SPL_ALL_COLOR); patch.set_alpha(0.65)
+    ax2.set_ylabel("Avg. SPL to any training node", fontsize=11)
+    ax2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax2.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+
+    # Right twin axis — accuracy and Δ purity share the same axis
+    # Set ylim so both [0,1] accuracy and (typically negative) Δ purity are visible
+    dp_min = float(np.nanmin(dp_means)) if dp_means is not None else 0.0
+    y_lo   = min(dp_min * 1.4, -0.05)
+    ax_ov2 = ax2.twinx()
+    ax_ov2.set_ylim(y_lo, 1.10)
+    ax_ov2.set_ylabel("Accuracy  /  Δ purity", fontsize=10)
+    ax_ov2.tick_params(axis="y", labelsize=8)
+    ax_ov2.yaxis.set_major_formatter(
+        ticker.FuncFormatter(lambda x, _: f"{x:+.2f}" if x < -0.001 else f"{x:.0%}"))
+
+    ov2_handles = [mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
+                                  label="Avg. SPL to any train node")]
+
     if has_acc:
         _, deg_data = _collect(deg_acc_results)
         n_runs = len(deg_acc_results)
@@ -1075,55 +1104,24 @@ def plot_spl_combined_vs_degree(
         acc_median = np.array(acc_median)
         acc_q1     = np.array(acc_q1)
         acc_q3     = np.array(acc_q3)
-        ax_ov = ax_top2.twinx()
-        ax_ov.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
-                   markersize=4, zorder=5)
-        ax_ov.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
-                           alpha=0.15, zorder=4)
-        ax_ov.set_ylim(-0.05, 1.10)
-        ax_ov.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-        ax_ov.set_ylabel("Classification accuracy", fontsize=10, color=_SPL_ACC_COLOR)
-        ax_ov.tick_params(axis="y", labelsize=8, colors=_SPL_ACC_COLOR)
-        ov_handles.append(plt.Line2D(
+        ax_ov2.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
+                    markersize=4, zorder=5)
+        ax_ov2.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
+                            alpha=0.15, zorder=4)
+        ov2_handles.append(plt.Line2D(
             [0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
             label=f"Accuracy  (median ± IQR, {n_runs} runs)"))
 
-    ax_top2.legend(handles=spl_handles + ov_handles,
-                   fontsize=9, loc="upper left", framealpha=0.9)
-    plt.setp(ax_top2.get_xticklabels(), visible=True)
+    if dp_means is not None:
+        ax_ov2.plot(pos, dp_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
+                    markersize=4, zorder=5)
+        ax_ov2.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2)
+        ov2_handles.append(plt.Line2D(
+            [0], [0], color=_SPL_PUR_COLOR, lw=2, marker="o", markersize=4,
+            label=f"Δ purity  (k={k_hi}−k={k_lo})  mean"))
 
-    # Bottom panel — Δ purity mean per degree group
-    if has_purity:
-        full_deg  = all_deg.cpu() if hasattr(all_deg, "cpu") else torch.as_tensor(all_deg)
-        k_keys    = sorted(purity_by_k.keys())
-        k_lo, k_hi = k_keys[0], k_keys[-1]
-        delta_all = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
-        dp_means  = np.array([
-            float(delta_all[full_deg == d][~torch.isnan(delta_all[full_deg == d])].mean())
-            if (full_deg == d).any() else float("nan")
-            for d in unique_degrees
-        ])
-        ax_bot2.plot(pos, dp_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
-                     markersize=4, zorder=3)
-        ax_bot2.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2)
-        ax_bot2.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=10)
-        ax_bot2.yaxis.set_major_formatter(
-            ticker.FuncFormatter(lambda x, _: f"{x:+.2f}"))
-        ax_bot2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-        ax_bot2.legend(
-            handles=[plt.Line2D([0], [0], color=_SPL_PUR_COLOR, lw=2, marker="o",
-                                markersize=4,
-                                label=f"Δ purity  (k={k_hi}−k={k_lo})  mean")],
-            loc="upper right", fontsize=7, framealpha=0.85,
-        )
-    else:
-        ax_bot2.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
-        ax_bot2.set_ylabel("# test nodes", fontsize=9, color="grey")
-        ax_bot2.tick_params(axis="y", labelsize=7, colors="grey")
-        ax_bot2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-
-    _x_axis(ax_bot2)
-
+    ax2.legend(handles=ov2_handles, fontsize=9, loc="upper left", framealpha=0.9)
+    _x_axis(ax2)
     fig2.tight_layout()
     _save(fig2, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_combined_with_overlays_vs_degree.png", show)
