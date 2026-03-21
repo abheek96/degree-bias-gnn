@@ -337,6 +337,7 @@ def main():
             deg_acc_results=deg_acc_results,
             purity_by_k=purity_by_k if len(purity_by_k) >= 1 else None,
             all_deg=all_deg,
+            has_labeled_neighbor=has_labeled_neighbor,
             save_dir=save_dir, show=plot_cfg.get("show", False),
         )
 

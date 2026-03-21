@@ -943,6 +943,7 @@ def plot_spl_vs_degree(test_deg, avg_spl, cfg, save_dir=None, show=False,
 def plot_spl_combined_vs_degree(
     test_deg, avg_spl, avg_spl_same_class, cfg,
     deg_acc_results=None, purity_by_k=None, all_deg=None,
+    has_labeled_neighbor=None,
     save_dir=None, show=False,
 ):
     """Two combined SPL figures with side-by-side boxplots per degree group.
@@ -952,22 +953,27 @@ def plot_spl_combined_vs_degree(
         same-class training nodes only (red), per degree group.
         Bottom panel: node count per degree.
 
-    Figure 2 — with overlays (when deg_acc_results, purity_by_k, and all_deg
-        are provided):
-        Same side-by-side boxplots, plus accuracy (median ± IQR, green) and
-        k=1 neighbourhood purity mean (purple) on a twin right axis (0–1).
+    Figure 2 — with overlays:
+        Top panel  — all-train SPL boxplots (left axis) + accuracy median ± IQR
+                     (green, right axis) + labelling ratio per degree (orange,
+                     right axis).  Both overlay signals share the right axis
+                     (0–1 range, percent-formatted).
+        Bottom panel — Δ purity mean per degree group (purple) with a zero
+                     reference line.
 
     Parameters
     ----------
-    test_deg           : 1-D LongTensor — degrees of test nodes.
-    avg_spl            : 1-D FloatTensor — avg SPL to any training node.
-    avg_spl_same_class : 1-D FloatTensor — avg SPL to same-class training node.
-    cfg                : dict
-    deg_acc_results    : list[dict] — per-run output of get_accuracy_deg.
-    purity_by_k        : dict {k: FloatTensor[N_all]} — node purity for all nodes.
-    all_deg            : 1-D LongTensor — degrees of all graph nodes.
-    save_dir           : str or None
-    show               : bool
+    test_deg              : 1-D LongTensor — degrees of test nodes.
+    avg_spl               : 1-D FloatTensor — avg SPL to any training node.
+    avg_spl_same_class    : 1-D FloatTensor — avg SPL to same-class training node.
+    cfg                   : dict
+    deg_acc_results       : list[dict] — per-run output of get_accuracy_deg.
+    purity_by_k           : dict {k: FloatTensor[N_all]} — node purity for all nodes.
+    all_deg               : 1-D LongTensor — degrees of all graph nodes.
+    has_labeled_neighbor  : 1-D BoolTensor[num_test_nodes] — True if the test node
+                            has at least one training neighbour.
+    save_dir              : str or None
+    show                  : bool
     """
     deg     = test_deg.cpu()
     spl_all = avg_spl.cpu().numpy()
@@ -1041,14 +1047,15 @@ def plot_spl_combined_vs_degree(
     _save(fig1, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_combined_vs_degree.png", show)
 
-    # ── Figure 2: all-train SPL + accuracy + Δ purity (single panel) ─────────
+    # ── Figure 2: two-panel — SPL + accuracy + labelling ratio / Δ purity ──────
     has_acc    = deg_acc_results is not None
     has_purity = (purity_by_k is not None and all_deg is not None
                   and len(purity_by_k) >= 2)
-    if not (has_acc or has_purity):
+    has_lr     = has_labeled_neighbor is not None
+    if not (has_acc or has_purity or has_lr):
         return
 
-    # Pre-compute Δ purity so the right-axis range can accommodate it
+    # ── pre-compute Δ purity ──────────────────────────────────────────────────
     dp_means = None
     k_lo = k_hi = None
     if has_purity:
@@ -1062,48 +1069,67 @@ def plot_spl_combined_vs_degree(
             for d in unique_degrees
         ])
 
-    fig2, ax2 = plt.subplots(figsize=(fig_w, 5))
-    ax2.set_title(f"Avg. SPL  +  Accuracy & Δ Purity vs. Degree\n{subtitle}", fontsize=11)
-
-    # All-train SPL boxplots only (centred, wider than the side-by-side variant)
-    bpa2 = ax2.boxplot(bp_all, positions=pos, widths=0.55, **_BP_KWARGS)
-    for patch in bpa2["boxes"]:
-        patch.set_facecolor(_SPL_ALL_COLOR); patch.set_alpha(0.65)
-    ax2.set_ylabel("Avg. SPL to any training node", fontsize=11)
-    ax2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    ax2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax2.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
-
-    # Right twin axis — accuracy and Δ purity share the same axis
-    # Set ylim so both [0,1] accuracy and (typically negative) Δ purity are visible
-    dp_min = float(np.nanmin(dp_means)) if dp_means is not None else 0.0
-    y_lo   = min(dp_min * 1.4, -0.05)
-    ax_ov2 = ax2.twinx()
-    ax_ov2.set_ylim(y_lo, 1.10)
-    ax_ov2.set_ylabel("Accuracy  /  Δ purity", fontsize=10)
-    ax_ov2.tick_params(axis="y", labelsize=8)
-    ax_ov2.yaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda x, _: f"{x:+.2f}" if x < -0.001 else f"{x:.0%}"))
-
-    ov2_handles = [mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
-                                  label="Avg. SPL to any train node")]
-
+    # ── pre-compute accuracy ───────────────────────────────────────────────────
+    acc_median = acc_q1 = acc_q3 = n_runs = None
     if has_acc:
         _, deg_data = _collect(deg_acc_results)
         n_runs = len(deg_acc_results)
-        acc_median, acc_q1, acc_q3 = [], [], []
+        _med, _q1, _q3 = [], [], []
         for d in unique_degrees:
             means = [float(deg_data[d][r].mean()) for r in range(n_runs)
                      if len(deg_data[d][r]) > 0]
             if not means:
-                acc_median.append(np.nan); acc_q1.append(np.nan); acc_q3.append(np.nan)
+                _med.append(np.nan); _q1.append(np.nan); _q3.append(np.nan)
             else:
-                acc_median.append(float(np.median(means)))
-                acc_q1.append(float(np.percentile(means, 25)))
-                acc_q3.append(float(np.percentile(means, 75)))
-        acc_median = np.array(acc_median)
-        acc_q1     = np.array(acc_q1)
-        acc_q3     = np.array(acc_q3)
+                _med.append(float(np.median(means)))
+                _q1.append(float(np.percentile(means, 25)))
+                _q3.append(float(np.percentile(means, 75)))
+        acc_median = np.array(_med)
+        acc_q1     = np.array(_q1)
+        acc_q3     = np.array(_q3)
+
+    # ── pre-compute labelling ratio ───────────────────────────────────────────
+    ratio_vals = None
+    if has_lr:
+        hlr = has_labeled_neighbor.cpu()
+        ratio_vals = np.array([
+            float(hlr[deg == d].float().mean()) if (deg == d).any() else float("nan")
+            for d in unique_degrees
+        ])
+
+    # ── layout ────────────────────────────────────────────────────────────────
+    n_panels = 2 if dp_means is not None else 1
+    height_ratios = [3, 1.4] if n_panels == 2 else [1]
+    fig2, axes2 = plt.subplots(
+        n_panels, 1, figsize=(fig_w, 7 if n_panels == 2 else 5),
+        sharex=True, gridspec_kw={"height_ratios": height_ratios},
+    )
+    ax_top2 = axes2[0] if n_panels == 2 else axes2
+    ax_bot2 = axes2[1] if n_panels == 2 else None
+
+    ax_top2.set_title(
+        f"Avg. SPL  +  Accuracy & Labelling Ratio vs. Degree\n{subtitle}", fontsize=11)
+
+    # All-train SPL boxplots (centred, wider)
+    bpa2 = ax_top2.boxplot(bp_all, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bpa2["boxes"]:
+        patch.set_facecolor(_SPL_ALL_COLOR); patch.set_alpha(0.65)
+    ax_top2.set_ylabel("Avg. SPL to any training node", fontsize=11)
+    ax_top2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_top2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top2.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+
+    # Right twin axis — accuracy + labelling ratio (both 0–1 range)
+    ax_ov2 = ax_top2.twinx()
+    ax_ov2.set_ylim(-0.05, 1.10)
+    ax_ov2.set_ylabel("Accuracy  /  Labelling ratio", fontsize=10)
+    ax_ov2.tick_params(axis="y", labelsize=8)
+    ax_ov2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:.0%}"))
+
+    ov2_handles = [mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
+                                  label="Avg. SPL to any train node")]
+
+    if acc_median is not None:
         ax_ov2.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
                     markersize=4, zorder=5)
         ax_ov2.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
@@ -1112,16 +1138,30 @@ def plot_spl_combined_vs_degree(
             [0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
             label=f"Accuracy  (median ± IQR, {n_runs} runs)"))
 
-    if dp_means is not None:
-        ax_ov2.plot(pos, dp_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
-                    markersize=4, zorder=5)
-        ax_ov2.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2)
+    _LR_COLOR = "#E65100"
+    if ratio_vals is not None:
+        ax_ov2.plot(pos, ratio_vals, color=_LR_COLOR, lw=1.6, marker="^",
+                    markersize=4, ls="--", zorder=5)
         ov2_handles.append(plt.Line2D(
-            [0], [0], color=_SPL_PUR_COLOR, lw=2, marker="o", markersize=4,
-            label=f"Δ purity  (k={k_hi}−k={k_lo})  mean"))
+            [0], [0], color=_LR_COLOR, lw=2, marker="^", markersize=4, ls="--",
+            label="Labelling ratio"))
 
-    ax2.legend(handles=ov2_handles, fontsize=9, loc="upper left", framealpha=0.9)
-    _x_axis(ax2)
+    ax_top2.legend(handles=ov2_handles, fontsize=9, loc="upper left", framealpha=0.9)
+
+    # Bottom panel — Δ purity
+    if ax_bot2 is not None and dp_means is not None:
+        ax_bot2.plot(pos, dp_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
+                     markersize=4, zorder=5)
+        ax_bot2.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2)
+        ax_bot2.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=9,
+                           color=_SPL_PUR_COLOR)
+        ax_bot2.tick_params(axis="y", labelsize=8, colors=_SPL_PUR_COLOR)
+        ax_bot2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+        _x_axis(ax_bot2)
+    else:
+        # single-panel: x-axis labels on the only panel
+        _x_axis(ax_top2)
+
     fig2.tight_layout()
     _save(fig2, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_combined_with_overlays_vs_degree.png", show)
