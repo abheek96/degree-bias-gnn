@@ -134,12 +134,14 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
              norm_same, norm_diff)
     for t in same_class:
         raw = float(I_x[t].item())
-        log.info("    same_train node %-5d  raw=%.4e  norm=%.4f",
-                 t, raw, raw / total_inf if total_inf > 0 else 0.0)
+        log.info("    same_train node %-5d  deg=%-4d  raw=%.4e  norm=%.4f",
+                 t, int(all_deg[t].item()), raw,
+                 raw / total_inf if total_inf > 0 else 0.0)
     for t in diff_class:
         raw = float(I_x[t].item())
-        log.info("    diff_train node %-5d  raw=%.4e  norm=%.4f",
-                 t, raw, raw / total_inf if total_inf > 0 else 0.0)
+        log.info("    diff_train node %-5d  deg=%-4d  raw=%.4e  norm=%.4f",
+                 t, int(all_deg[t].item()), raw,
+                 raw / total_inf if total_inf > 0 else 0.0)
 
     for nb in neighbor_detail:
         nb["influence_norm"] = nb["influence"] / total_inf if total_inf > 0 else 0.0
