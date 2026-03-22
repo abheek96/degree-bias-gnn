@@ -379,10 +379,12 @@ def main():
 
     if plot_cfg.get("influence_analysis", False):
         target_degrees = plot_cfg.get("influence_degrees") or []
+        target_nodes   = plot_cfg.get("influence_nodes") or []
         influence_results = compute_influence_analysis(
             model, data, pred,
             k_hops=k_hops,
             target_degrees=target_degrees,
+            target_nodes=target_nodes,
         )
         plot_influence_analysis(
             influence_results, cfg,
