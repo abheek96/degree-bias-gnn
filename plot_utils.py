@@ -2451,22 +2451,21 @@ def plot_class_accuracy_and_degree(
     cfg,
     save_dir=None, show=False,
 ):
-    """Class-wise accuracy and degree distributions — two figures.
+    """Class-wise accuracy and degree distributions — two single-panel figures.
 
-    Figure 1 — two-panel (shared x = class label):
-        Top    — bar chart of classification accuracy per class
-                 (median ± IQR across runs).  Test-node count is annotated
-                 above each bar.
-        Bottom — boxplots of test node degree per class.
+    Figure 1 — single panel, twin axes:
+        Left  — boxplots of test node degree per class (blue).
+        Right — classification accuracy line (median ± IQR shading, green).
+                n_test annotated below each class tick.
 
-    Figure 2 — two-panel (shared x = class label):
-        Top    — boxplots of training node degree per class.
-                 Per-class training-node count is annotated above each box.
-        Bottom — bar chart of training node count per class.
+    Figure 2 — single panel, twin axes:
+        Left  — boxplots of training node degree per class (red).
+        Right — classification accuracy line (median ± IQR shading, green).
+                n_train annotated below each class tick.
 
-    The two figures share the same x-axis labelling so they can be read side
-    by side to diagnose class-wise performance disparity and its relationship
-    to test vs. training node degree.
+    Both figures share the same accuracy overlay so the reader can compare
+    whether test-node or training-node degree structure better explains the
+    class-wise performance disparity.
 
     Parameters
     ----------
@@ -2485,11 +2484,11 @@ def plot_class_accuracy_and_degree(
     train_labels_np = train_labels.cpu().numpy()
 
     all_classes = sorted({int(c) for c in test_labels_np} | {int(c) for c in train_labels_np})
-    n_cls   = len(all_classes)
-    pos     = np.arange(n_cls)
-    n_runs  = len(class_acc_results)
-    prefix  = _fname_prefix(cfg)
-    n_test  = int(len(test_deg_np))
+    n_cls    = len(all_classes)
+    pos      = np.arange(n_cls)
+    n_runs   = len(class_acc_results)
+    prefix   = _fname_prefix(cfg)
+    n_test   = int(len(test_deg_np))
     subtitle = _subtitle(cfg, n_test, n_cls)
 
     # ── per-class accuracy stats across runs ──────────────────────────────────
@@ -2513,82 +2512,86 @@ def plot_class_accuracy_and_degree(
     train_deg_by_cls = [train_deg_np[train_labels_np == c] for c in all_classes]
     n_train_per_cls  = [int((train_labels_np == c).sum())  for c in all_classes]
 
-    cls_labels = [f"Class {c}" for c in all_classes]
+    fig_w    = max(8, n_cls * 1.4)
 
-    # ── Figure 1: accuracy (top) + test degree (bottom) ──────────────────────
-    fig_w = max(8, n_cls * 1.4)
-    fig1, (ax_acc, ax_tdeg) = plt.subplots(
-        2, 1, figsize=(fig_w, 8), sharex=True,
-        gridspec_kw={"height_ratios": [2, 2]},
-    )
-    fig1.suptitle(f"Class-wise Accuracy & Test Node Degree\n{subtitle}", fontsize=11)
+    def _cls_xaxis(ax, counts, label=""):
+        """Set class tick labels with per-class node count below."""
+        tick_labels = [f"Class {c}\n(n={n})" for c, n in zip(all_classes, counts)]
+        ax.set_xticks(pos)
+        ax.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=9)
+        ax.set_xlabel(label, fontsize=11)
 
-    # accuracy bars
-    yerr_lo = acc_median - acc_q1
-    yerr_hi = acc_q3 - acc_median
-    bars = ax_acc.bar(pos, acc_median, width=0.6, color=_ACC_COLOR, alpha=0.80, zorder=3)
-    ax_acc.errorbar(pos, acc_median, yerr=[yerr_lo, yerr_hi],
-                    fmt="none", color="black", capsize=4, lw=1.2, zorder=4)
-    ax_acc.set_ylabel("Classification accuracy", fontsize=11)
-    ax_acc.set_ylim(0, 1.18)
-    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_acc.axhline(float(np.nanmean(acc_median)), color="dimgrey",
-                   lw=1.0, ls="--", zorder=2, label=f"Mean accuracy  ({np.nanmean(acc_median):.1%})")
-    ax_acc.legend(fontsize=8, loc="lower right", framealpha=0.88)
-    # annotate n_test above each bar
-    for i, (bar, n) in enumerate(zip(bars, n_test_per_cls)):
-        ax_acc.text(bar.get_x() + bar.get_width() / 2,
-                    (acc_q3[i] if np.isfinite(acc_q3[i]) else acc_median[i]) + 0.03,
-                    f"n={n}", ha="center", va="bottom", fontsize=7, color="dimgrey")
+    def _acc_overlay(ax_deg):
+        """Add accuracy line + IQR shading on a twin right axis."""
+        ax_ov = ax_deg.twinx()
+        ax_ov.plot(pos, acc_median, color=_ACC_COLOR, lw=2.0,
+                   marker="s", markersize=5, zorder=5,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)")
+        ax_ov.fill_between(pos, acc_q1, acc_q3,
+                           color=_ACC_COLOR, alpha=0.18, zorder=4)
+        ax_ov.axhline(float(np.nanmean(acc_median)), color="dimgrey",
+                      lw=1.0, ls="--", zorder=3,
+                      label=f"Mean  ({np.nanmean(acc_median):.1%})")
+        ax_ov.set_ylim(-0.05, 1.15)
+        ax_ov.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
+        ax_ov.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
+        ax_ov.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        return ax_ov
 
-    # test node degree boxplots
-    bp_t = ax_tdeg.boxplot(test_deg_by_cls, positions=pos, widths=0.55, **_BP_KWARGS)
-    for patch in bp_t["boxes"]:
+    # ── Figure 1: test degree boxplots + accuracy overlay ────────────────────
+    fig1, ax1 = plt.subplots(figsize=(fig_w, 5))
+    ax1.set_title(f"Class-wise Test Node Degree & Accuracy\n{subtitle}", fontsize=11)
+
+    bp1 = ax1.boxplot(test_deg_by_cls, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp1["boxes"]:
         patch.set_facecolor(_CLS_TEST_COLOR)
         patch.set_alpha(0.65)
-    ax_tdeg.set_ylabel("Test node degree", fontsize=11)
-    ax_tdeg.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    ax_tdeg.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_tdeg.set_xticks(pos)
-    ax_tdeg.set_xticklabels(cls_labels, rotation=30, ha="right", fontsize=9)
-    ax_tdeg.set_xlabel("Class", fontsize=11)
+    ax1.set_ylabel("Test node degree", fontsize=11)
+    ax1.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax1.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax1.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
+
+    ax_ov1 = _acc_overlay(ax1)
+    _cls_xaxis(ax1, n_test_per_cls)
+
+    handles = [
+        mpatches.Patch(color=_CLS_TEST_COLOR, alpha=0.65, label="Test node degree"),
+        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=5,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
+        plt.Line2D([0], [0], color="dimgrey", lw=1, ls="--",
+                   label=f"Mean accuracy  ({np.nanmean(acc_median):.1%})"),
+    ]
+    ax1.legend(handles=handles, fontsize=8, loc="upper left", framealpha=0.88)
 
     fig1.tight_layout()
     _save(fig1, _subdir(save_dir, "class_accuracy"),
           f"{prefix}_class_accuracy_and_test_degree.png", show)
 
-    # ── Figure 2: training degree (top) + train count bar (bottom) ───────────
-    fig2, (ax_trdeg, ax_cnt) = plt.subplots(
-        2, 1, figsize=(fig_w, 7), sharex=True,
-        gridspec_kw={"height_ratios": [3, 1]},
-    )
-    fig2.suptitle(f"Class-wise Training Node Degree Distribution\n{subtitle}", fontsize=11)
+    # ── Figure 2: training degree boxplots + accuracy overlay ────────────────
+    fig2, ax2 = plt.subplots(figsize=(fig_w, 5))
+    ax2.set_title(f"Class-wise Training Node Degree & Accuracy\n{subtitle}", fontsize=11)
 
-    bp_tr = ax_trdeg.boxplot(train_deg_by_cls, positions=pos, widths=0.55, **_BP_KWARGS)
-    for patch in bp_tr["boxes"]:
+    bp2 = ax2.boxplot(train_deg_by_cls, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp2["boxes"]:
         patch.set_facecolor(_CLS_TRAIN_COLOR)
         patch.set_alpha(0.65)
-    ax_trdeg.set_ylabel("Training node degree", fontsize=11)
-    ax_trdeg.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    ax_trdeg.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    # annotate n_train above each median line
-    medians_tr = [float(np.median(d)) if len(d) > 0 else float("nan")
-                  for d in train_deg_by_cls]
-    for i, (n, med) in enumerate(zip(n_train_per_cls, medians_tr)):
-        ax_trdeg.text(i, med, f" n={n}", ha="left", va="center",
-                      fontsize=7, color="dimgrey")
-    plt.setp(ax_trdeg.get_xticklabels(), visible=True)
+    ax2.set_ylabel("Training node degree", fontsize=11)
+    ax2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax2.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
 
-    # training node count bars
-    ax_cnt.bar(pos, n_train_per_cls, color=_CLS_TRAIN_COLOR, alpha=0.55, width=0.6)
-    ax_cnt.set_ylabel("# train nodes", fontsize=9, color=_CLS_TRAIN_COLOR)
-    ax_cnt.tick_params(axis="y", labelsize=7, colors=_CLS_TRAIN_COLOR)
-    ax_cnt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-    ax_cnt.set_xticks(pos)
-    ax_cnt.set_xticklabels(cls_labels, rotation=30, ha="right", fontsize=9)
-    ax_cnt.set_xlabel("Class", fontsize=11)
+    ax_ov2 = _acc_overlay(ax2)
+    _cls_xaxis(ax2, n_train_per_cls)
+
+    handles2 = [
+        mpatches.Patch(color=_CLS_TRAIN_COLOR, alpha=0.65, label="Training node degree"),
+        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=5,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
+        plt.Line2D([0], [0], color="dimgrey", lw=1, ls="--",
+                   label=f"Mean accuracy  ({np.nanmean(acc_median):.1%})"),
+    ]
+    ax2.legend(handles=handles2, fontsize=8, loc="upper left", framealpha=0.88)
 
     fig2.tight_layout()
     _save(fig2, _subdir(save_dir, "class_accuracy"),
-          f"{prefix}_class_train_degree_distribution.png", show)
+          f"{prefix}_class_accuracy_and_train_degree.png", show)
