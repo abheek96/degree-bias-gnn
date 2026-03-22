@@ -1679,11 +1679,13 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
             f"({cfg['dataset']['name']} / {cfg['model']['name']})",
             fontsize=9,
         )
-        ax.set_xlabel("k-hop neighbor (sorted by influence, descending)", fontsize=10)
+        ax.set_xlabel("k-hop neighbor node index  (deg = 1-hop degree)", fontsize=10)
         ax.set_ylabel("Normalised influence score\n(fraction of total training-node influence)", fontsize=9)
         ax.set_xticks(x)
-        ax.set_xticklabels([str(nb["node_idx"]) for nb in neighbors],
-                           rotation=90, fontsize=6)
+        ax.set_xticklabels(
+            [f"{nb['node_idx']}\n(deg {nb['degree']})" for nb in neighbors],
+            rotation=0, fontsize=6, ha="center",
+        )
         ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
         ax.set_xlim(-0.7, len(neighbors) - 0.3)
 

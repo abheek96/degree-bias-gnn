@@ -115,6 +115,7 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
             nb_type = "non_train"
         neighbor_detail.append({
             "node_idx":  nb,
+            "degree":    int(all_deg[nb].item()),
             "influence": float(I_x[nb].item()),
             "type":      nb_type,
         })
