@@ -10,8 +10,9 @@ def apply_split(data, split, dataset_cfg):
     """Apply or validate train/val/test masks.
 
     - public + use_cc=True : PyG's LargestConnectedComponents already filters
-      the masks in-place; this function just logs the surviving counts so the
-      impact of CC filtering on each split is visible.
+      the masks in-place; this function logs the surviving counts and then tops
+      up any class whose training count fell below num_train_per_class by
+      sampling additional free nodes from the connected component.
     - public + use_cc=False: no-op.
     - random (any use_cc)  : create masks from scratch using the active RNG
       state — call set_seed() before this to fix the split across all runs.
@@ -24,6 +25,52 @@ def apply_split(data, split, dataset_cfg):
                      data.train_mask.sum().item(),
                      data.val_mask.sum().item(),
                      data.test_mask.sum().item())
+
+            # Restore num_train_per_class balance if CC filtering dropped nodes
+            num_train_per_class = dataset_cfg.get("num_train_per_class", 20)
+            num_classes = int(data.y.max().item()) + 1
+            train_mask = data.train_mask.clone()
+            occupied   = data.train_mask | data.val_mask | data.test_mask
+            any_topped_up = False
+
+            for c in range(num_classes):
+                class_train = (train_mask & (data.y == c)).nonzero(as_tuple=False).view(-1)
+                have    = class_train.size(0)
+                deficit = num_train_per_class - have
+                if deficit <= 0:
+                    continue
+
+                # Free nodes: class c, inside the CC, not in any mask
+                class_all  = (data.y == c).nonzero(as_tuple=False).view(-1)
+                free       = class_all[~occupied[class_all]]
+
+                if free.size(0) == 0:
+                    log.warning(
+                        "Class %d: deficit=%d but no free nodes available — "
+                        "cannot restore balance", c, deficit)
+                    continue
+
+                if free.size(0) < deficit:
+                    log.warning(
+                        "Class %d: deficit=%d but only %d free nodes — "
+                        "partial top-up", c, deficit, free.size(0))
+                    deficit = free.size(0)
+
+                new_nodes = free[torch.randperm(free.size(0))[:deficit]]
+                train_mask[new_nodes] = True
+                occupied[new_nodes]   = True
+                any_topped_up = True
+                log.info("Class %d: topped up %d node(s) (was %d, now %d)",
+                         c, deficit, have, have + deficit)
+
+            if any_topped_up:
+                data = data.clone()
+                data.train_mask = train_mask
+                log.info("Public split after top-up: %d train  %d val  %d test",
+                         data.train_mask.sum().item(),
+                         data.val_mask.sum().item(),
+                         data.test_mask.sum().item())
+
         return data
 
     num_nodes = data.num_nodes
