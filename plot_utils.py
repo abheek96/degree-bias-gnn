@@ -191,8 +191,7 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
     """Plot test-node accuracy vs. node degree.
 
     Single run  — scatter (bubble size ∝ node count) with WLS trend and Δ subplot.
-    Multi-run   — one box per degree showing cross-seed variability, WLS trend,
-                  count bars, and Δ subplot.
+    Multi-run   — across-runs boxplot, PLUS one per-run scatter for each seed.
 
     Parameters
     ----------
@@ -210,17 +209,24 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
     subtitle    = _subtitle(cfg, n_test, len(all_degrees))
 
     if n_runs == 1:
-        _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show)
+        _plot_single(all_degrees, pos, deg_data, subtitle, prefix,
+                     save_dir, show, run_idx=0)
     else:
         _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show)
+        base_seed = cfg.get("seed", 42)
+        for r in range(n_runs):
+            seed = base_seed + r
+            _plot_single(all_degrees, pos, deg_data, subtitle, prefix,
+                         save_dir, show, run_idx=r, seed=seed)
 
 
 # ── single run: scatter + OLS trend + Δ subplot ────────────────────────────────
 
-def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
-    counts   = [len(deg_data[d][0]) for d in all_degrees]
+def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show,
+                 run_idx=0, seed=None):
+    counts   = [len(deg_data[d][run_idx]) for d in all_degrees]
     mean_acc = [
-        float(deg_data[d][0].mean()) if counts[i] > 0 else np.nan
+        float(deg_data[d][run_idx].mean()) if counts[i] > 0 else np.nan
         for i, d in enumerate(all_degrees)
     ]
     n_test  = sum(counts)
@@ -230,9 +236,10 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
     max_count   = max(counts) or 1
     bubble_size = [max(30, 700 * c / max_count) for c in counts]
 
-    fig, ax_main = plt.subplots(
-        figsize=(_fig_w(len(all_degrees)), 5),
-    )
+    run_label = f"run {run_idx + 1}" + (f"  (seed {seed})" if seed is not None else "")
+    fname_tag = f"run{run_idx + 1:02d}" + (f"_seed{seed}" if seed is not None else "")
+
+    fig, ax_main = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
 
     # Scatter: one point per degree, size encodes node count
     ax_main.scatter(pos, mean_acc,
@@ -256,13 +263,14 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show):
                    title="Node count", title_fontsize=8)
     ax_main.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_main.set_title(
-        f"Accuracy vs. Node Degree  —  single run\n{subtitle}", fontsize=11
+        f"Accuracy vs. Node Degree  —  {run_label}\n{subtitle}", fontsize=11
     )
 
     _degree_axis(ax_main, pos, all_degrees)
 
     fig.tight_layout()
-    _save(fig, _subdir(save_dir, "acc_vs_degree"), f"{prefix}_acc_vs_degree_single_run.png", show)
+    _save(fig, _subdir(save_dir, "acc_vs_degree"),
+          f"{prefix}_acc_vs_degree_{fname_tag}.png", show)
 
 
 # ── multiple runs: seed-to-seed variability per degree ─────────────────────────
