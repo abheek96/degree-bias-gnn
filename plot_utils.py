@@ -1694,6 +1694,127 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
         _save(fig, subdir, fname, show)
 
 
+# Influence disparity plot colours
+_DISP_POS_COLOR = "#1976D2"   # blue  — same-class dominant
+_DISP_NEG_COLOR = "#E53935"   # red   — diff-class dominant
+_DISP_BOX_COLOR = "#546E7A"   # blue-grey — neutral boxplot fill
+
+
+def plot_influence_disparity_vs_degree(
+    disparity_results, cfg, save_dir=None, show=False
+):
+    """Boxplots of per-node influence disparity vs test-node degree, with
+    accuracy of the analysed nodes overlaid on a twin right axis.
+
+    Influence disparity  =  same_class_influence_norm − diff_class_influence_norm
+    Range [-1, 1]:  +1 → all training influence from same-class;
+                    -1 → all training influence from diff-class.
+    A dashed horizontal line marks y=0 (equal balance).
+
+    Only test nodes that have at least one training node in their k-hop
+    receptive field are included (computed by compute_influence_disparity_all).
+
+    Parameters
+    ----------
+    disparity_results : list of dicts from compute_influence_disparity_all.
+    cfg      : dict
+    save_dir : str or None
+    show     : bool
+    """
+    if not disparity_results:
+        log.warning("plot_influence_disparity_vs_degree: no data to plot")
+        return
+
+    # ── group by degree ───────────────────────────────────────────────────────
+    from collections import defaultdict
+    disp_by_deg = defaultdict(list)
+    acc_by_deg  = defaultdict(list)
+    for r in disparity_results:
+        d = r["degree"]
+        disp_by_deg[d].append(r["disparity"])
+        acc_by_deg[d].append(1.0 if r["correct"] else 0.0)
+
+    degrees  = sorted(disp_by_deg)
+    pos      = list(range(len(degrees)))
+    counts   = [len(disp_by_deg[d]) for d in degrees]
+    bp_data  = [disp_by_deg[d]      for d in degrees]
+    mean_acc = [float(np.mean(acc_by_deg[d])) for d in degrees]
+
+    prefix   = _fname_prefix(cfg)
+    n_nodes  = len(disparity_results)
+    subtitle = (
+        f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+        f"{cfg.get('split','random')} · "
+        f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+        f"   |   {n_nodes} nodes analysed  ·  {len(degrees)} unique degrees"
+        f"   (last-run model)"
+    )
+
+    fig, ax = plt.subplots(figsize=(_fig_w(len(degrees)), 4.5))
+
+    # ── disparity boxplots ────────────────────────────────────────────────────
+    bp = ax.boxplot(
+        bp_data, positions=pos, widths=0.55,
+        **{**_BP_KWARGS, "boxprops": dict(facecolor=_DISP_BOX_COLOR, alpha=0.55)},
+    )
+
+    # Colour each box: blue if median > 0, red if median < 0
+    for patch, data in zip(bp["boxes"], bp_data):
+        med = float(np.median(data))
+        patch.set_facecolor(_DISP_POS_COLOR if med >= 0 else _DISP_NEG_COLOR)
+        patch.set_alpha(0.55)
+
+    # Zero reference
+    ax.axhline(0, color="grey", linestyle="--", linewidth=0.9, zorder=1,
+               label="Neutral (disparity = 0)")
+
+    ax.set_ylabel("Influence disparity  (same − diff)", fontsize=10)
+    ax.set_ylim(-1.1, 1.1)
+    ax.set_yticks([-1.0, -0.5, 0.0, 0.5, 1.0])
+    ax.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35, zorder=0)
+
+    # ── accuracy overlay (right axis) ─────────────────────────────────────────
+    ax2 = ax.twinx()
+    ax2.plot(pos, mean_acc, color=_ACC_COLOR, linewidth=1.8, marker="o",
+             markersize=4, zorder=4, label="Accuracy (analysed nodes)")
+    ax2.set_ylabel("Accuracy", fontsize=10, color=_ACC_COLOR)
+    ax2.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    ax2.tick_params(axis="y", labelcolor=_ACC_COLOR)
+    ax2.set_ylim(0, 1.05)
+
+    # ── count bars (light grey, behind everything) ────────────────────────────
+    ax3 = ax.twinx()
+    ax3.spines["right"].set_position(("axes", 1.12))
+    ax3.bar(pos, counts, color="lightgrey", alpha=0.3, width=0.55, zorder=0)
+    ax3.set_ylabel("# nodes", fontsize=7, color="grey")
+    ax3.tick_params(axis="y", labelsize=6, colors="grey", length=2)
+    ax3.spines["right"].set_color("lightgrey")
+    ax3.set_ylim(0, max(counts) * 4)
+
+    # ── legend ────────────────────────────────────────────────────────────────
+    handles = [
+        mpatches.Patch(facecolor=_DISP_POS_COLOR, alpha=0.7,
+                       label="Median ≥ 0  (same-class dominant)"),
+        mpatches.Patch(facecolor=_DISP_NEG_COLOR, alpha=0.7,
+                       label="Median < 0  (diff-class dominant)"),
+        plt.Line2D([0], [0], color="grey", linestyle="--", linewidth=0.9,
+                   label="Neutral (0)"),
+        plt.Line2D([0], [0], color=_ACC_COLOR, linewidth=1.8, marker="o",
+                   markersize=4, label="Accuracy"),
+    ]
+    ax.legend(handles=handles, fontsize=8, framealpha=0.85, loc="upper left")
+
+    # ── x-axis + title ────────────────────────────────────────────────────────
+    _degree_axis(ax, pos, degrees)
+    ax.set_title(
+        f"Influence disparity vs node degree\n{subtitle}", fontsize=9
+    )
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "influence"),
+          f"{prefix}_influence_disparity_vs_degree.png", show)
+
+
 def plot_train_neighbor_degree_stats(
     stats, test_deg, pred, data, cfg, k=2, save_dir=None, show=False
 ):

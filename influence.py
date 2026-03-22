@@ -285,3 +285,91 @@ def compute_influence_analysis(model, data, pred, k_hops: int,
         _add(node_x)
 
     return results
+
+
+# ── influence disparity over all test nodes ────────────────────────────────────
+
+def compute_influence_disparity_all(model, data, pred, k_hops: int) -> list:
+    """Influence disparity for every test node that has ≥1 training neighbor.
+
+    For each qualifying test node computes:
+        disparity = same_class_influence_norm − diff_class_influence_norm
+
+    where both scores are normalised by the total influence attributable to
+    training nodes in the k-hop receptive field (so they sum to 1).
+
+    Interpretation
+    --------------
+    +1  : all training-node influence comes from same-class nodes.
+    -1  : all training-node influence comes from diff-class nodes.
+     0  : equal balance between the two.
+
+    Test nodes with no training nodes in their receptive field are excluded
+    (no training signal reachable).
+
+    Cost: one full Jacobian computation per qualifying test node.
+    Progress is logged every 100 nodes.
+
+    Returns
+    -------
+    list of dicts with keys:
+        node_idx, degree, correct (bool), disparity,
+        same_inf_norm, diff_inf_norm, n_same_train, n_diff_train
+    """
+    N         = data.num_nodes
+    y         = data.y.cpu()
+    pred_cpu  = pred.cpu()
+    train_idx = data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
+    test_idx  = data.test_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
+    all_deg   = graph_degree(data.edge_index[1], N).cpu()
+    train_set = set(train_idx)
+
+    model.eval()
+    results  = []
+    n_test   = len(test_idx)
+    n_skip   = 0
+
+    for i, node_x in enumerate(test_idx):
+        if i % 100 == 0:
+            log.info("influence disparity: %d / %d test nodes processed", i, n_test)
+
+        neighbors      = _khop_neighbors(data.edge_index, node_x, k_hops, N)
+        train_in_field = [t for t in neighbors if t in train_set]
+
+        if not train_in_field:
+            n_skip += 1
+            continue
+
+        true_lbl   = int(y[node_x].item())
+        same_class = [t for t in train_in_field if int(y[t].item()) == true_lbl]
+        diff_class = [t for t in train_in_field if int(y[t].item()) != true_lbl]
+
+        I_x = influence_distribution(model, data, node_x)
+
+        same_inf  = float(I_x[same_class].sum()) if same_class else 0.0
+        diff_inf  = float(I_x[diff_class].sum()) if diff_class else 0.0
+        total_inf = same_inf + diff_inf
+
+        if total_inf == 0:
+            n_skip += 1
+            continue
+
+        norm_same = same_inf / total_inf
+        norm_diff = diff_inf / total_inf
+
+        results.append({
+            "node_idx":      node_x,
+            "degree":        int(all_deg[node_x].item()),
+            "correct":       int(pred_cpu[node_x].item()) == true_lbl,
+            "disparity":     norm_same - norm_diff,
+            "same_inf_norm": norm_same,
+            "diff_inf_norm": norm_diff,
+            "n_same_train":  len(same_class),
+            "n_diff_train":  len(diff_class),
+        })
+
+    log.info(
+        "influence disparity: done — %d analysed, %d skipped (no training neighbors)",
+        len(results), n_skip,
+    )
+    return results
