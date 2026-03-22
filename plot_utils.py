@@ -46,6 +46,37 @@ def get_accuracy_deg(deg, pred, true):
     return result
 
 
+def get_accuracy_class(pred, true):
+    """Group per-node predictions by true class label.
+
+    Mirrors get_accuracy_deg but keyed by class instead of degree.
+
+    Parameters
+    ----------
+    pred : 1-D LongTensor of predicted class indices (test nodes).
+    true : 1-D LongTensor of ground-truth class indices (test nodes).
+
+    Returns
+    -------
+    dict mapping class_label (int) -> {
+        'preds'  : predicted labels for nodes of that class (cpu tensor),
+        'labels' : true labels for nodes of that class (cpu tensor),
+        'acc'    : classification accuracy as a Python float,
+    }
+    """
+    pred, true = pred.cpu(), true.cpu()
+    result = {}
+    for c in true.unique():
+        idx = (true == c).nonzero(as_tuple=False).view(-1)
+        p, t = pred[idx], true[idx]
+        result[c.item()] = {
+            "preds":  p,
+            "labels": t,
+            "acc":    (p == t).float().mean().item(),
+        }
+    return result
+
+
 def _fname_prefix(cfg):
     """Filename-safe experiment prefix, e.g. 'Cora_GCN_random_CC'."""
     dataset = cfg["dataset"]["name"]
@@ -2405,3 +2436,159 @@ def plot_train_neighbor_degree_stats(
 #     fig.tight_layout()
 #     _save(fig, save_dir, f"{prefix}_dist_vs_degree.png", show)
 #
+
+
+# ── class-wise accuracy + degree distribution ──────────────────────────────────
+
+_CLS_TEST_COLOR  = "#1976D2"   # blue  — test node degrees
+_CLS_TRAIN_COLOR = "#E53935"   # red   — train node degrees
+
+
+def plot_class_accuracy_and_degree(
+    class_acc_results,
+    test_deg, test_labels,
+    train_deg, train_labels,
+    cfg,
+    save_dir=None, show=False,
+):
+    """Class-wise accuracy and degree distributions — two figures.
+
+    Figure 1 — two-panel (shared x = class label):
+        Top    — bar chart of classification accuracy per class
+                 (median ± IQR across runs).  Test-node count is annotated
+                 above each bar.
+        Bottom — boxplots of test node degree per class.
+
+    Figure 2 — two-panel (shared x = class label):
+        Top    — boxplots of training node degree per class.
+                 Per-class training-node count is annotated above each box.
+        Bottom — bar chart of training node count per class.
+
+    The two figures share the same x-axis labelling so they can be read side
+    by side to diagnose class-wise performance disparity and its relationship
+    to test vs. training node degree.
+
+    Parameters
+    ----------
+    class_acc_results : list[dict]  — per-run output of get_accuracy_class.
+    test_deg          : 1-D LongTensor — degrees of test nodes.
+    test_labels       : 1-D LongTensor — true class labels of test nodes.
+    train_deg         : 1-D LongTensor — degrees of training nodes.
+    train_labels      : 1-D LongTensor — true class labels of training nodes.
+    cfg               : dict
+    save_dir          : str or None
+    show              : bool
+    """
+    test_deg_np     = test_deg.cpu().numpy().astype(float)
+    test_labels_np  = test_labels.cpu().numpy()
+    train_deg_np    = train_deg.cpu().numpy().astype(float)
+    train_labels_np = train_labels.cpu().numpy()
+
+    all_classes = sorted({int(c) for c in test_labels_np} | {int(c) for c in train_labels_np})
+    n_cls   = len(all_classes)
+    pos     = np.arange(n_cls)
+    n_runs  = len(class_acc_results)
+    prefix  = _fname_prefix(cfg)
+    n_test  = int(len(test_deg_np))
+    subtitle = _subtitle(cfg, n_test, n_cls)
+
+    # ── per-class accuracy stats across runs ──────────────────────────────────
+    acc_median, acc_q1, acc_q3 = [], [], []
+    n_test_per_cls = []
+    for c in all_classes:
+        run_accs = []
+        for r in class_acc_results:
+            if c in r and len(r[c]["preds"]) > 0:
+                run_accs.append(float((r[c]["preds"] == r[c]["labels"]).float().mean()))
+        acc_median.append(float(np.median(run_accs)) if run_accs else float("nan"))
+        acc_q1.append(float(np.percentile(run_accs, 25)) if run_accs else float("nan"))
+        acc_q3.append(float(np.percentile(run_accs, 75)) if run_accs else float("nan"))
+        n_test_per_cls.append(int((test_labels_np == c).sum()))
+    acc_median = np.array(acc_median)
+    acc_q1     = np.array(acc_q1)
+    acc_q3     = np.array(acc_q3)
+
+    # ── per-class degree data ─────────────────────────────────────────────────
+    test_deg_by_cls  = [test_deg_np[test_labels_np == c]   for c in all_classes]
+    train_deg_by_cls = [train_deg_np[train_labels_np == c] for c in all_classes]
+    n_train_per_cls  = [int((train_labels_np == c).sum())  for c in all_classes]
+
+    cls_labels = [f"Class {c}" for c in all_classes]
+
+    # ── Figure 1: accuracy (top) + test degree (bottom) ──────────────────────
+    fig_w = max(8, n_cls * 1.4)
+    fig1, (ax_acc, ax_tdeg) = plt.subplots(
+        2, 1, figsize=(fig_w, 8), sharex=True,
+        gridspec_kw={"height_ratios": [2, 2]},
+    )
+    fig1.suptitle(f"Class-wise Accuracy & Test Node Degree\n{subtitle}", fontsize=11)
+
+    # accuracy bars
+    yerr_lo = acc_median - acc_q1
+    yerr_hi = acc_q3 - acc_median
+    bars = ax_acc.bar(pos, acc_median, width=0.6, color=_ACC_COLOR, alpha=0.80, zorder=3)
+    ax_acc.errorbar(pos, acc_median, yerr=[yerr_lo, yerr_hi],
+                    fmt="none", color="black", capsize=4, lw=1.2, zorder=4)
+    ax_acc.set_ylabel("Classification accuracy", fontsize=11)
+    ax_acc.set_ylim(0, 1.18)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_acc.axhline(float(np.nanmean(acc_median)), color="dimgrey",
+                   lw=1.0, ls="--", zorder=2, label=f"Mean accuracy  ({np.nanmean(acc_median):.1%})")
+    ax_acc.legend(fontsize=8, loc="lower right", framealpha=0.88)
+    # annotate n_test above each bar
+    for i, (bar, n) in enumerate(zip(bars, n_test_per_cls)):
+        ax_acc.text(bar.get_x() + bar.get_width() / 2,
+                    (acc_q3[i] if np.isfinite(acc_q3[i]) else acc_median[i]) + 0.03,
+                    f"n={n}", ha="center", va="bottom", fontsize=7, color="dimgrey")
+
+    # test node degree boxplots
+    bp_t = ax_tdeg.boxplot(test_deg_by_cls, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp_t["boxes"]:
+        patch.set_facecolor(_CLS_TEST_COLOR)
+        patch.set_alpha(0.65)
+    ax_tdeg.set_ylabel("Test node degree", fontsize=11)
+    ax_tdeg.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_tdeg.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_tdeg.set_xticks(pos)
+    ax_tdeg.set_xticklabels(cls_labels, rotation=30, ha="right", fontsize=9)
+    ax_tdeg.set_xlabel("Class", fontsize=11)
+
+    fig1.tight_layout()
+    _save(fig1, _subdir(save_dir, "class_accuracy"),
+          f"{prefix}_class_accuracy_and_test_degree.png", show)
+
+    # ── Figure 2: training degree (top) + train count bar (bottom) ───────────
+    fig2, (ax_trdeg, ax_cnt) = plt.subplots(
+        2, 1, figsize=(fig_w, 7), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1]},
+    )
+    fig2.suptitle(f"Class-wise Training Node Degree Distribution\n{subtitle}", fontsize=11)
+
+    bp_tr = ax_trdeg.boxplot(train_deg_by_cls, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp_tr["boxes"]:
+        patch.set_facecolor(_CLS_TRAIN_COLOR)
+        patch.set_alpha(0.65)
+    ax_trdeg.set_ylabel("Training node degree", fontsize=11)
+    ax_trdeg.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_trdeg.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    # annotate n_train above each median line
+    medians_tr = [float(np.median(d)) if len(d) > 0 else float("nan")
+                  for d in train_deg_by_cls]
+    for i, (n, med) in enumerate(zip(n_train_per_cls, medians_tr)):
+        ax_trdeg.text(i, med, f" n={n}", ha="left", va="center",
+                      fontsize=7, color="dimgrey")
+    plt.setp(ax_trdeg.get_xticklabels(), visible=True)
+
+    # training node count bars
+    ax_cnt.bar(pos, n_train_per_cls, color=_CLS_TRAIN_COLOR, alpha=0.55, width=0.6)
+    ax_cnt.set_ylabel("# train nodes", fontsize=9, color=_CLS_TRAIN_COLOR)
+    ax_cnt.tick_params(axis="y", labelsize=7, colors=_CLS_TRAIN_COLOR)
+    ax_cnt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax_cnt.set_xticks(pos)
+    ax_cnt.set_xticklabels(cls_labels, rotation=30, ha="right", fontsize=9)
+    ax_cnt.set_xlabel("Class", fontsize=11)
+
+    fig2.tight_layout()
+    _save(fig2, _subdir(save_dir, "class_accuracy"),
+          f"{prefix}_class_train_degree_distribution.png", show)

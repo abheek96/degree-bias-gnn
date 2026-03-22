@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree
+from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree
 from influence import compute_influence_analysis
 from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality
 from train import train
@@ -176,8 +176,13 @@ def main():
     data = data.to(device)
 
     # Degree is a fixed property of the graph — compute once for test nodes
-    test_deg = graph_degree(data.edge_index[1], data.num_nodes)[data.test_mask].cpu()
-    all_deg  = graph_degree(data.edge_index[1], data.num_nodes).cpu()
+    test_deg  = graph_degree(data.edge_index[1], data.num_nodes)[data.test_mask].cpu()
+    train_deg = graph_degree(data.edge_index[1], data.num_nodes)[data.train_mask].cpu()
+    all_deg   = graph_degree(data.edge_index[1], data.num_nodes).cpu()
+
+    # Class labels for test and train nodes (graph-fixed)
+    test_labels  = data.y[data.test_mask].cpu()
+    train_labels = data.y[data.train_mask].cpu()
 
     # Labelling ratio is graph-fixed — compute once, sliced to test nodes
     has_labeled_neighbor = get_labelling_ratio(data)[data.test_mask.cpu()]
@@ -226,7 +231,8 @@ def main():
     )
 
     val_accs, test_accs, train_accs = [], [], []
-    deg_acc_results = []
+    deg_acc_results   = []
+    class_acc_results = []
     run_labels = []
 
     for i in tqdm(range(1, num_runs + 1), desc="Runs"):
@@ -244,6 +250,9 @@ def main():
 
         deg_acc_results.append(
             get_accuracy_deg(test_deg, pred[data.test_mask], data.y[data.test_mask])
+        )
+        class_acc_results.append(
+            get_accuracy_class(pred[data.test_mask], data.y[data.test_mask])
         )
         run_labels.append(run_name)
 
@@ -373,6 +382,16 @@ def main():
         plot_train_neighbor_degree_stats(
             train_nb_deg_stats, test_deg, pred, data, cfg,
             k=k_hops,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+
+    if plot_cfg.get("class_accuracy", False):
+        plot_class_accuracy_and_degree(
+            class_acc_results,
+            test_deg, test_labels,
+            train_deg, train_labels,
+            cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )

@@ -38,6 +38,7 @@ plot:
   labelling_ratio: true
   purity_vs_degree: true
   purity_k_max: 2
+  class_accuracy: true
   influence_analysis: true
   influence_degrees: [22]        # exact degree values to investigate, e.g. [3, 5, 10]
   influence_nodes: []            # explicit node indices to investigate, e.g. [1362, 42]
