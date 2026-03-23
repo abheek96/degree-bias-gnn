@@ -62,6 +62,59 @@ This tends to be more pronounced for high-degree nodes whose wider neighbourhood
 
 ---
 
+## Feature Similarity Delta
+
+### What is the feature similarity delta?
+
+For each test node `v` that has at least one same-class training node as a direct (1-hop) neighbour, two cosine similarity scores are computed:
+
+```
+sim_raw(v) = mean cosine_sim( x_v,   x_u )   for u ∈ same-class train ∩ N₁(v)
+sim_h1(v)  = mean cosine_sim( h_v¹,  h_u¹ )  for the same u
+
+delta(v)   = sim_h1(v) − sim_raw(v)
+```
+
+`x` is the raw input feature vector (1433-dim bag-of-words for Cora).
+`h¹` is the representation after the first GCNConv layer + ReLU — obtained via `model.get_intermediate(layer=1)` — before the linear classification head.
+
+A **positive delta** means message passing brought `v` closer to its same-class training neighbours in representation space: the neighbourhood signal reinforced class-consistent features.
+A **negative delta** means message passing pulled `v` away: diff-class neighbours in N₁(v) introduced feature-space noise into `h¹`, analogous to what low label purity captures structurally.
+
+### Why use cosine similarity and not Euclidean distance?
+
+Cosine similarity measures the **angle** between two vectors, ignoring their magnitude. This is appropriate here for two reasons:
+
+1. After ReLU and degree normalisation, the scale of `h¹` varies substantially across nodes — magnitude differences would dominate a Euclidean comparison and obscure the directional alignment that actually matters for classification.
+2. The raw input features are binary bag-of-words — two papers on the same topic may have very different numbers of keywords (different magnitudes) but still point in similar directions. Cosine similarity captures that semantic alignment directly.
+
+### How does feature similarity delta complement purity and influence disparity?
+
+The three metrics attack the same underlying question from different angles:
+
+| Metric | What it measures | Space |
+|---|---|---|
+| Purity | Fraction of same-class structural neighbours | Graph topology + labels |
+| Feature similarity delta | Whether aggregation preserved same-class feature alignment | Input / hidden feature space |
+| Influence disparity | Whether same-class training nodes dominate gradient flow | Model weights / Jacobian |
+
+Purity tells you the structural precondition: how many diff-class nodes are present.
+Feature similarity delta tells you whether those diff-class nodes actually corrupt the representation — a node could have low purity but still have a good `h¹` if its diff-class neighbours happen to have dissimilar features.
+Influence disparity tells you whether the corruption propagates all the way to the model's decision.
+
+A node where all three are negative (low purity, negative delta, negative influence disparity) is the strongest possible instance of degree bias: structural imbalance, representation corruption, and gradient-flow imbalance all converge on the same node.
+
+### Why are nodes with no same-class training neighbour excluded?
+
+The metric specifically measures whether message passing preserves or degrades similarity *to same-class training nodes that are directly reachable*. If there is no same-class training node in N₁(v), there is no reference signal to compare against — the metric is undefined for that node, not zero.
+These nodes are separately captured by the labelling ratio and SPL metrics, which measure the absence of proximate same-class signal.
+
+### What does `model.get_intermediate(layer=1)` return exactly?
+
+It runs the input `x` through the first GCNConv layer only and applies ReLU, stopping before subsequent layers and the linear head. For the default 2-layer GCN (`num_layers=2`), `self.layers[:-1]` contains exactly one GCNConv, so `layer=1` is the only valid value. It returns a `(N, hidden_dim)` tensor detached from the compute graph, with `model.eval()` set to suppress dropout.
+
+---
+
 ## Influence Analysis
 
 ### How does the influence analysis work?
@@ -168,4 +221,4 @@ A secondary question: does higher degree in training nodes correlate with faster
 
 ---
 
-*Last updated: 2026-03-17*
+*Last updated: 2026-03-22*
