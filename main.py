@@ -422,10 +422,15 @@ def main():
     if plot_cfg.get("feature_similarity", False):
         log.info("Computing feature similarity delta (raw vs h^(1))...")
         sim_results = get_feature_similarity_delta(data, model, k_hops=k_hops)
+        # Slice purity to test nodes so it aligns with test_deg
+        purity_by_k_test = (
+            {k: v[data.test_mask.cpu()] for k, v in purity_by_k.items()}
+            if len(purity_by_k) >= 2 else None
+        )
         plot_feature_similarity_delta_vs_degree(
             sim_results, cfg, k_hops=k_hops,
             deg_acc_results=deg_acc_results,
-            purity_by_k=purity_by_k if len(purity_by_k) >= 2 else None,
+            purity_by_k=purity_by_k_test,
             test_deg=test_deg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
