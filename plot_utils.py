@@ -1817,28 +1817,41 @@ def plot_influence_disparity_vs_degree(
 
 _FSIM_RAW_COLOR   = "#1976D2"   # blue  — raw input features
 _FSIM_H1_COLOR    = "#E53935"   # red   — after 1-hop message passing
-_FSIM_DELTA_COLOR = "#7B1FA2"   # purple — delta (h1 − raw)
+_FSIM_DELTA_COLOR = "#7B1FA2"   # purple — delta feature sim (h^k − raw)
+_FSIM_DPUR_COLOR  = "#00838F"   # teal   — delta label purity overlay
 
 
 def plot_feature_similarity_delta_vs_degree(
-    sim_results, cfg, k_hops: int = 1, save_dir=None, show=False
+    sim_results, cfg, k_hops: int = 1,
+    deg_acc_results=None,
+    purity_by_k=None,
+    test_deg=None,
+    save_dir=None, show=False,
 ):
     """Two-panel figure: cosine similarity to same-class training 1-hop
     neighbors, in raw feature space vs after k_hops GCNConv steps.
 
     Top panel   — mean ± std of sim_raw (blue) and sim_hk (red) per degree
-                  group, with accuracy of analysed nodes on a twin right axis.
-    Bottom panel — mean delta = sim_hk − sim_raw per degree group (purple line)
-                  + zero reference.  Negative delta means message passing
-                  reduced feature similarity to same-class training neighbors
-                  (feature-space noise introduced by aggregation).
+                  group; count bars on secondary axis.
+    Bottom panel — mean ± std of Δ feature sim (purple); optionally overlaid
+                  with Δ label purity (teal, left axis) and accuracy of the
+                  last run (green, twin right axis).  A dashed zero line marks
+                  no change.
 
     Parameters
     ----------
-    sim_results : list of dicts from get_feature_similarity_delta.
-    cfg         : dict
-    save_dir    : str or None
-    show        : bool
+    sim_results     : list of dicts from get_feature_similarity_delta.
+    cfg             : dict
+    k_hops          : number of GCNConv layers (= num_layers - 1).
+    deg_acc_results : list of per-run get_accuracy_deg dicts; last entry used
+                      for accuracy overlay.  Pass None to omit.
+    purity_by_k     : {k (int): FloatTensor} for all graph nodes; needs at
+                      least keys 1 and 2 for delta purity overlay.  Pass None
+                      to omit.
+    test_deg        : 1-D LongTensor of test-node degrees; required when
+                      purity_by_k is provided.
+    save_dir        : str or None
+    show            : bool
     """
     if not sim_results:
         log.warning("plot_feature_similarity_delta_vs_degree: no data to plot")
@@ -1846,26 +1859,26 @@ def plot_feature_similarity_delta_vs_degree(
 
     from collections import defaultdict
     raw_by_deg   = defaultdict(list)
-    h1_by_deg    = defaultdict(list)
+    hk_by_deg    = defaultdict(list)
     delta_by_deg = defaultdict(list)
-    acc_by_deg   = defaultdict(list)
 
     for r in sim_results:
         d = r["degree"]
         raw_by_deg[d].append(r["sim_raw"])
-        h1_by_deg[d].append(r["sim_hk"])
+        hk_by_deg[d].append(r["sim_hk"])
         delta_by_deg[d].append(r["delta"])
 
     degrees  = sorted(raw_by_deg)
     pos      = list(range(len(degrees)))
+    pa       = np.array(pos)
 
-    mean_raw   = [float(np.mean(raw_by_deg[d]))   for d in degrees]
-    std_raw    = [float(np.std(raw_by_deg[d]))    for d in degrees]
-    mean_h1    = [float(np.mean(h1_by_deg[d]))    for d in degrees]
-    std_h1     = [float(np.std(h1_by_deg[d]))     for d in degrees]
-    mean_delta = [float(np.mean(delta_by_deg[d])) for d in degrees]
-    std_delta  = [float(np.std(delta_by_deg[d]))  for d in degrees]
-    counts     = [len(raw_by_deg[d])              for d in degrees]
+    mean_raw   = np.array([np.mean(raw_by_deg[d])   for d in degrees])
+    std_raw    = np.array([np.std(raw_by_deg[d])    for d in degrees])
+    mean_hk    = np.array([np.mean(hk_by_deg[d])    for d in degrees])
+    std_hk     = np.array([np.std(hk_by_deg[d])     for d in degrees])
+    mean_delta = np.array([np.mean(delta_by_deg[d]) for d in degrees])
+    std_delta  = np.array([np.std(delta_by_deg[d])  for d in degrees])
+    counts     = [len(raw_by_deg[d]) for d in degrees]
 
     prefix   = _fname_prefix(cfg)
     n_nodes  = len(sim_results)
@@ -1882,22 +1895,18 @@ def plot_feature_similarity_delta_vs_degree(
         sharex=True, gridspec_kw={"height_ratios": [3, 2]},
     )
 
-    # ── top panel: raw sim + h1 sim ──────────────────────────────────────────
-    pa = np.array(pos)
-    mr = np.array(mean_raw);  sr = np.array(std_raw)
-    mh = np.array(mean_h1);   sh = np.array(std_h1)
-
-    ax_top.plot(pa, mr, color=_FSIM_RAW_COLOR, linewidth=1.8, marker="o",
+    # ── top panel: raw sim + hk sim ───────────────────────────────────────────
+    ax_top.plot(pa, mean_raw, color=_FSIM_RAW_COLOR, linewidth=1.8, marker="o",
                 markersize=4, label="Raw features (x)", zorder=3)
-    ax_top.fill_between(pa, mr - sr, mr + sr,
+    ax_top.fill_between(pa, mean_raw - std_raw, mean_raw + std_raw,
                         color=_FSIM_RAW_COLOR, alpha=0.15, zorder=2)
 
-    ax_top.plot(pa, mh, color=_FSIM_H1_COLOR, linewidth=1.8, marker="s",
+    ax_top.plot(pa, mean_hk, color=_FSIM_H1_COLOR, linewidth=1.8, marker="s",
                 markersize=4, label=f"After {k_hops}-hop (h^{k_hops})", zorder=3)
-    ax_top.fill_between(pa, mh - sh, mh + sh,
+    ax_top.fill_between(pa, mean_hk - std_hk, mean_hk + std_hk,
                         color=_FSIM_H1_COLOR, alpha=0.15, zorder=2)
 
-    ax_top.set_ylabel(f"Mean cosine similarity\nto same-class train neighbors", fontsize=10)
+    ax_top.set_ylabel("Mean cosine similarity\nto same-class train neighbors", fontsize=10)
     ax_top.set_ylim(-0.05, 1.05)
     ax_top.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
     ax_top.legend(fontsize=9, framealpha=0.85, loc="upper left")
@@ -1906,7 +1915,6 @@ def plot_feature_similarity_delta_vs_degree(
         fontsize=9,
     )
 
-    # count bars
     ax_cnt = ax_top.twinx()
     ax_cnt.bar(pa, counts, color="lightgrey", alpha=0.3, width=0.55, zorder=0)
     ax_cnt.set_ylabel("# nodes", fontsize=7, color="grey")
@@ -1914,19 +1922,55 @@ def plot_feature_similarity_delta_vs_degree(
     ax_cnt.spines["right"].set_color("lightgrey")
     ax_cnt.set_ylim(0, max(counts) * 4)
 
-    # ── bottom panel: delta ───────────────────────────────────────────────────
-    md = np.array(mean_delta); sd = np.array(std_delta)
-
-    ax_bot.plot(pa, md, color=_FSIM_DELTA_COLOR, linewidth=1.8, marker="D",
-                markersize=4, zorder=3, label="Δ sim  (h¹ − raw)")
-    ax_bot.fill_between(pa, md - sd, md + sd,
+    # ── bottom panel: Δ feature sim ───────────────────────────────────────────
+    ax_bot.plot(pa, mean_delta, color=_FSIM_DELTA_COLOR, linewidth=1.8,
+                marker="D", markersize=4, zorder=3,
+                label=f"Δ feature sim  (h^{k_hops} − raw)")
+    ax_bot.fill_between(pa, mean_delta - std_delta, mean_delta + std_delta,
                         color=_FSIM_DELTA_COLOR, alpha=0.15, zorder=2)
-    ax_bot.axhline(0, color="grey", linestyle="--", linewidth=0.9, zorder=1)
 
-    ax_bot.set_ylabel(f"Δ cosine similarity\n(h^{k_hops} − raw)", fontsize=10)
+    # ── Δ purity overlay (left axis, teal) ────────────────────────────────────
+    if purity_by_k and test_deg is not None and len(purity_by_k) >= 2:
+        k_vals = sorted(purity_by_k.keys())
+        k_lo, k_hi = k_vals[0], k_vals[-1]
+        deg_cpu = test_deg.cpu()
+        dp_mean = []
+        for d in degrees:
+            mask = (deg_cpu == d).numpy()
+            def _pur_mean(k):
+                v = purity_by_k[k].cpu().numpy()[mask]
+                v = v[~np.isnan(v)]
+                return float(v.mean()) if len(v) else float("nan")
+            dp_mean.append(_pur_mean(k_hi) - _pur_mean(k_lo))
+        dp_mean = np.array(dp_mean)
+        ax_bot.plot(pa, dp_mean, color=_FSIM_DPUR_COLOR, linewidth=1.8,
+                    marker="^", markersize=4, zorder=3, linestyle="--",
+                    label=f"Δ label purity  (k={k_hi}−k={k_lo})")
+
+    ax_bot.axhline(0, color="grey", linestyle=":", linewidth=0.9, zorder=1)
+    ax_bot.set_ylabel(f"Delta  (h^{k_hops} − raw  /  purity k_hi−k_lo)", fontsize=9)
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
-    ax_bot.legend(fontsize=9, framealpha=0.85, loc="upper left")
 
+    # ── accuracy overlay (right axis, green) ──────────────────────────────────
+    if deg_acc_results:
+        last_run = deg_acc_results[-1]
+        acc_mean = []
+        for d in degrees:
+            if d in last_run:
+                r = last_run[d]
+                acc_mean.append((r["preds"] == r["labels"]).float().mean().item())
+            else:
+                acc_mean.append(float("nan"))
+        ax_acc = ax_bot.twinx()
+        ax_acc.plot(pa, acc_mean, color=_ACC_COLOR, linewidth=1.8, marker="o",
+                    markersize=4, zorder=4, label="Accuracy (last run)")
+        ax_acc.set_ylabel("Accuracy", fontsize=10, color=_ACC_COLOR)
+        ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+        ax_acc.tick_params(axis="y", labelcolor=_ACC_COLOR)
+        ax_acc.set_ylim(0, 1.05)
+        ax_acc.legend(fontsize=8, framealpha=0.85, loc="upper right")
+
+    ax_bot.legend(fontsize=8, framealpha=0.85, loc="upper left")
     _degree_axis(ax_bot, pos, degrees)
 
     fig.tight_layout()

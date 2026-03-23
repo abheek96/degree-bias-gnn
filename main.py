@@ -207,12 +207,15 @@ def main():
         elif hp_key in ("hidden_dim", "dropout"):
             cfg["model"][hp_key] = hp_val
 
-    # Neighborhood purity is graph-fixed — compute once per k value
+    # Neighborhood purity is graph-fixed — compute once per k value.
+    # Also needed for the delta-purity overlay in the feature_similarity plot.
     purity_k_max = plot_cfg.get("purity_k_max", 4)
+    _need_purity = (plot_cfg.get("purity_vs_degree", False)
+                    or plot_cfg.get("feature_similarity", False))
     purity_by_k  = {
         k: get_node_purity(data, k=k)
         for k in range(1, purity_k_max + 1)
-    } if plot_cfg.get("purity_vs_degree", False) else {}
+    } if _need_purity else {}
 
     # k_hops = num_layers - 1 because the final layer is nn.Linear (no message passing)
     k_hops = cfg["model"]["num_layers"] - 1
@@ -421,6 +424,9 @@ def main():
         sim_results = get_feature_similarity_delta(data, model, k_hops=k_hops)
         plot_feature_similarity_delta_vs_degree(
             sim_results, cfg, k_hops=k_hops,
+            deg_acc_results=deg_acc_results,
+            purity_by_k=purity_by_k if len(purity_by_k) >= 2 else None,
+            test_deg=test_deg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
