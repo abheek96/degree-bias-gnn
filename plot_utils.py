@@ -1821,14 +1821,14 @@ _FSIM_DELTA_COLOR = "#7B1FA2"   # purple — delta (h1 − raw)
 
 
 def plot_feature_similarity_delta_vs_degree(
-    sim_results, cfg, save_dir=None, show=False
+    sim_results, cfg, k_hops: int = 1, save_dir=None, show=False
 ):
     """Two-panel figure: cosine similarity to same-class training 1-hop
-    neighbors, in raw feature space vs after one GCNConv step.
+    neighbors, in raw feature space vs after k_hops GCNConv steps.
 
-    Top panel   — mean ± std of sim_raw (blue) and sim_h1 (red) per degree
+    Top panel   — mean ± std of sim_raw (blue) and sim_hk (red) per degree
                   group, with accuracy of analysed nodes on a twin right axis.
-    Bottom panel — mean delta = sim_h1 − sim_raw per degree group (purple line)
+    Bottom panel — mean delta = sim_hk − sim_raw per degree group (purple line)
                   + zero reference.  Negative delta means message passing
                   reduced feature similarity to same-class training neighbors
                   (feature-space noise introduced by aggregation).
@@ -1853,7 +1853,7 @@ def plot_feature_similarity_delta_vs_degree(
     for r in sim_results:
         d = r["degree"]
         raw_by_deg[d].append(r["sim_raw"])
-        h1_by_deg[d].append(r["sim_h1"])
+        h1_by_deg[d].append(r["sim_hk"])
         delta_by_deg[d].append(r["delta"])
 
     degrees  = sorted(raw_by_deg)
@@ -1893,11 +1893,11 @@ def plot_feature_similarity_delta_vs_degree(
                         color=_FSIM_RAW_COLOR, alpha=0.15, zorder=2)
 
     ax_top.plot(pa, mh, color=_FSIM_H1_COLOR, linewidth=1.8, marker="s",
-                markersize=4, label="After 1-hop (h¹)", zorder=3)
+                markersize=4, label=f"After {k_hops}-hop (h^{k_hops})", zorder=3)
     ax_top.fill_between(pa, mh - sh, mh + sh,
                         color=_FSIM_H1_COLOR, alpha=0.15, zorder=2)
 
-    ax_top.set_ylabel("Mean cosine similarity\nto same-class train neighbors", fontsize=10)
+    ax_top.set_ylabel(f"Mean cosine similarity\nto same-class train neighbors", fontsize=10)
     ax_top.set_ylim(-0.05, 1.05)
     ax_top.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
     ax_top.legend(fontsize=9, framealpha=0.85, loc="upper left")
@@ -1923,7 +1923,7 @@ def plot_feature_similarity_delta_vs_degree(
                         color=_FSIM_DELTA_COLOR, alpha=0.15, zorder=2)
     ax_bot.axhline(0, color="grey", linestyle="--", linewidth=0.9, zorder=1)
 
-    ax_bot.set_ylabel("Δ cosine similarity\n(h¹ − raw)", fontsize=10)
+    ax_bot.set_ylabel(f"Δ cosine similarity\n(h^{k_hops} − raw)", fontsize=10)
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
     ax_bot.legend(fontsize=9, framealpha=0.85, loc="upper left")
 

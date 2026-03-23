@@ -418,9 +418,9 @@ def main():
 
     if plot_cfg.get("feature_similarity", False):
         log.info("Computing feature similarity delta (raw vs h^(1))...")
-        sim_results = get_feature_similarity_delta(data, model)
+        sim_results = get_feature_similarity_delta(data, model, k_hops=k_hops)
         plot_feature_similarity_delta_vs_degree(
-            sim_results, cfg,
+            sim_results, cfg, k_hops=k_hops,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
