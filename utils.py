@@ -523,6 +523,78 @@ def get_node_purity(data, k: int = 1) -> torch.Tensor:
     return purity
 
 
+def get_feature_similarity_delta(data, model) -> list:
+    """Per-test-node cosine similarity to same-class training 1-hop neighbors,
+    measured in raw feature space and after one step of message passing (h^(1)).
+
+    For each test node v with at least one same-class training node as a direct
+    (1-hop) neighbor:
+
+        sim_raw(v)  = mean cosine_sim(x_v,    x_u)    for u in same-class train ∩ N_1(v)
+        sim_h1(v)   = mean cosine_sim(h_v^1,  h_u^1)  for the same u
+        delta(v)    = sim_h1(v) - sim_raw(v)
+
+    delta > 0  : message passing brought v closer to its same-class training
+                 neighbors in representation space (aggregation helped).
+    delta < 0  : message passing pulled v away — diff-class neighbors in N_1(v)
+                 introduced feature-space noise (analogous to low label purity).
+
+    Test nodes with no same-class training node in their 1-hop neighborhood
+    are excluded.
+
+    Parameters
+    ----------
+    data  : PyG Data object (must have .x, .y, .edge_index, .train_mask, .test_mask)
+    model : trained GCN instance with get_intermediate()
+
+    Returns
+    -------
+    list of dicts, one per qualifying test node:
+        node_idx, degree, sim_raw, sim_h1, delta, n_same_1hop
+    """
+    import torch.nn.functional as F_fn
+    from torch_geometric.utils import degree as graph_degree
+
+    x         = data.x.cpu()
+    y         = data.y.cpu()
+    src       = data.edge_index[0].cpu()
+    dst       = data.edge_index[1].cpu()
+    train_mask = data.train_mask.cpu()
+    test_mask  = data.test_mask.cpu()
+    all_deg   = graph_degree(data.edge_index[1], data.num_nodes).cpu()
+
+    h1 = model.get_intermediate(data.x, data.edge_index, layer=1).cpu()
+
+    test_nodes = test_mask.nonzero(as_tuple=False).view(-1).tolist()
+    results = []
+
+    for v in test_nodes:
+        neighbors = dst[src == v]
+        same_train = [int(u) for u in neighbors
+                      if train_mask[u] and int(y[u]) == int(y[v])]
+        if not same_train:
+            continue
+
+        x_v  = x[v].unsqueeze(0)           # (1, d_in)
+        x_u  = x[same_train]               # (k, d_in)
+        h_v  = h1[v].unsqueeze(0)          # (1, d_hidden)
+        h_u  = h1[same_train]              # (k, d_hidden)
+
+        sim_raw = float(F_fn.cosine_similarity(x_v, x_u).mean())
+        sim_h1  = float(F_fn.cosine_similarity(h_v, h_u).mean())
+
+        results.append({
+            "node_idx":    v,
+            "degree":      int(all_deg[v].item()),
+            "sim_raw":     sim_raw,
+            "sim_h1":      sim_h1,
+            "delta":       sim_h1 - sim_raw,
+            "n_same_1hop": len(same_train),
+        })
+
+    return results
+
+
 # def get_node_het(data, k: int = 1) -> torch.Tensor:
 #     """Return the raw neighbor-heterogeneity ratio for every node.
 #

@@ -215,6 +215,25 @@ The "degree advantage" is defined as `same_mean_deg − diff_mean_deg`.
 
 **Why:** In GCN, the aggregation weight for edge (u→v) is `1/sqrt(deg_u * deg_v)`. A same-class training node with high degree contributes *less* per edge than a low-degree one. If diff-class training nodes systematically have lower degree than same-class ones, their per-edge signal is stronger despite being fewer in number, potentially driving misclassification. This metric separates the *count* and *degree* components of the aggregation imbalance — two nodes with the same count but different degree profiles contribute very differently to the aggregated message.
 
+### 4.9 Feature similarity delta (`feature_similarity`)
+
+For each test node v with at least one same-class training node as a direct (1-hop) neighbor, computes:
+
+```
+sim_raw(v)  = mean cosine_sim(x_v,   x_u)   for u ∈ same-class train ∩ N_1(v)
+sim_h1(v)   = mean cosine_sim(h_v¹,  h_u¹)  for the same u
+delta(v)    = sim_h1(v) − sim_raw(v)
+```
+
+where `h_v¹` is the node representation after the first GCNConv layer and ReLU (obtained via `model.get_intermediate(layer=1)`), before the linear classification head.
+
+- **delta > 0**: message passing brought v *closer* to its same-class training neighbors in representation space — the aggregated neighbourhood signal reinforced class-consistent features.
+- **delta < 0**: message passing *pulled* v away — diff-class neighbors in N_1(v) introduced feature-space noise into the representation, analogous to what low label purity captures structurally.
+
+Nodes with no same-class training node in their 1-hop neighborhood are excluded.
+
+**Why:** Prior metrics measure degree bias structurally (purity, cardinality, SPL) or via gradient flow (influence disparity). This metric measures the feature-space consequence of aggregation directly: does the trained GCN's first message-passing step preserve or degrade a node's feature alignment with its same-class training neighbors? It answers whether the noise introduced by low-purity neighborhoods actually manifests in the learned representation — closing the gap between structural observations and model behavior. A node with low label purity *and* negative delta *and* negative influence disparity is the triple-confirmed case where structural imbalance, representation corruption, and gradient-flow imbalance all converge.
+
 ---
 
 ## 5. Plots
@@ -303,6 +322,19 @@ The second variant is more diagnostic for bias because it isolates the class-spe
 - **Bottom panel:** For each test-node degree group, the "degree advantage" (mean_deg_same − mean_deg_diff) shown as side-by-side boxplots for correctly classified (green) vs misclassified (red) nodes. A zero line marks parity. Positive values mean same-class training nodes have higher average degree; negative means diff-class nodes do.
 
 **Why:** Separates two distinct components of the aggregation imbalance that prior metrics conflate. The count-based imbalance (same_count vs diff_count) tells us *how many* training nodes of each class are in the receptive field. The degree-based metric tells us *how strongly* each contributes per edge via the GCN normalisation factor `1/sqrt(deg_u * deg_v)`. A node could have 4 same-class neighbors and 11 diff-class neighbors (count disadvantage), but if the same-class nodes are degree-1 leaf nodes and the diff-class nodes are degree-20 hubs, the effective aggregation weight favors the same-class signal. Conversely, if same-class nodes are the hubs, their signal is more diluted. This plot directly tests whether misclassified nodes share a consistent pattern in the degree structure of their training neighborhood.
+
+---
+
+### 5.11 `feature_similarity_delta_vs_degree`
+
+**What:** Two stacked panels.
+
+- **Top panel:** Mean ± std of `sim_raw` (blue line) and `sim_h1` (red line) per degree group — cosine similarity between each test node and its same-class training 1-hop neighbors, measured before and after the first GCNConv layer. Node count shown as light grey bars on a secondary axis.
+- **Bottom panel:** Mean ± std of `delta = sim_h1 − sim_raw` (purple line) per degree group, with a dashed zero reference line.
+
+Only test nodes with at least one same-class training node as a direct (1-hop) neighbor are included.
+
+**Why:** All prior metrics characterise degree bias structurally (purity, cardinality, SPL) or via gradient flow (influence disparity). This plot measures what actually happens in representation space: does the GCN's first aggregation step preserve or corrupt a node's feature alignment with its same-class training neighbors? A consistently negative delta at high degrees would confirm that the structural noise documented by purity actually propagates into the learned representation — the diff-class neighbors' features are pulling `h^(1)` away from the same-class training signal. This closes the explanatory chain: structural imbalance → representation corruption → misclassification.
 
 ---
 

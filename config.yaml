@@ -42,6 +42,7 @@ plot:
   influence_analysis: true
   influence_degrees: [8]        # exact degree values to investigate, e.g. [3, 5, 10]
   influence_nodes: [1858, 1930, 1985, 2021, 2152]            # explicit node indices to investigate, e.g. [1362, 42]
+  feature_similarity: true      # cosine sim to same-class train neighbors: raw vs h^(1), delta per degree
   influence_disparity: true     # disparity for ALL test nodes (expensive: one Jacobian per node)
   train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
   save: true

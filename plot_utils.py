@@ -1815,6 +1815,125 @@ def plot_influence_disparity_vs_degree(
           f"{prefix}_influence_disparity_vs_degree.png", show)
 
 
+_FSIM_RAW_COLOR   = "#1976D2"   # blue  — raw input features
+_FSIM_H1_COLOR    = "#E53935"   # red   — after 1-hop message passing
+_FSIM_DELTA_COLOR = "#7B1FA2"   # purple — delta (h1 − raw)
+
+
+def plot_feature_similarity_delta_vs_degree(
+    sim_results, cfg, save_dir=None, show=False
+):
+    """Two-panel figure: cosine similarity to same-class training 1-hop
+    neighbors, in raw feature space vs after one GCNConv step.
+
+    Top panel   — mean ± std of sim_raw (blue) and sim_h1 (red) per degree
+                  group, with accuracy of analysed nodes on a twin right axis.
+    Bottom panel — mean delta = sim_h1 − sim_raw per degree group (purple line)
+                  + zero reference.  Negative delta means message passing
+                  reduced feature similarity to same-class training neighbors
+                  (feature-space noise introduced by aggregation).
+
+    Parameters
+    ----------
+    sim_results : list of dicts from get_feature_similarity_delta.
+    cfg         : dict
+    save_dir    : str or None
+    show        : bool
+    """
+    if not sim_results:
+        log.warning("plot_feature_similarity_delta_vs_degree: no data to plot")
+        return
+
+    from collections import defaultdict
+    raw_by_deg   = defaultdict(list)
+    h1_by_deg    = defaultdict(list)
+    delta_by_deg = defaultdict(list)
+    acc_by_deg   = defaultdict(list)
+
+    for r in sim_results:
+        d = r["degree"]
+        raw_by_deg[d].append(r["sim_raw"])
+        h1_by_deg[d].append(r["sim_h1"])
+        delta_by_deg[d].append(r["delta"])
+
+    degrees  = sorted(raw_by_deg)
+    pos      = list(range(len(degrees)))
+
+    mean_raw   = [float(np.mean(raw_by_deg[d]))   for d in degrees]
+    std_raw    = [float(np.std(raw_by_deg[d]))    for d in degrees]
+    mean_h1    = [float(np.mean(h1_by_deg[d]))    for d in degrees]
+    std_h1     = [float(np.std(h1_by_deg[d]))     for d in degrees]
+    mean_delta = [float(np.mean(delta_by_deg[d])) for d in degrees]
+    std_delta  = [float(np.std(delta_by_deg[d]))  for d in degrees]
+    counts     = [len(raw_by_deg[d])              for d in degrees]
+
+    prefix   = _fname_prefix(cfg)
+    n_nodes  = len(sim_results)
+    subtitle = (
+        f"{cfg['dataset']['name']} · {cfg['model']['name']} · "
+        f"{cfg.get('split','random')} · "
+        f"{'CC' if cfg['dataset'].get('use_cc') else 'noCC'}"
+        f"   |   {n_nodes} nodes analysed  ·  {len(degrees)} unique degrees"
+        f"   (last-run model)"
+    )
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 2]},
+    )
+
+    # ── top panel: raw sim + h1 sim ──────────────────────────────────────────
+    pa = np.array(pos)
+    mr = np.array(mean_raw);  sr = np.array(std_raw)
+    mh = np.array(mean_h1);   sh = np.array(std_h1)
+
+    ax_top.plot(pa, mr, color=_FSIM_RAW_COLOR, linewidth=1.8, marker="o",
+                markersize=4, label="Raw features (x)", zorder=3)
+    ax_top.fill_between(pa, mr - sr, mr + sr,
+                        color=_FSIM_RAW_COLOR, alpha=0.15, zorder=2)
+
+    ax_top.plot(pa, mh, color=_FSIM_H1_COLOR, linewidth=1.8, marker="s",
+                markersize=4, label="After 1-hop (h¹)", zorder=3)
+    ax_top.fill_between(pa, mh - sh, mh + sh,
+                        color=_FSIM_H1_COLOR, alpha=0.15, zorder=2)
+
+    ax_top.set_ylabel("Mean cosine similarity\nto same-class train neighbors", fontsize=10)
+    ax_top.set_ylim(-0.05, 1.05)
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
+    ax_top.legend(fontsize=9, framealpha=0.85, loc="upper left")
+    ax_top.set_title(
+        f"Feature similarity to same-class training neighbors vs node degree\n{subtitle}",
+        fontsize=9,
+    )
+
+    # count bars
+    ax_cnt = ax_top.twinx()
+    ax_cnt.bar(pa, counts, color="lightgrey", alpha=0.3, width=0.55, zorder=0)
+    ax_cnt.set_ylabel("# nodes", fontsize=7, color="grey")
+    ax_cnt.tick_params(axis="y", labelsize=6, colors="grey", length=2)
+    ax_cnt.spines["right"].set_color("lightgrey")
+    ax_cnt.set_ylim(0, max(counts) * 4)
+
+    # ── bottom panel: delta ───────────────────────────────────────────────────
+    md = np.array(mean_delta); sd = np.array(std_delta)
+
+    ax_bot.plot(pa, md, color=_FSIM_DELTA_COLOR, linewidth=1.8, marker="D",
+                markersize=4, zorder=3, label="Δ sim  (h¹ − raw)")
+    ax_bot.fill_between(pa, md - sd, md + sd,
+                        color=_FSIM_DELTA_COLOR, alpha=0.15, zorder=2)
+    ax_bot.axhline(0, color="grey", linestyle="--", linewidth=0.9, zorder=1)
+
+    ax_bot.set_ylabel("Δ cosine similarity\n(h¹ − raw)", fontsize=10)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
+    ax_bot.legend(fontsize=9, framealpha=0.85, loc="upper left")
+
+    _degree_axis(ax_bot, pos, degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "feature_similarity"),
+          f"{prefix}_feature_similarity_delta_vs_degree.png", show)
+
+
 def plot_train_neighbor_degree_stats(
     stats, test_deg, pred, data, cfg, k=2, save_dir=None, show=False
 ):
