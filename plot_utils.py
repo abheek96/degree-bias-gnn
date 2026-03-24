@@ -1694,6 +1694,121 @@ def plot_influence_per_neighbor(results, cfg, save_dir=None, show=False):
         _save(fig, subdir, fname, show)
 
 
+_SIM_COLORS = {
+    "same_train": "#1f78b4",   # blue
+    "diff_train": "#ff7f00",   # orange
+    "non_train":  "#bdbdbd",   # light grey
+}
+_SIM_LABELS = {
+    "same_train": "Same-class train",
+    "diff_train": "Diff-class train",
+    "non_train":  "Non-training",
+}
+
+
+def plot_node_similarity_analysis(results, cfg, save_dir=None, show=False):
+    """Per-node bar charts: cosine similarity to each 1-hop neighbor at
+    every representation level (raw features → h^1 → … → h^k_hops).
+
+    One figure per node, one panel per layer.  Bars are colored by neighbor
+    type (same_train / diff_train / non_train) and sorted by raw-feature
+    similarity (descending) — the sort order is fixed across all panels so
+    changes are easy to track visually.
+
+    Parameters
+    ----------
+    results  : list of dicts from compute_node_similarity_analysis.
+    cfg      : dict
+    save_dir : str or None
+    show     : bool
+    """
+    if not results:
+        log.warning("plot_node_similarity_analysis: no results to plot")
+        return
+
+    prefix = _fname_prefix(cfg)
+    subdir = _subdir(save_dir, "node_similarity")
+
+    layer_names = ["Raw (x)"]      # first panel label
+
+    for result in results:
+        node_x    = result["node_idx"]
+        degree    = result["degree"]
+        true_lbl  = result["true_label"]
+        pred_lbl  = result["pred_label"]
+        k_hops    = result["k_hops"]
+        neighbors = result["neighbors"]
+
+        if not neighbors:
+            continue
+
+        # Build layer names lazily from k_hops
+        all_layer_names = ["Raw (x)"] + [f"h^{l}" for l in range(1, k_hops + 1)]
+        n_layers = len(all_layer_names)   # k_hops + 1
+        n_nbs    = len(neighbors)
+        x_pos    = np.arange(n_nbs)
+
+        colors    = [_SIM_COLORS[nb["type"]] for nb in neighbors]
+        tick_lbls = [f"{nb['node_idx']}\n(deg {nb['degree']})" for nb in neighbors]
+        correct   = true_lbl == pred_lbl
+
+        fig, axes = plt.subplots(
+            n_layers, 1,
+            figsize=(_fig_w(n_nbs), 3.2 * n_layers),
+            sharex=True,
+        )
+        if n_layers == 1:
+            axes = [axes]
+
+        for li, (ax, lname) in enumerate(zip(axes, all_layer_names)):
+            sims = [nb["similarities"][li] for nb in neighbors]
+            bars = ax.bar(x_pos, sims, color=colors, width=0.65,
+                          edgecolor="white", linewidth=0.4, zorder=2)
+            ax.axhline(0, color="grey", linewidth=0.6, linestyle="--", zorder=1)
+            ax.set_ylim(-1.05, 1.05)
+            ax.set_ylabel(f"Cosine sim\n{lname}", fontsize=9)
+            ax.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35, zorder=0)
+            ax.set_title(lname, fontsize=9, loc="right", color="#555555")
+
+            # Annotate bar tops with sim value
+            for bar, s in zip(bars, sims):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    max(s, 0) + 0.03,
+                    f"{s:.2f}",
+                    ha="center", va="bottom", fontsize=5.5, color="#333333",
+                )
+
+        # x-ticks on last panel only
+        axes[-1].set_xticks(x_pos)
+        axes[-1].set_xticklabels(tick_lbls, fontsize=6, ha="center")
+        axes[-1].set_xlabel(
+            "1-hop neighbor  (sorted by raw-feature similarity, descending)",
+            fontsize=9,
+        )
+
+        # Legend
+        seen_types = {nb["type"] for nb in neighbors}
+        legend_handles = [
+            mpatches.Patch(facecolor=_SIM_COLORS[t], label=_SIM_LABELS[t])
+            for t in ("same_train", "diff_train", "non_train") if t in seen_types
+        ]
+        axes[0].legend(handles=legend_handles, fontsize=8,
+                       framealpha=0.85, loc="upper right")
+
+        verdict = "✓ correct" if correct else "✗ wrong"
+        fig.suptitle(
+            f"Node {node_x}  |  degree={degree}  |  "
+            f"true={true_lbl}  pred={pred_lbl}  {verdict}\n"
+            f"Cosine similarity to 1-hop neighbors across representation layers",
+            fontsize=10, y=1.01,
+        )
+
+        fig.tight_layout()
+        fname = f"{prefix}_node_similarity_node{node_x}_deg{degree}.png"
+        _save(fig, subdir, fname, show)
+
+
 # Influence disparity plot colours
 _DISP_POS_COLOR = "#1976D2"   # blue  — same-class dominant
 _DISP_NEG_COLOR = "#E53935"   # red   — diff-class dominant

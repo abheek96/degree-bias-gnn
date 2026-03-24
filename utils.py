@@ -523,6 +523,129 @@ def get_node_purity(data, k: int = 1) -> torch.Tensor:
     return purity
 
 
+def analyse_node_similarity(model, data, node_x: int, k_hops: int) -> dict | None:
+    """Cosine similarity between node_x and each of its 1-hop neighbors at
+    every representation level: raw input features, h^1, …, h^k_hops.
+
+    Neighbors are classified as same_train / diff_train / non_train and sorted
+    by raw-feature similarity (descending) so the ordering is consistent across
+    all layer panels.
+
+    Parameters
+    ----------
+    model   : trained GCN with get_intermediate()
+    data    : PyG Data object
+    node_x  : target node global index
+    k_hops  : number of GCNConv layers (num_layers - 1)
+
+    Returns
+    -------
+    dict with keys:
+        node_idx, degree, true_label, pred_label, k_hops,
+        neighbors: list of {node_idx, degree, type,
+                             similarities: [sim_raw, sim_h1, …, sim_hk]}
+    Returns None if node_x has no 1-hop neighbors.
+    """
+    import torch.nn.functional as F_fn
+    from torch_geometric.utils import degree as graph_degree
+
+    x          = data.x.cpu()
+    y          = data.y.cpu()
+    src        = data.edge_index[0].cpu()
+    dst        = data.edge_index[1].cpu()
+    train_mask = data.train_mask.cpu()
+    all_deg    = graph_degree(data.edge_index[1], data.num_nodes).cpu()
+
+    model.eval()
+    with torch.no_grad():
+        pred = model(data.x, data.edge_index).argmax(dim=1).cpu()
+
+    # All representation levels: raw + one per GCNConv layer
+    layer_reps = [x]
+    for l in range(1, k_hops + 1):
+        layer_reps.append(
+            model.get_intermediate(data.x, data.edge_index, layer=l).cpu()
+        )
+
+    neighbors = dst[src == node_x].tolist()
+    if not neighbors:
+        log.warning("node_similarity: node %d has no 1-hop neighbors", node_x)
+        return None
+
+    true_lbl = int(y[node_x].item())
+    log.info(
+        "node_similarity: node %d  degree=%d  true=%d  pred=%d  n_neighbors=%d",
+        node_x, int(all_deg[node_x].item()), true_lbl,
+        int(pred[node_x].item()), len(neighbors),
+    )
+
+    neighbor_detail = []
+    for nb in neighbors:
+        nb_type = (
+            ("same_train" if int(y[nb].item()) == true_lbl else "diff_train")
+            if bool(train_mask[nb].item()) else "non_train"
+        )
+        sims = [
+            float(F_fn.cosine_similarity(
+                rep[node_x].unsqueeze(0), rep[nb].unsqueeze(0)
+            ).item())
+            for rep in layer_reps
+        ]
+        log.info(
+            "  neighbor %d  type=%-12s  deg=%d  sim_raw=%.4f  sim_hk=%.4f  delta=%.4f",
+            nb, nb_type, int(all_deg[nb].item()),
+            sims[0], sims[-1], sims[-1] - sims[0],
+        )
+        neighbor_detail.append({
+            "node_idx":     int(nb),
+            "degree":       int(all_deg[nb].item()),
+            "type":         nb_type,
+            "similarities": sims,   # [sim_raw, sim_h1, …, sim_hk]
+        })
+
+    # Sort by raw feature similarity descending — fixed order across all panels
+    neighbor_detail.sort(key=lambda d: d["similarities"][0], reverse=True)
+
+    return {
+        "node_idx":   node_x,
+        "degree":     int(all_deg[node_x].item()),
+        "true_label": true_lbl,
+        "pred_label": int(pred[node_x].item()),
+        "k_hops":     k_hops,
+        "neighbors":  neighbor_detail,
+    }
+
+
+def compute_node_similarity_analysis(
+    model, data, k_hops: int,
+    target_nodes: list = None,
+) -> list:
+    """Run analyse_node_similarity for each node in target_nodes.
+
+    Skips out-of-range indices and deduplicates.  Returns a list of result
+    dicts (one per successfully analysed node).
+    """
+    N       = data.num_nodes
+    results = []
+    seen    = set()
+
+    for node_x in (target_nodes or []):
+        if node_x < 0 or node_x >= N:
+            log.warning(
+                "node_similarity: node_idx=%d out of range [0, %d) — skipping",
+                node_x, N,
+            )
+            continue
+        if node_x in seen:
+            continue
+        seen.add(node_x)
+        result = analyse_node_similarity(model, data, node_x, k_hops)
+        if result is not None:
+            results.append(result)
+
+    return results
+
+
 def get_feature_similarity_delta(data, model, k_hops: int = 1) -> list:
     """Per-test-node cosine similarity to same-class training 1-hop neighbors,
     measured in raw feature space and after one step of message passing (h^(1)).

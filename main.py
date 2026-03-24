@@ -14,9 +14,9 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree
+from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_node_similarity_analysis, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree
 from influence import compute_influence_analysis, compute_influence_disparity_all
-from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta
+from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta, compute_node_similarity_analysis
 from train import train
 from test import evaluate
 
@@ -415,6 +415,17 @@ def main():
         )
         plot_influence_per_neighbor(
             influence_results, cfg,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+
+    if plot_cfg.get("similarity_nodes"):
+        sim_node_results = compute_node_similarity_analysis(
+            model, data, k_hops=k_hops,
+            target_nodes=plot_cfg.get("similarity_nodes"),
+        )
+        plot_node_similarity_analysis(
+            sim_node_results, cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
