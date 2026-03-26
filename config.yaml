@@ -3,7 +3,7 @@ num_runs: 5
 device: 'cuda'
 
 results_dir: ./results
-split: 'public'        # random, public, or custom
+split: 'random'        # random, public, or custom
 
 dataset:
   name: Cora
@@ -40,8 +40,8 @@ plot:
   purity_k_max: 2
   class_accuracy: true
   influence_analysis: true
-  influence_degrees: [8]        # exact degree values to investigate, e.g. [3, 5, 10]
-  influence_nodes: [1858, 1930, 1985, 2021, 2152]            # explicit node indices to investigate, e.g. [1362, 42]
+  influence_degrees: [16]        # exact degree values to investigate, e.g. [3, 5, 10]
+  influence_nodes: []            # explicit node indices to investigate, e.g. [1362, 42]
   similarity_nodes: []          # node indices for per-node layer-wise similarity analysis, e.g. [1858, 1930]
   feature_similarity: true      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
   influence_disparity: true     # disparity for ALL test nodes (expensive: one Jacobian per node)
