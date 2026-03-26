@@ -66,6 +66,18 @@ def run(data, cfg, run_id, device):
         dropout=model_cfg["dropout"],
     ).to(device)
 
+    # If a pre-trained weights file is provided, load it and skip training
+    weights_path = model_cfg.get("weights_path") or None
+    if weights_path:
+        log.info("  [Run %d] Loading weights from %s — skipping training", run_id, weights_path)
+        state = torch.load(weights_path, map_location=device)
+        model.load_state_dict(state)
+        model.eval()
+        with torch.no_grad():
+            pred = model(data.x, data.edge_index).argmax(dim=1)
+        results = evaluate(model, data)
+        return results["val"], results["test"], results["train"], float("nan"), pred, model
+
     train_cfg = cfg["train"]
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["lr"], weight_decay=float(train_cfg["weight_decay"]))
     criterion = torch.nn.CrossEntropyLoss()

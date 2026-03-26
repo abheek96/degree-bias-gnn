@@ -2,12 +2,14 @@ from .gcn import GCN
 from .gat import GAT
 from .graphsage import GraphSAGE
 from .gcnii import GCNII
+from .mpnn import MPNN
 
 MODEL_REGISTRY = {
     "GCN": GCN,
     "GAT": GAT,
     "GraphSAGE": GraphSAGE,
     "GCNII": GCNII,
+    "MPNN": MPNN,
 }
 
 

@@ -1,0 +1,24 @@
+model:
+  name: MPNN
+  hidden_dim: 512
+  num_layers: 3
+  dropout: 0.0
+  weights_path: null   # set to e.g. models/mpnn_cora_weights.pt to skip training
+
+train:
+  lr: 0.001
+  weight_decay: 5e-4
+  epochs: 10000
+  patience: 0
+
+plot:
+  layer_values: [3]
+  compare_models: [MPNN]
+  model_layer_values:
+    MPNN: [3]
+  model_hyperparams:
+    MPNN:
+      hidden_dim: 512
+      dropout: 0.0
+      lr: 0.001
+      patience: 0
