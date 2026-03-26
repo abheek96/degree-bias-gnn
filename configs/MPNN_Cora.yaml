@@ -2,7 +2,10 @@ model:
   name: MPNN
   hidden_dim: 512
   num_layers: 3
-  dropout: 0.0
+  dropout: 0.7
+  layer_norm: false
+  batch_norm: false
+  residual: false
   weights_path: null   # set to e.g. models/mpnn_cora_weights.pt to skip training
 
 train:
@@ -19,6 +22,6 @@ plot:
   model_hyperparams:
     MPNN:
       hidden_dim: 512
-      dropout: 0.0
+      dropout: 0.7
       lr: 0.001
       patience: 0

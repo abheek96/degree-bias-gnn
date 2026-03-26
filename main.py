@@ -57,6 +57,8 @@ def run(data, cfg, run_id, device):
     from models import get_model
 
     model_cfg = cfg["model"]
+    _standard_keys = {"name", "hidden_dim", "num_layers", "dropout", "weights_path"}
+    extra_kwargs = {k: v for k, v in model_cfg.items() if k not in _standard_keys}
     model = get_model(
         model_cfg["name"],
         in_dim=data.num_node_features,
@@ -64,6 +66,7 @@ def run(data, cfg, run_id, device):
         out_dim=int(data.y.max().item()) + 1,
         num_layers=model_cfg["num_layers"],
         dropout=model_cfg["dropout"],
+        **extra_kwargs,
     ).to(device)
 
     # If a pre-trained weights file is provided, load it and skip training
