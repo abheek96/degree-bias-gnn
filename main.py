@@ -88,7 +88,7 @@ def run(data, cfg, run_id, device):
     best_val_acc = 0.0
     best_test_acc = 0.0
     best_train_acc = 0.0
-    best_loss = float("nan")
+    best_loss = float("inf")
     best_state = copy.deepcopy(model.state_dict())
     patience_counter = 0
     patience = train_cfg.get("patience", 0)
@@ -98,12 +98,16 @@ def run(data, cfg, run_id, device):
         loss = train(model, data, optimizer, criterion)
         results = evaluate(model, data)
 
+        # Track best checkpoint by validation accuracy
         if results["val"] > best_val_acc:
             best_val_acc = results["val"]
             best_test_acc = results["test"]
             best_train_acc = results["train"]
-            best_loss = loss
             best_state = copy.deepcopy(model.state_dict())
+
+        # Patience tracked on training loss improvement
+        if loss < best_loss:
+            best_loss = loss
             patience_counter = 0
         else:
             patience_counter += 1
@@ -119,9 +123,14 @@ def run(data, cfg, run_id, device):
             log.info("  [Run %d] Epoch %d  loss=%.4f  train=%.4f  val=%.4f  test=%.4f",
                      run_id, epoch, loss, results["train"], results["val"], results["test"])
 
+        if results["train"] >= 1.0:
+            epoch_bar.close()
+            log.info("  [Run %d] Train accuracy reached 100%% at epoch %d", run_id, epoch)
+            break
+
         if patience > 0 and patience_counter >= patience:
             epoch_bar.close()
-            log.info("  [Run %d] Early stopping at epoch %d", run_id, epoch)
+            log.info("  [Run %d] Early stopping (no loss improvement) at epoch %d", run_id, epoch)
             break
 
     # Restore best checkpoint and produce predictions for the full graph

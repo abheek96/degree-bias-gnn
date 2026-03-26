@@ -12,7 +12,7 @@ train:
   lr: 0.001
   weight_decay: 5e-4
   epochs: 10000
-  patience: 0
+  patience: 200   # stop if loss does not improve for 200 consecutive epochs
 
 plot:
   layer_values: [3]
