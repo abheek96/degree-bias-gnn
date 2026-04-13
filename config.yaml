@@ -1,9 +1,9 @@
 seed: 42
-num_runs: 5
+num_runs: 10
 device: 'cuda'
 
 results_dir: ./results
-split: 'random'        # random, public, or custom
+split: 'public'        # random, public, or custom
 
 dataset:
   name: Cora
@@ -22,7 +22,7 @@ model:
 train:
   lr: 0.001
   weight_decay: 5e-4
-  epochs: 10000      # safety cap; loop stops early when train acc = 100%
+  epochs: 500      # safety cap; loop stops early when train acc = 100%
   patience: 0        # disabled — stopping criterion is train accuracy, not val
 
 plot:
@@ -40,10 +40,10 @@ plot:
   purity_k_max: 2
   class_accuracy: true
   influence_analysis: true
-  influence_degrees: [16]        # exact degree values to investigate, e.g. [3, 5, 10]
+  influence_degrees: [17]        # exact degree values to investigate, e.g. [3, 5, 10]
   influence_nodes: []            # explicit node indices to investigate, e.g. [1362, 42]
   similarity_nodes: []          # node indices for per-node layer-wise similarity analysis, e.g. [1858, 1930]
-  feature_similarity: true      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
+  feature_similarity: false      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
   influence_disparity: true     # disparity for ALL test nodes (expensive: one Jacobian per node)
   train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
   save: true
