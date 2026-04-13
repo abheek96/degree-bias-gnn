@@ -102,4 +102,85 @@ Open investigation tasks that have not yet been implemented. Each item includes 
 
 ---
 
-*Last updated: 2026-03-21*
+## 6. Validation node analysis: degree-wise performance and structural properties
+
+**Question:** Do validation nodes exhibit the same degree-bias patterns as test nodes? Are the global and local structural properties of val nodes systematically different from those of test nodes, and do those differences explain any gap in degree-wise accuracy between the two splits?
+
+**Motivation:** All current analyses (accuracy vs degree, purity, SPL, labelling ratio, influence disparity, feature similarity) are run exclusively on test nodes. Since the best checkpoint is selected based on val accuracy, understanding how val nodes differ structurally from test nodes is important — if val nodes are structurally easier (e.g. lower average degree, higher purity, shorter SPL to training nodes), the checkpoint selection criterion may be systematically biased towards configurations that generalise well to easy nodes but not hard ones.
+
+**Approach:**
+- Replicate all existing degree-wise analyses for val nodes: accuracy vs degree, neighbourhood purity, SPL to training nodes, labelling ratio, cardinality, influence disparity, feature similarity delta.
+- Compute global structural properties for val vs test nodes side by side: degree distribution, mean/median SPL to any training node, mean purity at k=1 and k=2, labelling ratio, class balance.
+- Plot val vs test comparison for each metric: overlaid lines or grouped bars, one panel per metric.
+- Check whether degree ranges well-represented in val are under-represented in test and vice versa — if so, the checkpoint may be optimised for a different degree regime than the one being evaluated.
+
+**Best-checkpoint analysis:**
+- The best model checkpoint is selected by val accuracy, so the structural properties of val nodes directly shape which checkpoint is saved. Analyse the val nodes specifically at the best checkpoint epoch: do correctly-classified val nodes at that epoch have systematically lower degree, higher purity, or shorter SPL than the val nodes that are misclassified?
+- Check whether val nodes are randomly sampled (random split) or fixed (public split) and whether their structural profile changes across seeds — if val nodes happen to be structurally easy (e.g. low degree, high purity), the checkpoint selection is biased toward configurations that work well for easy nodes.
+- For random splits, note that val nodes are drawn uniformly from the non-training remainder with no stratification by degree or class, so the val set can vary substantially in structural difficulty across seeds.
+- For public splits with CC enabled, val nodes outside the largest connected component are silently dropped with no rebalancing, potentially skewing the val set toward denser, more central nodes.
+
+## 7. Hyperparameter grid search
+
+**Question:** Do the degree-bias observations hold robustly across hyperparameter configurations, or are they artefacts of a specific setting?
+
+**Motivation:** All current analyses use a fixed hyperparameter set. If the degree-bias pattern disappears or strengthens under different configurations (lr, hidden dim, dropout, num_layers), the observation is not robust. A grid search establishes which hyperparameter regimes amplify or suppress the bias, and ensures the best-performing configuration is used as the reference point for all other analyses.
+
+**Approach:**
+- Grid over: `lr ∈ [1e-3, 5e-3, 1e-2]`, `hidden_dim ∈ [64, 256, 512]`, `dropout ∈ [0.0, 0.3, 0.5, 0.7]`, `num_layers ∈ [2, 3, 4]`.
+- Select best configuration by mean val accuracy across seeds.
+- Re-run all degree-wise analyses on the best configuration and compare degree-bias profiles against the default configuration.
+
+---
+
+## 8. Confirm observations with pre-trained models from related works
+
+**Question:** Do the degree-bias observations generalise beyond this codebase, or are they an artefact of this specific training setup?
+
+**Motivation:** Using a pre-trained, best-performing model from related work (e.g. MPNN, GCNII, or a model from the LINKX/GLCN family) as a fixed feature extractor removes training variability. If the same degree-bias pattern appears in the predictions of an externally trained model, the observation is a property of the graph structure and aggregation mechanism — not of this training loop.
+
+**Key observation (current finding):** Analyses on the public split do not yield clear or interpretable conclusions — the degree-bias signal is weak or absent. The random split, by contrast, produces coherent and relevant results where degree-bias patterns emerge clearly. This makes the random split the primary setting for all analyses going forward. The public split's lack of signal is likely due to its fixed, non-representative assignment of training/val/test nodes (only 20 training nodes per class, test nodes concentrated in specific degree ranges), which confounds the structural signal. The random split distributes nodes more uniformly across degree ranges, making degree-bias effects visible.
+
+**Secondary observation (public split + CC, tuned MPNN weights, 10 runs):** Even on the public split, `accuracy_vs_degree_across_runs` shows non-trivial variance across seeds for mid/high-degree nodes (e.g. deg=16). Mid-degree groups do not consistently outperform lower-degree ones — the expected monotonic accuracy-vs-degree trend does not hold reliably. This further supports that the public split is not a clean setting for observing degree-bias: the fixed test node assignment likely places nodes of varying structural quality into the same degree bucket, masking the signal with between-node heterogeneity rather than between-degree differences.
+
+**Approach:**
+- Load pre-trained weights from a related-work model (e.g. the saved MPNN weights).
+- Run all analyses (accuracy vs degree, purity, SPL, influence disparity, feature similarity) on its predictions without any fine-tuning.
+- Focus on random splits as the primary evaluation setting; run public split as a secondary check to document the contrast.
+- Investigate why the public split suppresses the degree-bias signal: is it the training node count (20 per class), the specific nodes chosen as test nodes, or the degree distribution of test nodes in the public split?
+
+---
+
+## 9. Additional graph-level and node-level characteristics
+
+**Question:** Are there other structural properties of the graph or individual nodes — beyond degree, purity, SPL, and labelling ratio — that explain why certain nodes are consistently misclassified?
+
+**Motivation:** The current metrics focus on immediate neighborhood quality. But node performance may also be explained by properties such as: position within the graph (core vs periphery), local clustering, betweenness centrality, or ego-graph homophily. Identifying additional predictive properties would deepen the structural narrative and may suggest new mitigation strategies.
+
+**Candidates to explore:**
+- **Clustering coefficient** — do nodes in tightly connected local clusters classify better?
+- **Betweenness / closeness centrality** — are high-centrality nodes easier or harder to classify?
+- **Ego-graph homophily** — homophily ratio within the node's k-hop subgraph vs the global graph homophily.
+- **Feature-label alignment** — cosine similarity between a node's features and the mean features of its true class in the training set.
+- **Position relative to class boundary** — does the node sit at the boundary between two class regions in feature space or in graph topology?
+
+---
+
+## 10. Confirm the necessity of restricting analysis to the largest connected component
+
+**Question:** Do smaller disconnected components confound the degree-bias signal, and is restricting to the largest connected component (LCC) the right way to isolate the phenomenon?
+
+**Motivation:** Real-world citation/co-authorship graphs often contain a large main component and many small satellite components. Nodes in smaller components are structurally different from LCC nodes in ways that are unrelated to degree-bias per se:
+- They tend to have low degree by construction (small components cannot contain high-degree hubs).
+- They may lack any training node entirely, so the GNN has no labeled signal to propagate to them — misclassification there is a label-propagation failure, not a degree-bias failure.
+- Mixing LCC nodes and satellite-component nodes in the same analysis conflates two distinct failure modes: (a) degree-bias within a well-connected graph, and (b) isolation / no-training-signal effects in disconnected fragments.
+
+The goal of this project is to establish whether degree-bias exists as a structural phenomenon inside a connected graph. Including satellite components muddies this picture because their low degree is an artifact of component size, not of the aggregation mechanism acting on a dense neighborhood.
+
+**Approach:**
+- For a dataset without CC filtering applied, compute the component-size distribution: how many components exist, and what fraction of nodes are outside the LCC?
+- Profile nodes in smaller components: degree distribution, fraction with at least one training neighbor, classification accuracy. Confirm that these nodes are systematically lower-degree and more often lack training neighbors.
+- Run the core degree-bias analysis (accuracy vs degree) twice — once on all nodes, once on LCC-only nodes — and compare the curves. If the low-degree, low-accuracy region is driven primarily by satellite-component nodes, the degree-bias signal in the full-graph analysis is partially artifactual.
+- Document the LCC filtering decision in `RESEARCH.md` with this evidence: filtering is not just a convenience but a methodological choice to isolate the aggregation-based degree-bias mechanism from the unrelated no-training-signal failure mode.
+
+*Last updated: 2026-04-13*

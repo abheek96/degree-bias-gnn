@@ -59,6 +59,20 @@ def run(data, cfg, run_id, device):
     model_cfg = cfg["model"]
     _standard_keys = {"name", "hidden_dim", "num_layers", "dropout", "weights_path"}
     extra_kwargs = {k: v for k, v in model_cfg.items() if k not in _standard_keys}
+
+    # If a weights file is provided, infer layer_norm / batch_norm from the
+    # checkpoint keys so the model is built with the right architecture before
+    # load_state_dict is called.
+    weights_path = model_cfg.get("weights_path") or None
+    if weights_path:
+        _ckpt_keys = set(torch.load(weights_path, map_location="cpu").keys())
+        if "layer_norm" not in extra_kwargs:
+            extra_kwargs["layer_norm"] = any(k.startswith("lns.") for k in _ckpt_keys)
+        if "batch_norm" not in extra_kwargs:
+            extra_kwargs["batch_norm"] = any(k.startswith("bns.") for k in _ckpt_keys)
+        log.info("  [Run %d] Inferred from checkpoint — layer_norm=%s  batch_norm=%s",
+                 run_id, extra_kwargs["layer_norm"], extra_kwargs["batch_norm"])
+
     model = get_model(
         model_cfg["name"],
         in_dim=data.num_node_features,
@@ -70,7 +84,6 @@ def run(data, cfg, run_id, device):
     ).to(device)
 
     # If a pre-trained weights file is provided, load it and skip training
-    weights_path = model_cfg.get("weights_path") or None
     if weights_path:
         log.info("  [Run %d] Loading weights from %s — skipping training", run_id, weights_path)
         state = torch.load(weights_path, map_location=device)

@@ -505,3 +505,53 @@ Until these are done, the current state is: the structural metrics motivate the 
 **Broader validation:**
 - **Broader study:** replicate findings across multiple random splits and public splits; across datasets (CiteSeer, PubMed, ogbn-arxiv, Chameleon, Squirrel); across model architectures (GCN, GCNII, GAT).
 - **Higher hops:** run influence analysis at k=3 and k=4 for the same selected nodes; compare GCN vs GCNII to separate over-smoothing from degree bias.
+
+---
+
+## 9. Project Summary
+
+> Last updated: 2026-04-13
+
+### What Was Built
+
+**Infrastructure**
+- Full pipeline: data loading → split → training → evaluation → analysis → plots → PDF report
+- Supports GCN, GAT, GraphSAGE, GCNII, MPNN; public and random splits; largest connected component filtering; class-balanced training node top-up after CC filtering
+- Per-model config overrides (`configs/GCN_Cora.yaml`, `GCNII_Cora.yaml`, `MPNN_Cora.yaml`)
+- MPNN: supports optional BatchNorm, LayerNorm, residual connections, pre-trained weight loading (skips training)
+
+**Analyses implemented**
+
+| # | Metric | What it measures |
+|---|---|---|
+| 1 | Accuracy vs degree | Primary degree-bias signal; per-degree boxplots across runs |
+| 2 | Neighbourhood cardinality | k=1 and k=2 neighbourhood sizes; variance within same-degree group |
+| 3 | Distance to training nodes | Min hops to any / same-class training node, by degree |
+| 4 | Average SPL | Mean BFS distance to all / same-class training nodes |
+| 5 | Labelling ratio | Whether a test node has a direct training neighbour |
+| 6 | Neighbourhood purity + Δpurity | Fraction of k-hop neighbours sharing the node's label; how it degrades with k |
+| 7 | Influence analysis | Exact Jacobian-based influence of each training node on a selected test node |
+| 8 | Training-neighbor degree stats | Mean degree of same vs diff-class training nodes in k-hop field; degree advantage |
+| 9 | Influence disparity | `same_class_inf_norm − diff_class_inf_norm` for every test node; plotted vs degree |
+| 10 | Feature similarity delta | Cosine sim to same-class training neighbours in raw vs post-message-passing representation space |
+| 11 | Per-node layer-wise similarity | Cosine sim to each 1-hop neighbour at every representation layer (raw → h¹ → … → hᵏ) |
+
+---
+
+### Key Observations
+
+1. **Higher degree → higher accuracy, generally — but not monotonically.** Certain mid/high-degree nodes are anomalously misclassified, meaning degree alone does not explain performance.
+
+2. **Anomalies are explained by purity, not degree.** Misclassified high-degree nodes sit in low-purity neighbourhoods (many diff-class neighbours). Δpurity is negative for these nodes — adding hops makes it worse.
+
+3. **Large 2-hop cardinality variance within a degree group.** Two nodes with the same 1-hop degree can have dramatically different 2-hop neighbourhoods. This variance correlates with accuracy variance within a degree group.
+
+4. **SPL and labelling ratio compound the problem.** Nodes far from same-class training nodes and without any direct labelled neighbour receive diluted, class-inconsistent signal.
+
+5. **Influence disparity confirms aggregation failure.** For misclassified high-degree nodes, the model assigns near-zero influence to same-class training nodes and high influence to diff-class ones — the training signal reaching the node is dominated by the wrong class.
+
+6. **Feature similarity delta is negative for hard nodes.** Message passing pulls a node's representation away from its same-class training neighbours in feature space, confirming that structural noise (low purity) manifests as representational corruption.
+
+7. **Triple-confirmed failure mode.** Nodes with low purity + negative Δfeature sim + negative influence disparity are the worst-case nodes: structural, representational, and gradient-flow problems all converge.
+
+8. **Random splits vs public splits.** Not yet fully analysed; the hypothesis is that degree bias may be weaker on random splits since training nodes are distributed more uniformly across degree groups.
