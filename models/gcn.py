@@ -1,7 +1,72 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pandas as pd
 from torch_geometric.nn import GCNConv
+from torch_geometric.nn.conv.gcn_conv import gcn_norm
+from torch_geometric.utils import degree as pyg_degree
+
+
+def inspect_node_aggregation(node_idx, edge_index, train_mask, y,
+                              edge_weight=None, deg=None):
+    """Print a table of all neighbors that node_idx aggregates from in GCNConv.
+
+    Computes normalized edge weights via gcn_norm (same as GCNConv with default
+    settings: self-loops added, symmetric normalization) if not provided.
+
+    Parameters
+    ----------
+    node_idx   : int — the target node to inspect.
+    edge_index : LongTensor (2, E)
+    train_mask : BoolTensor (N,)
+    y          : LongTensor (N,) of class labels
+    edge_weight: FloatTensor (E,) or None — if None, gcn_norm is called.
+    deg        : LongTensor (N,) or None — if None, computed from edge_index.
+
+    Returns
+    -------
+    pandas.DataFrame with one row per neighbor (including self-loop).
+    """
+    edge_index = edge_index.cpu()
+    train_mask = train_mask.cpu()
+    y = y.cpu()
+    num_nodes = y.size(0)
+
+    if deg is None:
+        deg = pyg_degree(edge_index[0], num_nodes=num_nodes).long()
+    else:
+        deg = deg.cpu()
+
+    if edge_weight is None:
+        edge_index, edge_weight = gcn_norm(
+            edge_index, edge_weight=None, num_nodes=num_nodes,
+            improved=False, add_self_loops=True, flow="source_to_target",
+        )
+    edge_weight = edge_weight.cpu()
+
+    col = edge_index[1]
+    mask = col == node_idx
+    src_nodes = edge_index[0][mask].tolist()
+    weights   = edge_weight[mask].tolist()
+
+    target_label = y[node_idx].item()
+    rows = []
+    for src, w in zip(src_nodes, weights):
+        rows.append({
+            "neighbor": src,
+            "edge_weight": round(w, 6),
+            "degree": deg[src].item(),
+            "in_train_set": bool(train_mask[src].item()),
+            "same_class": y[src].item() == target_label,
+            "class_label": y[src].item(),
+        })
+
+    df = pd.DataFrame(rows).sort_values("neighbor").reset_index(drop=True)
+    print(f"\nAggregation neighborhood for node {node_idx}  "
+          f"(class={target_label}, degree={deg[node_idx].item()}, "
+          f"in_train={bool(train_mask[node_idx].item())})\n")
+    print(df.to_string(index=False))
+    return df
 
 
 class GCN(nn.Module):

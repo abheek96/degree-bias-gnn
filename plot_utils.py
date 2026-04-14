@@ -46,6 +46,35 @@ def get_accuracy_deg(deg, pred, true):
     return result
 
 
+def nodes_in_degree_group(deg, degree, mask=None):
+    """Return the node indices that belong to a given degree group.
+
+    Parameters
+    ----------
+    deg    : 1-D LongTensor of node degrees, one entry per node in the graph
+             (length == data.num_nodes).
+    degree : int  — exact degree value, or
+             tuple (lo, hi) — inclusive range [lo, hi].
+    mask   : optional 1-D BoolTensor of length num_nodes; when provided, only
+             nodes where mask is True are considered (e.g. train_mask).
+
+    Returns
+    -------
+    1-D LongTensor of node indices (into the original node set).
+    """
+    deg = deg.cpu()
+    if isinstance(degree, (tuple, list)):
+        lo, hi = degree
+        hit = (deg >= lo) & (deg <= hi)
+    else:
+        hit = deg == degree
+
+    if mask is not None:
+        hit = hit & mask.cpu()
+
+    return hit.nonzero(as_tuple=False).view(-1)
+
+
 def get_accuracy_class(pred, true):
     """Group per-node predictions by true class label.
 
