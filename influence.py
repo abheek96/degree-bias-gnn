@@ -54,7 +54,7 @@ def _khop_neighbors(edge_index, node_x: int, k: int, num_nodes: int) -> set:
     src, dst = edge_index.cpu()
     adj = [[] for _ in range(num_nodes)]
     for u, v in zip(src.tolist(), dst.tolist()):
-        adj[u].append(v)
+        adj[v].append(u)   # reverse: BFS follows incoming edges, matching source_to_target aggregation
 
     visited  = {node_x}
     frontier = {node_x}
