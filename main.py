@@ -498,6 +498,7 @@ def main():
             edge_index=data.edge_index,
             train_mask=data.train_mask,
             y=data.y,
+            pred=pred,
             deg=all_deg,
         )
 

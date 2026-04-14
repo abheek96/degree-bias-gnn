@@ -8,7 +8,7 @@ from torch_geometric.utils import degree as pyg_degree
 
 
 def inspect_node_aggregation(node_idx, edge_index, train_mask, y,
-                              edge_weight=None, deg=None):
+                              pred=None, edge_weight=None, deg=None):
     """Print a table of all neighbors that node_idx aggregates from in GCNConv.
 
     Computes normalized edge weights via gcn_norm (same as GCNConv with default
@@ -20,6 +20,8 @@ def inspect_node_aggregation(node_idx, edge_index, train_mask, y,
     edge_index : LongTensor (2, E)
     train_mask : BoolTensor (N,)
     y          : LongTensor (N,) of class labels
+    pred       : LongTensor (N,) of predicted labels or None — if provided,
+                 adds a correct_pred column for each neighbor.
     edge_weight: FloatTensor (E,) or None — if None, gcn_norm is called.
     deg        : LongTensor (N,) or None — if None, computed from edge_index.
 
@@ -31,6 +33,9 @@ def inspect_node_aggregation(node_idx, edge_index, train_mask, y,
     train_mask = train_mask.cpu()
     y = y.cpu()
     num_nodes = y.size(0)
+
+    if pred is not None:
+        pred = pred.cpu()
 
     if deg is None:
         deg = pyg_degree(edge_index[0], num_nodes=num_nodes).long()
@@ -52,13 +57,16 @@ def inspect_node_aggregation(node_idx, edge_index, train_mask, y,
     target_label = y[node_idx].item()
     rows = []
     for src, w in zip(src_nodes, weights):
-        rows.append({
+        row = {
             "neighbor": src,
             "degree": deg[src].item(),
             "in_train_set": bool(train_mask[src].item()),
             "same_class": y[src].item() == target_label,
-            "edge_weight": round(w, 6),
-        })
+        }
+        if pred is not None:
+            row["correct_pred"] = bool((pred[src] == y[src]).item())
+        row["edge_weight"] = round(w, 6)
+        rows.append(row)
 
     df = (
         pd.DataFrame(rows)
