@@ -54,18 +54,27 @@ def inspect_node_aggregation(node_idx, edge_index, train_mask, y,
     for src, w in zip(src_nodes, weights):
         rows.append({
             "neighbor": src,
-            "edge_weight": round(w, 6),
             "degree": deg[src].item(),
             "in_train_set": bool(train_mask[src].item()),
             "same_class": y[src].item() == target_label,
-            "class_label": y[src].item(),
+            "edge_weight": round(w, 6),
         })
 
-    df = pd.DataFrame(rows).sort_values("neighbor").reset_index(drop=True)
+    df = (
+        pd.DataFrame(rows)
+        .sort_values(
+            ["in_train_set", "same_class", "degree"],
+            ascending=[False, False, True],
+        )
+        .reset_index(drop=True)
+    )
+    df.index += 1
+    df.index.name = "#"
+
     print(f"\nAggregation neighborhood for node {node_idx}  "
           f"(class={target_label}, degree={deg[node_idx].item()}, "
           f"in_train={bool(train_mask[node_idx].item())})\n")
-    print(df.to_string(index=False))
+    print(df.to_string())
     return df
 
 
