@@ -66,10 +66,8 @@ def run(data, cfg, run_id, device):
     weights_path = model_cfg.get("weights_path") or None
     if weights_path:
         _ckpt_keys = set(torch.load(weights_path, map_location="cpu").keys())
-        if "layer_norm" not in extra_kwargs:
-            extra_kwargs["layer_norm"] = any(k.startswith("lns.") for k in _ckpt_keys)
-        if "batch_norm" not in extra_kwargs:
-            extra_kwargs["batch_norm"] = any(k.startswith("bns.") for k in _ckpt_keys)
+        extra_kwargs["layer_norm"] = any(k.startswith("lns.") for k in _ckpt_keys)
+        extra_kwargs["batch_norm"] = any(k.startswith("bns.") for k in _ckpt_keys)
         log.info("  [Run %d] Inferred from checkpoint — layer_norm=%s  batch_norm=%s",
                  run_id, extra_kwargs["layer_norm"], extra_kwargs["batch_norm"])
 
