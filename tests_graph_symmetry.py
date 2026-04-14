@@ -2,23 +2,45 @@
 Tests for graph symmetry and consistency between inspect_node_aggregation
 and _khop_neighbors after the incoming-edge fix.
 
+IMPORTANT: uses the same data pipeline as main.py — CC filtering + random
+split seeded at 42 — so train_mask matches what the influence analysis sees.
+
 Run with:
     python tests_graph_symmetry.py
 """
 
+import random
+import numpy as np
 import torch
 from torch_geometric.datasets import Planetoid
 from torch_geometric.transforms import LargestConnectedComponents
 
+from dataset_utils import apply_split
 from influence import _khop_neighbors
 from models.gcn import inspect_node_aggregation
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
+def _set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
 def load_cora():
+    """Load Cora with CC filtering and random split (seed=42), matching main.py."""
     data = Planetoid(root="./data", name="Cora")[0]
     data = LargestConnectedComponents()(data)
+
+    _set_seed(42)
+    dataset_cfg = {
+        "name": "Cora",
+        "use_cc": True,
+        "num_train_per_class": 20,
+        "num_val": 500,
+    }
+    data = apply_split(data, split="random", dataset_cfg=dataset_cfg)
     return data
 
 
@@ -133,14 +155,55 @@ def test_inspect_matches_khop(node_idx=1894):
     return inspect_neighbors == khop
 
 
+# ── test 5: training nodes in inspect_node_aggregation match influence analysis ──
+
+def test_train_nodes_consistent(node_idx=1894):
+    """The training nodes flagged in inspect_node_aggregation must be exactly
+    the nodes that _khop_neighbors returns which are also in train_mask.
+    This catches any split mismatch between the two code paths."""
+    data = load_cora()
+    N = data.num_nodes
+
+    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
+
+    # training neighbors according to _khop_neighbors + train_mask
+    khop = _khop_neighbors(data.edge_index, node_idx, k=1, num_nodes=N)
+    khop_train = {n for n in khop if n in train_set}
+
+    # training neighbors according to inspect_node_aggregation
+    df = inspect_node_aggregation(
+        node_idx=node_idx,
+        edge_index=data.edge_index,
+        train_mask=data.train_mask,
+        y=data.y,
+    )
+    inspect_train = set(df.loc[df["in_train_set"], "neighbor"].tolist())
+    inspect_train.discard(node_idx)  # self-loop
+
+    only_in_khop    = khop_train - inspect_train
+    only_in_inspect = inspect_train - khop_train
+
+    print(f"\n[test_train_nodes_consistent]  node={node_idx}")
+    print(f"  train neighbors via _khop_neighbors        : {sorted(khop_train)}")
+    print(f"  train neighbors via inspect_node_aggregation: {sorted(inspect_train)}")
+    if only_in_khop or only_in_inspect:
+        print(f"  only in _khop     : {sorted(only_in_khop)}")
+        print(f"  only in inspect   : {sorted(only_in_inspect)}")
+        print("  FAIL — mismatch between the two code paths")
+    else:
+        print("  PASS — training neighbor sets are identical")
+    return khop_train == inspect_train
+
+
 # ── run all ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     results = {}
-    results["graph_symmetry"]        = test_graph_symmetry()
-    results["khop_matches_incoming"] = test_khop_matches_incoming(node_idx=1894)
+    results["graph_symmetry"]          = test_graph_symmetry()
+    results["khop_matches_incoming"]   = test_khop_matches_incoming(node_idx=1894)
     test_node_1894_edges()
-    results["inspect_matches_khop"]  = test_inspect_matches_khop(node_idx=1894)
+    results["inspect_matches_khop"]    = test_inspect_matches_khop(node_idx=1894)
+    results["train_nodes_consistent"]  = test_train_nodes_consistent(node_idx=1894)
 
     print("\n── Summary ──")
     for name, passed in results.items():
