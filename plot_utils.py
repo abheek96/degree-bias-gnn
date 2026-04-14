@@ -3004,3 +3004,96 @@ def plot_class_accuracy_and_degree(
     fig2.tight_layout()
     _save(fig2, _subdir(save_dir, "class_accuracy"),
           f"{prefix}_class_accuracy_and_train_degree.png", show)
+
+
+def plot_train_degree_distribution(
+    data,
+    cfg,
+    save_dir=None,
+    show=False,
+):
+    """Degree distribution of training nodes only.
+
+    Two panels stacked vertically:
+      - Top: histogram of training node degrees (counts), with a KDE overlay.
+      - Bottom: per-class boxplots of training node degree.
+
+    Parameters
+    ----------
+    data     : PyG Data object with train_mask, y, and edge_index set.
+    cfg      : experiment config dict.
+    save_dir : str or None
+    show     : bool
+    """
+    from torch_geometric.utils import degree as pyg_degree
+
+    deg = pyg_degree(data.edge_index[0], num_nodes=data.num_nodes).long()
+    train_mask = data.train_mask
+    train_deg = deg[train_mask].cpu().numpy().astype(float)
+    train_labels = data.y[train_mask].cpu().numpy()
+
+    all_classes = sorted(set(train_labels.tolist()))
+    n_cls = len(all_classes)
+    n_train = len(train_deg)
+    prefix = _fname_prefix(cfg)
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+    split   = cfg.get("split", "random")
+    cc      = "CC" if cfg["dataset"].get("use_cc", False) else "noCC"
+    subtitle = f"{dataset} · {model} · {split} · {cc}   |   {n_train:,} training nodes"
+
+    fig, (ax_hist, ax_box) = plt.subplots(
+        2, 1, figsize=(10, 8),
+        gridspec_kw={"height_ratios": [1.6, 1]},
+    )
+    fig.suptitle(f"Training Node Degree Distribution\n{subtitle}", fontsize=11)
+
+    # ── Top: histogram + KDE ──────────────────────────────────────────────────
+    max_deg = int(train_deg.max())
+    bins = np.arange(0, max_deg + 2) - 0.5
+    ax_hist.hist(train_deg, bins=bins, color=_CLS_TRAIN_COLOR, alpha=0.65,
+                 edgecolor="white", linewidth=0.4, label="Training nodes")
+
+    # KDE on a secondary axis so it doesn't share the count scale
+    ax_kde = ax_hist.twinx()
+    if len(train_deg) > 1:
+        from scipy.stats import gaussian_kde
+        kde_x = np.linspace(train_deg.min(), train_deg.max(), 300)
+        kde_y = gaussian_kde(train_deg)(kde_x)
+        ax_kde.plot(kde_x, kde_y, color="black", linewidth=1.5, label="KDE")
+        ax_kde.set_ylabel("Density", fontsize=10)
+        ax_kde.tick_params(axis="y", labelsize=9)
+
+    ax_hist.axvline(np.mean(train_deg), color="navy", linewidth=1.2,
+                    linestyle="--", label=f"Mean = {np.mean(train_deg):.1f}")
+    ax_hist.axvline(np.median(train_deg), color="darkorange", linewidth=1.2,
+                    linestyle=":", label=f"Median = {np.median(train_deg):.1f}")
+    ax_hist.set_xlabel("Degree", fontsize=11)
+    ax_hist.set_ylabel("Count", fontsize=11)
+    ax_hist.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    hist_handles, hist_labels = ax_hist.get_legend_handles_labels()
+    ax_hist.legend(hist_handles, hist_labels, fontsize=9, loc="upper right", framealpha=0.88)
+
+    # ── Bottom: per-class boxplots ────────────────────────────────────────────
+    cls_deg = [train_deg[train_labels == c] for c in all_classes]
+    pos = np.arange(n_cls)
+    bp = ax_box.boxplot(cls_deg, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp["boxes"]:
+        patch.set_facecolor(_CLS_TRAIN_COLOR)
+        patch.set_alpha(0.65)
+
+    n_per_cls = [len(train_deg[train_labels == c]) for c in all_classes]
+    ax_box.set_xticks(pos)
+    ax_box.set_xticklabels(
+        [f"Class {c}\n(n={n_per_cls[i]})" for i, c in enumerate(all_classes)],
+        fontsize=9,
+    )
+    ax_box.set_xlabel("Class", fontsize=11)
+    ax_box.set_ylabel("Degree", fontsize=11)
+    ax_box.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax_box.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "train_degree_dist"),
+          f"{prefix}_train_degree_distribution.png", show)
