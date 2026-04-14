@@ -43,6 +43,7 @@ plot:
   influence_degrees: [44]        # exact degree values to investigate, e.g. [3, 5, 10]
   influence_nodes: []            # explicit node indices to investigate, e.g. [1362, 42]
   similarity_nodes: []          # node indices for per-node layer-wise similarity analysis, e.g. [1858, 1930]
+  inspect_nodes: []             # node indices to inspect aggregation neighborhood, e.g. [42, 1362]
   feature_similarity: false      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
   influence_disparity: true     # disparity for ALL test nodes (expensive: one Jacobian per node)
   train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
