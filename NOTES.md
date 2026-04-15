@@ -234,6 +234,31 @@ A training node with zero influence simply means the model has learned (or faile
 
 ---
 
+## Training Node Degree and Influence
+
+### Is influence directly related to edge weight?
+
+Yes, structurally. GCN normalises each edge (u → v) by `1 / sqrt(deg_u × deg_v)`. The Jacobian-based influence `I(x, y) = Σ |∂h_x^(k) / ∂h_y^(0)|` propagates through these normalisation coefficients as well as the learned weight matrices. For a 1-hop training node, influence scales roughly with its edge weight. For a 2-hop training node, the coefficient compounds: the contribution passes through two edges, each with its own normalisation, so the effective weight is the product of both. This is why node 2248 (degree=2) at 2 hops in the node 387 case still dominated 85% of influence — two high edge-weight hops multiplied together. The learned weights modulate this further, but the structural degree-normalisation is the primary driver of the disparity when training node degrees differ substantially.
+
+### Is it better to have lower-degree training nodes in the neighbourhood?
+
+It depends on the class of the training node — and this is the core tension:
+
+- **Lower-degree same-class training node:** high edge weight → strong, focused correct signal. Best case for the target node.
+- **Lower-degree diff-class training node:** same high edge weight → strong, focused *incorrect* signal. Worst case, as seen with node 2248.
+
+So low degree amplifies influence regardless of class. Whether that is beneficial depends entirely on which class the training node belongs to. A neighbourhood where same-class training nodes are low-degree and diff-class training nodes are high-degree would be optimal — the signal is concentrated on the right class. The reverse (low-degree diff-class, high-degree same-class) is the failure mode illustrated by node 387.
+
+This suggests that the degree distribution of training nodes, split by class match, is a meaningful diagnostic: not just how many same/diff-class training nodes are in the receptive field, but what degree they have.
+
+### Are lower-degree test nodes disadvantaged by having a high-degree same-class training node?
+
+Yes. The edge weight `1 / sqrt(deg_u × deg_v)` penalises the training node's degree as well as the test node's. A low-degree test node (say degree=2) with a high-degree same-class training neighbour (say degree=50) receives a per-edge weight of `1 / sqrt(2 × 50) ≈ 0.10`. If instead the same-class training neighbour had degree=2, the weight would be `1 / sqrt(2 × 2) = 0.50` — five times stronger.
+
+So a low-degree test node adjacent to a high-degree same-class training node gets a weaker direct signal from it than from a low-degree same-class training node. The training node's high degree dilutes the edge, even when the structural connection exists. This is a subtle form of the same degree-bias mechanism: not just whether a training node is nearby, but how much signal it can deliver per edge.
+
+There is a potential counterpoint: high-degree training nodes aggregate from more neighbours during training and may therefore have richer, more stable learned representations. But the per-edge signal they deliver to test nodes is still attenuated by the normalisation, so the benefit of a better representation may not compensate for the lower edge weight at inference time.
+
 ---
 
 ## Open Questions / To Explore
