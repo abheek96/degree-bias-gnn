@@ -71,6 +71,34 @@ def _khop_neighbors(edge_index, node_x: int, k: int, num_nodes: int) -> set:
     return visited
 
 
+def _khop_distances(edge_index, node_x: int, k: int, num_nodes: int) -> dict:
+    """BFS returning the exact hop distance to every node within k hops.
+
+    Returns
+    -------
+    dist : dict {node_idx: hop_distance}  (node_x itself excluded)
+    """
+    src, dst = edge_index.cpu()
+    adj = [[] for _ in range(num_nodes)]
+    for u, v in zip(src.tolist(), dst.tolist()):
+        adj[v].append(u)   # incoming edges, matching source_to_target aggregation
+
+    dist     = {}
+    visited  = {node_x}
+    frontier = {node_x}
+    for hop in range(1, k + 1):
+        nxt = set()
+        for u in frontier:
+            for v in adj[u]:
+                if v not in visited:
+                    visited.add(v)
+                    nxt.add(v)
+                    dist[v] = hop
+        frontier = nxt
+
+    return dist
+
+
 # ── node selection + per-node analysis ────────────────────────────────────────
 
 def _analyse_node(model, data, pred, node_x: int, k_hops: int,
@@ -84,8 +112,8 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
     true_lbl = int(y[node_x].item())
     pred_lbl = int(pred[node_x].item())
 
-    neighbors      = _khop_neighbors(data.edge_index, node_x, k_hops, N)
-    train_in_field = [t for t in neighbors if t in train_set]
+    hop_dist       = _khop_distances(data.edge_index, node_x, k_hops, N)
+    train_in_field = [t for t in hop_dist if t in train_set]
 
     if not train_in_field:
         log.warning(
@@ -106,7 +134,7 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
     same_set        = set(same_class)
     diff_set        = set(diff_class)
     neighbor_detail = []
-    for nb in neighbors:
+    for nb, hop in hop_dist.items():
         if nb in same_set:
             nb_type = "same_train"
         elif nb in diff_set:
@@ -114,10 +142,11 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
         else:
             nb_type = "non_train"
         neighbor_detail.append({
-            "node_idx":  nb,
-            "degree":    int(all_deg[nb].item()),
-            "influence": float(I_x[nb].item()),
-            "type":      nb_type,
+            "node_idx":    nb,
+            "degree":      int(all_deg[nb].item()),
+            "hop_distance": hop,
+            "influence":   float(I_x[nb].item()),
+            "type":        nb_type,
         })
     neighbor_detail.sort(key=lambda d: d["influence"], reverse=True)
 
@@ -134,13 +163,13 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
              norm_same, norm_diff)
     for t in same_class:
         raw = float(I_x[t].item())
-        log.info("    same_train node %-5d  deg=%-4d  raw=%.4e  norm=%.4f",
-                 t, int(all_deg[t].item()), raw,
+        log.info("    same_train node %-5d  deg=%-4d  hop=%-2d  raw=%.4e  norm=%.4f",
+                 t, int(all_deg[t].item()), hop_dist[t], raw,
                  raw / total_inf if total_inf > 0 else 0.0)
     for t in diff_class:
         raw = float(I_x[t].item())
-        log.info("    diff_train node %-5d  deg=%-4d  raw=%.4e  norm=%.4f",
-                 t, int(all_deg[t].item()), raw,
+        log.info("    diff_train node %-5d  deg=%-4d  hop=%-2d  raw=%.4e  norm=%.4f",
+                 t, int(all_deg[t].item()), hop_dist[t], raw,
                  raw / total_inf if total_inf > 0 else 0.0)
 
     for nb in neighbor_detail:
