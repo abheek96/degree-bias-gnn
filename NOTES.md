@@ -294,6 +294,27 @@ Nodes 1597 and 384 have identical degree, but 1597 is at hop=1 while 384 is at h
 
 The combined picture: influence is shaped by (1) hop distance, (2) the training node's own degree, and (3) the degrees of intermediate nodes along the path. Degree alone (as studied by the aggregation table) is insufficient; the full path structure determines the effective signal reaching the target node.
 
+**Multiple low-degree paths compound influence — concrete evidence from node 2284.**
+
+Node 2284 (degree=12, class=2, misclassified) has two 2-hop training nodes:
+
+```
+same_train node 829    deg=3   hop=2   norm=0.2598
+diff_train node 1597   deg=8   hop=2   norm=0.7402
+```
+
+Node 1597 (deg=8) dominates node 829 (deg=3) at the same hop despite being higher-degree. Cross-referencing the aggregation tables for node 1597 and node 2284 reveals exactly why. Nodes 510 (deg=4), 887 (deg=5), and 1294 (deg=5) appear in **both** neighbourhoods — as diff-class neighbors of node 1597 (class=1) and as same-class neighbors of node 2284 (class=2), meaning they are class=2 nodes that sit between the two:
+
+```
+1597 → 510  (deg=4) → 2284
+1597 → 887  (deg=5) → 2284
+1597 → 1294 (deg=5) → 2284
+```
+
+Node 1597 reaches node 2284 through **three separate paths**, each passing through a low-degree intermediate (deg=4 or 5). Each path contributes independently to the Jacobian, and their contributions accumulate. Node 829, despite being lower-degree, likely reaches node 2284 through a single path with a higher-degree intermediate, suppressing its compounded weight.
+
+This makes the **number of low-degree paths** between a training node and a target a key determinant of influence — potentially more important than the training node's own degree. A higher-degree training node with multiple low-resistance routes into a target's neighbourhood can dominate a lower-degree training node that has only one high-resistance route.
+
 ### Is it better to have lower-degree training nodes in the neighbourhood?
 
 It depends on the class of the training node — and this is the core tension:
