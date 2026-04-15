@@ -183,4 +183,17 @@ The goal of this project is to establish whether degree-bias exists as a structu
 - Run the core degree-bias analysis (accuracy vs degree) twice — once on all nodes, once on LCC-only nodes — and compare the curves. If the low-degree, low-accuracy region is driven primarily by satellite-component nodes, the degree-bias signal in the full-graph analysis is partially artifactual.
 - Document the LCC filtering decision in `RESEARCH.md` with this evidence: filtering is not just a convenience but a methodological choice to isolate the aggregation-based degree-bias mechanism from the unrelated no-training-signal failure mode.
 
-*Last updated: 2026-04-13*
+## 11. Run-consistent node selection for influence analysis
+
+**Question:** The influence analysis currently uses the model and predictions from the last training run only. Is the misclassification of a high-degree node a consistent property of the trained model, or does it vary across seeds?
+
+**Motivation:** With 5 runs and different random initialisations, a node may be misclassified in some runs but not others. Running influence analysis on a single (last) run risks analysing a node that is misclassified by chance in that seed but not in general — or missing a node that is consistently misclassified across all seeds and therefore a more reliable anomaly. The target node for influence analysis should be selected based on cross-run consistency, not hard-coded.
+
+**Approach:**
+- After all training runs complete, identify test nodes that are misclassified in every run (or in a majority of runs, e.g. ≥ 4 of 5).
+- Among those consistently misclassified nodes, filter to high-degree nodes (e.g. degree ≥ some threshold, or the top-k by degree).
+- Run influence analysis on the selected nodes using the last run's model (as now), but log which run was used and how many runs agreed on the misclassification.
+- Optionally: run influence analysis on each run's model independently for the consistently misclassified nodes, and aggregate the per-run influence scores (mean ± std across runs) to identify robust training-node influence patterns.
+- The node selection logic should replace the hard-coded `influence_nodes` / `influence_degrees` config fields, or at minimum augment them with an auto-selection mode.
+
+*Last updated: 2026-04-15*
