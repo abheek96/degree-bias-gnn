@@ -236,9 +236,28 @@ A training node with zero influence simply means the model has learned (or faile
 
 ## Training Node Degree and Influence
 
-### Is influence directly related to edge weight?
+### Is influence directly related to edge weight and hop distance?
 
-Yes, structurally. GCN normalises each edge (u → v) by `1 / sqrt(deg_u × deg_v)`. The Jacobian-based influence `I(x, y) = Σ |∂h_x^(k) / ∂h_y^(0)|` propagates through these normalisation coefficients as well as the learned weight matrices. For a 1-hop training node, influence scales roughly with its edge weight. For a 2-hop training node, the coefficient compounds: the contribution passes through two edges, each with its own normalisation, so the effective weight is the product of both. This is why node 2248 (degree=2) at 2 hops in the node 387 case still dominated 85% of influence — two high edge-weight hops multiplied together. The learned weights modulate this further, but the structural degree-normalisation is the primary driver of the disparity when training node degrees differ substantially.
+Yes to both, and the two interact multiplicatively.
+
+GCN normalises each edge (u → v) by `1 / sqrt(deg_u × deg_v)`. The Jacobian-based influence `I(x, y) = Σ |∂h_x^(k) / ∂h_y^(0)|` propagates through these normalisation coefficients as well as the learned weight matrices. For a 1-hop training node, influence scales roughly with its edge weight. For a 2-hop training node the coefficient compounds: the contribution passes through two edges, each with its own normalisation, so the effective structural weight is the product of both — and since each factor is < 1, the product is smaller still.
+
+**Hop distance is a first-order effect.** The influence log for node 1362 makes this concrete:
+
+| Node | Deg | Hop | Norm influence |
+|------|-----|-----|---------------|
+| 1597 (diff) | 8  | 1 | **0.6727** |
+| 384  (diff) | 8  | 2 | 0.0110 |
+| 271  (diff) | 78 | 1 | 0.0256 |
+| 1371 (same) | 2  | 2 | 0.0088 |
+
+Nodes 1597 and 384 have identical degree, but 1597 is at hop=1 while 384 is at hop=2 — their influence differs by ~60×. Hop distance dominates here. All four same-class training nodes are at hop=2; the dominant diff-class node (1597, deg=8) is at hop=1. The misclassification is therefore driven by both a degree advantage (deg=8 vs same-class degrees of 2–6) *and* a hop advantage (direct neighbor vs 2-hop). These two factors compound.
+
+**Degree still matters within the same hop.** Node 271 (deg=78, hop=1) has only 2.6% influence despite being a direct neighbor — its very high degree reduces the edge weight to `1/sqrt(22×78) ≈ 0.024`, almost fully attenuating its contribution. Node 1597 (deg=8, hop=1) by contrast gets `1/sqrt(22×8) ≈ 0.075` — three times higher per edge, and it enters this as a factor in the full Jacobian.
+
+**Some 2-hop nodes have unexpectedly high influence** (e.g. node 674: deg=5, hop=2, norm=0.1129). The path from 674 to 1362 passes through an intermediate node; if that intermediate node has low degree, both edge weights along the path are high, making the compounded product larger than expected. The intermediate node's degree is therefore also part of the influence budget — not just the endpoints.
+
+The combined picture: influence is shaped by (1) hop distance, (2) the training node's own degree, and (3) the degrees of intermediate nodes along the path. Degree alone (as studied by the aggregation table) is insufficient; the full path structure determines the effective signal reaching the target node.
 
 ### Is it better to have lower-degree training nodes in the neighbourhood?
 
