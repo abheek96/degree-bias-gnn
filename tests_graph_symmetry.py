@@ -18,6 +18,7 @@ from torch_geometric.transforms import LargestConnectedComponents
 from dataset_utils import apply_split
 from influence import _khop_neighbors
 from models.gcn import inspect_node_aggregation
+from utils import get_khop_cardinality
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -195,15 +196,119 @@ def test_train_nodes_consistent(node_idx=1894):
     return khop_train == inspect_train
 
 
+# ── test 6: get_khop_cardinality matches _khop_neighbors count ───────────────
+
+def test_khop_cardinality_matches_neighbors(nodes=(387, 1894, 1362), ks=(1, 2)):
+    """get_khop_cardinality(data, k)[node] must equal len(_khop_neighbors(..., k))
+    for every (node, k) pair.  Validates that the dense-adjacency-power
+    implementation in utils.py and the BFS in influence.py agree on the count
+    of distinct nodes within each k-hop neighbourhood."""
+    data = load_cora()
+    N = data.num_nodes
+
+    print(f"\n[test_khop_cardinality_matches_neighbors]")
+    passed = True
+    for k in ks:
+        card = get_khop_cardinality(data, k)
+        for node in nodes:
+            bfs_count    = len(_khop_neighbors(data.edge_index, node, k, N))
+            tensor_count = card[node].item()
+            match = bfs_count == tensor_count
+            if not match:
+                passed = False
+            status = "ok" if match else "MISMATCH"
+            print(f"  node={node:>4}  k={k}  bfs={bfs_count:>4}  tensor={tensor_count:>4}  {status}")
+    if passed:
+        print("  PASS — all counts agree")
+    else:
+        print("  FAIL — count mismatch(es) found")
+    return passed
+
+
+# ── test 7: node 387 — receptive field depth vs aggregation table ─────────────
+
+def load_cora_public():
+    """Load Cora with CC filtering and the fixed public split."""
+    data = Planetoid(root="./data", name="Cora", split="public")[0]
+    data = LargestConnectedComponents()(data)
+    return data
+
+
+def test_node_387_receptive_field():
+    """For node 387 (degree=16, public split):
+
+    - k=1 neighbourhood has 0 training nodes — consistent with the aggregation
+      table showing all 17 rows as in_train_set=False.
+    - k=2 neighbourhood surfaces the 3 training nodes logged by the influence
+      analysis (nodes 2221, 456, 2248) when num_layers=3 (k_hops=2).
+    - get_khop_cardinality gives the correct count at both depths and agrees
+      with the raw _khop_neighbors BFS.
+
+    This confirms: inspect_node_aggregation is hardcoded to 1-hop; the
+    influence analysis searches k_hops = num_layers - 1 hops.  The two
+    analyses diverge only when num_layers > 2, which is exactly the condition
+    under which the influence log found training nodes absent from the table.
+    """
+    node = 387
+    data = load_cora_public()
+    N    = data.num_nodes
+
+    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
+
+    nb_k1 = _khop_neighbors(data.edge_index, node, k=1, num_nodes=N)
+    nb_k2 = _khop_neighbors(data.edge_index, node, k=2, num_nodes=N)
+
+    train_k1   = {n for n in nb_k1 if n in train_set}
+    train_k2   = {n for n in nb_k2 if n in train_set}
+    only_at_k2 = train_k2 - train_k1   # nodes reachable only via 2 hops
+
+    card_k1 = get_khop_cardinality(data, k=1)[node].item()
+    card_k2 = get_khop_cardinality(data, k=2)[node].item()
+
+    # Ground truth from the influence log (num_layers=3, public split)
+    expected_train_k2 = {2221, 456, 2248}
+
+    print(f"\n[test_node_387_receptive_field]  node={node}")
+    print(f"  k=1 : {len(nb_k1):>3} distinct neighbours  |  {len(train_k1)} training nodes"
+          f"  (cardinality={card_k1})")
+    print(f"  k=2 : {len(nb_k2):>3} distinct neighbours  |  {len(train_k2)} training nodes"
+          f"  (cardinality={card_k2})")
+    print(f"  training at k=1          : {sorted(train_k1)}")
+    print(f"  training at k=2          : {sorted(train_k2)}")
+    print(f"  new training nodes at k=2: {sorted(only_at_k2)}")
+
+    checks = {
+        "k=1 has 0 training nodes (matches aggregation table)": len(train_k1) == 0,
+        "k=2 includes all training nodes from influence log"  : expected_train_k2 <= train_k2,
+        "influence-log nodes absent from k=1 neighbourhood"  : expected_train_k2.isdisjoint(train_k1),
+        "cardinality k=1 == degree 16"                       : card_k1 == 16,
+        "cardinality k=2 > k=1 (receptive field grows)"      : card_k2 > card_k1,
+        "cardinality k=1 agrees with BFS count"              : card_k1 == len(nb_k1),
+        "cardinality k=2 agrees with BFS count"              : card_k2 == len(nb_k2),
+    }
+
+    passed = True
+    for desc, ok in checks.items():
+        status = "ok" if ok else "FAIL"
+        print(f"  [{status}] {desc}")
+        if not ok:
+            passed = False
+
+    print("  PASS" if passed else "  FAIL")
+    return passed
+
+
 # ── run all ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     results = {}
-    results["graph_symmetry"]          = test_graph_symmetry()
-    results["khop_matches_incoming"]   = test_khop_matches_incoming(node_idx=1894)
+    results["graph_symmetry"]                   = test_graph_symmetry()
+    results["khop_matches_incoming"]            = test_khop_matches_incoming(node_idx=1894)
     test_node_1894_edges()
-    results["inspect_matches_khop"]    = test_inspect_matches_khop(node_idx=1894)
-    results["train_nodes_consistent"]  = test_train_nodes_consistent(node_idx=1894)
+    results["inspect_matches_khop"]             = test_inspect_matches_khop(node_idx=1894)
+    results["train_nodes_consistent"]           = test_train_nodes_consistent(node_idx=1894)
+    results["khop_cardinality_matches_neighbors"] = test_khop_cardinality_matches_neighbors()
+    results["node_387_receptive_field"]         = test_node_387_receptive_field()
 
     print("\n── Summary ──")
     for name, passed in results.items():
