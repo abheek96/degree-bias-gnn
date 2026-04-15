@@ -225,7 +225,7 @@ def test_khop_cardinality_matches_neighbors(nodes=(387, 1894, 1362), ks=(1, 2)):
     return passed
 
 
-# ── test 7: node 387 — receptive field depth vs aggregation table ─────────────
+# ── test 7: influence-analysis nodes are in k-hop but not 1-hop neighbourhood ─
 
 def load_cora_public():
     """Load Cora with CC filtering and the fixed public split."""
@@ -234,57 +234,49 @@ def load_cora_public():
     return data
 
 
-def test_node_387_receptive_field():
-    """For node 387 (degree=16, public split):
+def _check_influence_nodes_in_khop(data, node, influence_nodes, k, label):
+    """Core check: influence_nodes must be absent from the 1-hop aggregation
+    neighbourhood but present in the k-hop receptive field.
 
-    - k=1 neighbourhood has 0 training nodes — consistent with the aggregation
-      table showing all 17 rows as in_train_set=False.
-    - k=2 neighbourhood surfaces the 3 training nodes logged by the influence
-      analysis (nodes 2221, 456, 2248) when num_layers=3 (k_hops=2).
-    - get_khop_cardinality gives the correct count at both depths and agrees
-      with the raw _khop_neighbors BFS.
+    inspect_node_aggregation is hardcoded to 1-hop.  The influence analysis
+    uses _khop_neighbors with k = num_layers - 1.  When num_layers > 2,
+    nodes that appear in the influence log but not in the aggregation table
+    must be reachable at 2+ hops.  This function verifies that directly.
 
-    This confirms: inspect_node_aggregation is hardcoded to 1-hop; the
-    influence analysis searches k_hops = num_layers - 1 hops.  The two
-    analyses diverge only when num_layers > 2, which is exactly the condition
-    under which the influence log found training nodes absent from the table.
+    Parameters
+    ----------
+    data            : PyG Data object (CC-filtered, split applied)
+    node            : target node index
+    influence_nodes : set of node indices found in the influence analysis
+                      but absent from the 1-hop aggregation table
+    k               : num_layers - 1 (receptive field radius used by influence)
+    label           : test name for print output
     """
-    node = 387
-    data = load_cora_public()
-    N    = data.num_nodes
-
-    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
+    N = data.num_nodes
+    influence_nodes = set(influence_nodes)
 
     nb_k1 = _khop_neighbors(data.edge_index, node, k=1, num_nodes=N)
-    nb_k2 = _khop_neighbors(data.edge_index, node, k=2, num_nodes=N)
-
-    train_k1   = {n for n in nb_k1 if n in train_set}
-    train_k2   = {n for n in nb_k2 if n in train_set}
-    only_at_k2 = train_k2 - train_k1   # nodes reachable only via 2 hops
+    nb_k  = _khop_neighbors(data.edge_index, node, k=k, num_nodes=N)
 
     card_k1 = get_khop_cardinality(data, k=1)[node].item()
-    card_k2 = get_khop_cardinality(data, k=2)[node].item()
+    card_k  = get_khop_cardinality(data, k=k)[node].item()
 
-    # Ground truth from the influence log (num_layers=3, public split)
-    expected_train_k2 = {2221, 456, 2248}
+    absent_from_k1 = influence_nodes - nb_k1   # should equal influence_nodes
+    present_at_k   = influence_nodes & nb_k    # should equal influence_nodes
 
-    print(f"\n[test_node_387_receptive_field]  node={node}")
-    print(f"  k=1 : {len(nb_k1):>3} distinct neighbours  |  {len(train_k1)} training nodes"
-          f"  (cardinality={card_k1})")
-    print(f"  k=2 : {len(nb_k2):>3} distinct neighbours  |  {len(train_k2)} training nodes"
-          f"  (cardinality={card_k2})")
-    print(f"  training at k=1          : {sorted(train_k1)}")
-    print(f"  training at k=2          : {sorted(train_k2)}")
-    print(f"  new training nodes at k=2: {sorted(only_at_k2)}")
+    print(f"\n[{label}]  node={node}  k={k}")
+    print(f"  k=1 neighbourhood : {len(nb_k1):>4} distinct nodes  (cardinality={card_k1})")
+    print(f"  k={k} neighbourhood : {len(nb_k):>4} distinct nodes  (cardinality={card_k})")
+    print(f"  influence nodes        : {sorted(influence_nodes)}")
+    print(f"  absent from k=1        : {sorted(absent_from_k1)}")
+    print(f"  present at k={k}        : {sorted(present_at_k)}")
 
     checks = {
-        "k=1 has 0 training nodes (matches aggregation table)": len(train_k1) == 0,
-        "k=2 includes all training nodes from influence log"  : expected_train_k2 <= train_k2,
-        "influence-log nodes absent from k=1 neighbourhood"  : expected_train_k2.isdisjoint(train_k1),
-        "cardinality k=1 == degree 16"                       : card_k1 == 16,
-        "cardinality k=2 > k=1 (receptive field grows)"      : card_k2 > card_k1,
-        "cardinality k=1 agrees with BFS count"              : card_k1 == len(nb_k1),
-        "cardinality k=2 agrees with BFS count"              : card_k2 == len(nb_k2),
+        "all influence nodes absent from 1-hop (not in aggregation table)": absent_from_k1 == influence_nodes,
+        f"all influence nodes present at k={k} (in receptive field)":        present_at_k   == influence_nodes,
+        f"k={k} neighbourhood strictly larger than k=1":                     card_k > card_k1,
+        "cardinality k=1 agrees with BFS":                                   card_k1 == len(nb_k1),
+        f"cardinality k={k} agrees with BFS":                                card_k  == len(nb_k),
     }
 
     passed = True
@@ -293,8 +285,37 @@ def test_node_387_receptive_field():
         print(f"  [{status}] {desc}")
         if not ok:
             passed = False
-
     print("  PASS" if passed else "  FAIL")
+    return passed
+
+
+def test_influence_nodes_in_receptive_field():
+    """Nodes found by the influence analysis that are absent from the
+    inspect_node_aggregation table (1-hop) must be reachable at k hops,
+    where k = num_layers - 1.
+
+    Two cases from observed influence logs:
+      node 387  (public split, k=2): training nodes 2221, 456, 2248
+      node 1894 (random split, k=2): nodes 184, 271
+    """
+    passed = True
+
+    passed &= _check_influence_nodes_in_khop(
+        data=load_cora_public(),
+        node=387,
+        influence_nodes={2221, 456, 2248},
+        k=2,
+        label="node_387_public_k2",
+    )
+
+    passed &= _check_influence_nodes_in_khop(
+        data=load_cora(),
+        node=1894,
+        influence_nodes={184, 271},
+        k=2,
+        label="node_1894_random_k2",
+    )
+
     return passed
 
 
@@ -307,8 +328,8 @@ if __name__ == "__main__":
     test_node_1894_edges()
     results["inspect_matches_khop"]             = test_inspect_matches_khop(node_idx=1894)
     results["train_nodes_consistent"]           = test_train_nodes_consistent(node_idx=1894)
-    results["khop_cardinality_matches_neighbors"] = test_khop_cardinality_matches_neighbors()
-    results["node_387_receptive_field"]         = test_node_387_receptive_field()
+    results["khop_cardinality_matches_neighbors"]  = test_khop_cardinality_matches_neighbors()
+    results["influence_nodes_in_receptive_field"]  = test_influence_nodes_in_receptive_field()
 
     print("\n── Summary ──")
     for name, passed in results.items():
