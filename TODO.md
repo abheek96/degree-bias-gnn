@@ -183,7 +183,22 @@ The goal of this project is to establish whether degree-bias exists as a structu
 - Run the core degree-bias analysis (accuracy vs degree) twice — once on all nodes, once on LCC-only nodes — and compare the curves. If the low-degree, low-accuracy region is driven primarily by satellite-component nodes, the degree-bias signal in the full-graph analysis is partially artifactual.
 - Document the LCC filtering decision in `RESEARCH.md` with this evidence: filtering is not just a convenience but a methodological choice to isolate the aggregation-based degree-bias mechanism from the unrelated no-training-signal failure mode.
 
-## 11. Run-consistent node selection for influence analysis
+## 11. High-degree same-class training node connectivity vs misclassification rate
+
+**Question:** Do degree groups that are predominantly connected to high-degree same-class training nodes show higher misclassification rates? A high-degree same-class training node delivers weaker per-edge signal (lower `1/sqrt(deg_u × deg_v)` weight), so even a correctly-placed training anchor may be insufficient if it has too many neighbors of its own.
+
+**Motivation:** The "curse of high-degree" observation (node 1894) shows that high degree hurts a test node by diluting all incoming edge weights and accumulating diff-class noise from non-training neighbors. A complementary effect operates on the training node side: if the same-class training node in a test node's receptive field is itself high-degree, the signal it delivers per edge is attenuated regardless of the test node's degree. Plotting connectivity to high-degree same-class training nodes against misclassification rate per degree group would establish whether this is a systematic effect across the graph or specific to individual nodes.
+
+**Approach:**
+- Define "high-degree training node" as a training node with degree above some threshold (e.g. median training node degree, or a fixed value like deg ≥ 10).
+- For each test node, check whether its k-hop receptive field contains at least one same-class training node, and if so, whether that training node is high-degree.
+- Group test nodes by their own degree and compute: (a) fraction connected to a high-degree same-class training node, (b) misclassification rate.
+- Plot both on the same axes per degree group — bars or lines for the connectivity fraction, overlaid line for misclassification rate.
+- Check whether degree groups with higher connectivity to high-degree same-class training nodes also show higher misclassification rates, suggesting the training node's own degree is a confounding factor beyond just presence/absence of a same-class anchor.
+
+---
+
+## 12. Run-consistent node selection for influence analysis
 
 **Question:** The influence analysis currently uses the model and predictions from the last training run only. Is the misclassification of a high-degree node a consistent property of the trained model, or does it vary across seeds?
 
