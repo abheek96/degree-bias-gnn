@@ -223,6 +223,41 @@ norm: same=0.0733  diff=0.9267  (fraction of training-node influence)
 
 3. **The same-class training node is swamped.** Node 2221 (degree=3, same class) has equal raw influence to diff-class node 456 (4.14e-3 each), but together they contribute only 14.7% against node 2248's 85.3%. The structural cause is node 2248's very low degree giving it disproportionately high normalised edge weights at each hop.
 
+### Case study: node 1894 (degree=40) — the curse of high degree
+
+Node 1894 illustrates a third distinct failure mode. Unlike nodes 1362 and 387, the training-node influence here is *correctly* same-class dominated — yet the node is still misclassified.
+
+**Influence analysis:**
+```
+influence: node 1894  degree=40  same_train=2  diff_train=1
+raw:  same=1.4010e-02  diff=1.3318e-03  total_train=1.5342e-02
+norm: same=0.9132  diff=0.0868
+  same_train node 1828   deg=3    hop=1   norm=0.5895
+  same_train node 184    deg=10   hop=2   norm=0.3237
+  diff_train node 271    deg=78   hop=2   norm=0.0868
+```
+
+**1-hop aggregation neighbourhood (40 neighbors):**
+- Same-class: 10 (rows 1–10, including 1 training node — 1828)
+- Diff-class:  30 (rows 12–41, all non-training)
+- Neighbourhood purity: **25% same-class**
+
+**Why it fails — the curse of high degree:**
+
+1. **Diluted edge weights.** Node 1894 has degree=40. Every edge weight is divided by `sqrt(40 × deg_neighbor)`. Even node 1828 (the best-placed same-class training node: deg=3, hop=1) gets edge weight `≈ 0.078`. High degree penalises all incoming signals, including the most informative ones.
+
+2. **Noise from 30 diff-class non-training neighbors.** The training-node influence score (91.3% same-class) only measures the relative influence *among training nodes*. It does not account for the 30 diff-class non-training neighbors that are simultaneously aggregated into node 1894's representation. Each of those 30 nodes sends a diff-class feature vector through the GCN — the aggregate `h^(1)` for node 1894 is the weighted sum of all 40 neighbors, 30 of whom push it toward the wrong class.
+
+3. **Training influence ≠ total representational influence.** A node can have 91% of its *training-node* influence from same-class sources and still be misclassified if the non-training neighborhood is overwhelmingly diff-class. The training-node influence metric is a necessary but not sufficient condition for correct classification.
+
+**The curse of high degree** (proposed term): high-degree nodes face a structural disadvantage that compounds across the aggregation:
+- High degree → lower per-edge weight for every neighbor, including same-class training nodes
+- High degree → more neighbors to aggregate, increasing the probability of a large diff-class non-training majority
+- High degree → lower neighbourhood purity (hub nodes span more class boundaries)
+- Together these dilute the same-class training signal and flood the representation with class-boundary noise, even when the training-node influence distribution looks correct
+
+This is distinct from nodes 1362 and 387, where diff-class *training* nodes dominated. Here, same-class training influence is healthy — the failure comes from the non-training neighbourhood. High degree makes a node structurally susceptible to this form of noise even when its labeled anchors are well-placed.
+
 **Contrast with node 1362.** Node 1362 (degree=22) had `same_train=4`, `diff_train=11` — many training nodes of both classes in-neighbourhood, but same-class influence ≈ 0 due to dead ReLU paths / learned weight suppression. Node 387 is simpler structurally: it has one same-class training anchor that is correctly active, but a single low-degree wrong-class node overwhelms it purely through degree-normalisation arithmetic. These are two distinct mechanisms by which diff-class influence can dominate.
 
 ### Does `same_class_influence ≈ 0` mean those training nodes weren't trained?
