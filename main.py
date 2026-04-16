@@ -288,6 +288,15 @@ def main():
     class_acc_results = []
     run_labels = []
 
+    # Which run's model/pred to use for influence analysis (1-indexed; default: last run)
+    _influence_run = plot_cfg.get("influence_run", num_runs)
+    if not (1 <= _influence_run <= num_runs):
+        log.warning("influence_run=%d out of range [1, %d] — defaulting to last run",
+                    _influence_run, num_runs)
+        _influence_run = num_runs
+    influence_pred  = None
+    influence_model = None
+
     for i in tqdm(range(1, num_runs + 1), desc="Runs"):
         seed = base_seed + i - 1
         set_seed(seed)  # only affects model initialisation
@@ -308,6 +317,11 @@ def main():
             get_accuracy_class(pred[data.test_mask], data.y[data.test_mask])
         )
         run_labels.append(run_name)
+
+        if i == _influence_run:
+            influence_pred  = pred
+            influence_model = model
+            log.info("Saved run %d (seed=%d) model/pred for influence analysis", i, seed)
 
     val_mean,   val_std   = np.mean(val_accs),   np.std(val_accs)
     test_mean,  test_std  = np.mean(test_accs),  np.std(test_accs)
@@ -471,8 +485,10 @@ def main():
     if plot_cfg.get("influence_analysis", False):
         target_degrees = plot_cfg.get("influence_degrees") or []
         target_nodes   = plot_cfg.get("influence_nodes") or []
+        log.info("Influence analysis using run %d (seed=%d) model",
+                 _influence_run, base_seed + _influence_run - 1)
         influence_results = compute_influence_analysis(
-            model, data, pred,
+            influence_model, data, influence_pred,
             k_hops=k_hops,
             target_degrees=target_degrees,
             target_nodes=target_nodes,
@@ -490,7 +506,7 @@ def main():
 
     if plot_cfg.get("similarity_nodes"):
         sim_node_results = compute_node_similarity_analysis(
-            model, data, k_hops=k_hops,
+            influence_model, data, k_hops=k_hops,
             target_nodes=plot_cfg.get("similarity_nodes"),
         )
         plot_node_similarity_analysis(
@@ -501,7 +517,7 @@ def main():
 
     if plot_cfg.get("feature_similarity", False):
         log.info("Computing feature similarity delta (raw vs h^(1))...")
-        sim_results = get_feature_similarity_delta(data, model, k_hops=k_hops)
+        sim_results = get_feature_similarity_delta(data, influence_model, k_hops=k_hops)
         plot_feature_similarity_delta_vs_degree(
             sim_results, cfg, k_hops=k_hops,
             deg_acc_results=deg_acc_results,
@@ -514,7 +530,7 @@ def main():
     if plot_cfg.get("influence_disparity", False):
         log.info("Computing influence disparity for all test nodes (one Jacobian per node)...")
         disparity_results = compute_influence_disparity_all(
-            model, data, pred, k_hops=k_hops,
+            influence_model, data, influence_pred, k_hops=k_hops,
         )
         plot_influence_disparity_vs_degree(
             disparity_results, cfg,
