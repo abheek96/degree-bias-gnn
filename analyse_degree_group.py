@@ -33,6 +33,7 @@ import torch
 import yaml
 from torch_geometric.utils import degree as graph_degree
 
+import pandas as pd
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 
 from dataset import load_dataset
@@ -191,6 +192,51 @@ def find_qualifying_nodes(data, all_deg, pred, edge_weight_map: dict,
     return results
 
 
+def print_khop_neighborhood(node: int, data, all_deg, pred, y,
+                             edge_weight_map: dict, k_hops: int):
+    """Print a table of all nodes in the k-hop receptive field of `node`.
+
+    Columns: neighbor, degree, hop, in_train_set, same_class, correct_pred,
+             edge_weight (GCN-normalised for hop=1 direct edges, else N/A).
+
+    Sorted by hop, then same_class (True first), then in_train_set (True first),
+    then degree ascending.
+    """
+    N        = data.num_nodes
+    true_lbl = int(y[node].item())
+    hop_dist = _khop_distances(data.edge_index, node, k_hops, N)
+
+    train_mask = data.train_mask.cpu()
+    rows = []
+    for nb, hop in hop_dist.items():
+        ew  = edge_weight_map.get((nb, node)) if hop == 1 else None
+        rows.append({
+            "neighbor":     nb,
+            "degree":       int(all_deg[nb].item()),
+            "hop":          hop,
+            "in_train_set": bool(train_mask[nb].item()),
+            "same_class":   int(y[nb].item()) == true_lbl,
+            "correct_pred": bool((pred[nb] == y[nb]).item()),
+            "edge_weight":  round(ew, 6) if ew is not None else None,
+        })
+
+    df = (
+        pd.DataFrame(rows)
+        .sort_values(
+            ["hop", "same_class", "in_train_set", "degree"],
+            ascending=[True, False, False, True],
+        )
+        .reset_index(drop=True)
+    )
+    df.index += 1
+    df.index.name = "#"
+
+    print(f"\n{k_hops}-hop receptive field of node {node}  "
+          f"(class={true_lbl}, degree={int(all_deg[node].item())})\n")
+    print(df.to_string())
+    print()
+
+
 def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
     data = load_dataset(cfg["dataset"])
 
@@ -293,6 +339,9 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
                 ew_str,
                 nb["influence_norm"],
             )
+
+        print_khop_neighborhood(node, data, all_deg, pred, y,
+                                edge_weight_map, k_hops)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
