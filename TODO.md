@@ -211,4 +211,26 @@ The goal of this project is to establish whether degree-bias exists as a structu
 - Optionally: run influence analysis on each run's model independently for the consistently misclassified nodes, and aggregate the per-run influence scores (mean ± std across runs) to identify robust training-node influence patterns.
 - The node selection logic should replace the hard-coded `influence_nodes` / `influence_degrees` config fields, or at minimum augment them with an auto-selection mode.
 
-*Last updated: 2026-04-15*
+## 13. Modular plot-generation framework
+
+**Goal:** Decouple computation from visualisation so that plots can be regenerated without re-running experiments.
+
+**Motivation:** Currently `main.py` and the analysis scripts compute metrics and generate plots in a single pass. Re-plotting (e.g. to tweak colours, labels, or layout) requires re-running the full training loop. Separating the two would allow rapid iteration on visualisations against saved results.
+
+**Design sketch:**
+- Each training run saves its computed metrics (degree-wise accuracy, purity, SPL, labelling ratios, etc.) to disk as `.pt` or `.json` artefacts in the run directory.
+- A dedicated `plot.py` entry point (or a `plots/` directory of per-plot scripts) reads those saved artefacts and regenerates any subset of plots without touching the model or the training loop.
+- Ideally each plot is its own script (`plots/acc_vs_degree.py`, `plots/purity_vs_degree.py`, etc.) so individual plots can be re-run in isolation — maximally modular, no shared state between plots.
+- A top-level `plot_all.py` (or `make plots`) calls all individual plot scripts against a given results directory.
+
+**Dependency order:**
+1. Define the serialisation format for each metric tensor (choose between `.pt` for tensors and `.json` for scalar summaries).
+2. Refactor `main.py` to save metric artefacts alongside the existing log files.
+3. Write individual plot scripts that load artefacts and call the existing `plot_utils.py` functions.
+4. Add a `--results-dir` argument to each plot script so any previously saved run can be re-plotted.
+
+*For later — not a current priority.*
+
+---
+
+*Last updated: 2026-04-16*
