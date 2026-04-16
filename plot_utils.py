@@ -1115,23 +1115,21 @@ def plot_spl_combined_vs_degree(
 
     # ── Figure 2: two-panel — SPL + accuracy + labelling ratio / Δ purity ──────
     has_acc    = deg_acc_results is not None
-    has_purity = (purity_by_k is not None and all_deg is not None
-                  and len(purity_by_k) >= 2)
+    has_purity = (purity_by_k is not None and len(purity_by_k) >= 2)
     has_lr     = has_labeled_neighbor is not None
     if not (has_acc or has_purity or has_lr):
         return
 
-    # ── pre-compute Δ purity ──────────────────────────────────────────────────
+    # ── pre-compute Δ purity (test nodes only) ────────────────────────────────
     dp_means = None
     k_lo = k_hi = None
     if has_purity:
-        full_deg  = all_deg.cpu() if hasattr(all_deg, "cpu") else torch.as_tensor(all_deg)
-        k_keys    = sorted(purity_by_k.keys())
+        k_keys     = sorted(purity_by_k.keys())
         k_lo, k_hi = k_keys[0], k_keys[-1]
-        delta_all = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
-        dp_means  = np.array([
-            float(delta_all[full_deg == d][~torch.isnan(delta_all[full_deg == d])].mean())
-            if (full_deg == d).any() else float("nan")
+        delta_all  = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
+        dp_means   = np.array([
+            float(delta_all[deg == d][~torch.isnan(delta_all[deg == d])].mean())
+            if (deg == d).any() else float("nan")
             for d in unique_degrees
         ])
 
