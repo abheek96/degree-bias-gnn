@@ -413,6 +413,47 @@ def get_labelling_ratio(data) -> torch.Tensor:
     return (A.cpu() @ train) > 0                                        # (N,)
 
 
+def get_class_labelling_ratio(data) -> tuple[torch.Tensor, torch.Tensor]:
+    """For every node, indicate presence of same-class and diff-class training neighbors.
+
+    Checks the immediate (1-hop) neighborhood for training nodes whose label
+    matches vs. differs from the node's own label.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index, .train_mask, .y)
+
+    Returns
+    -------
+    has_same_class_train : BoolTensor, shape [num_nodes]
+        True when the node has ≥1 same-class training neighbor.
+    has_diff_class_train : BoolTensor, shape [num_nodes]
+        True when the node has ≥1 different-class training neighbor.
+    """
+    from torch_geometric.utils import to_dense_adj
+
+    N      = data.num_nodes
+    A      = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0).cpu()  # (N, N)
+    labels = data.y.cpu()                                                       # (N,)
+    train_mask = data.train_mask.cpu()                                          # (N,)
+
+    # Vectorised per-class:
+    #   same_train_c  = training nodes whose label == c
+    #   diff_train_c  = training nodes whose label != c
+    # For nodes with label c, check if any neighbor falls in each group.
+    has_same = torch.zeros(N, dtype=torch.bool)
+    has_diff = torch.zeros(N, dtype=torch.bool)
+
+    for c in labels.unique():
+        node_mask_c  = labels == c                             # nodes of class c
+        same_train_c = (train_mask & (labels == c)).float()   # train nodes of class c
+        diff_train_c = (train_mask & (labels != c)).float()   # train nodes of other classes
+        has_same[node_mask_c] = ((A @ same_train_c) > 0)[node_mask_c]
+        has_diff[node_mask_c] = ((A @ diff_train_c) > 0)[node_mask_c]
+
+    return has_same, has_diff
+
+
 def get_training_neighbor_degree_stats(data, k: int = 2) -> dict:
     """Degree statistics of same-class and diff-class training nodes in each
     test node's k-hop neighborhood.

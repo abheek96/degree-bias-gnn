@@ -1391,16 +1391,18 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
 # ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
 
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
-                          has_labeled_neighbor=None, save_dir=None, show=False):
+                          has_same_class_train=None, has_diff_class_train=None,
+                          save_dir=None, show=False):
     """Boxplot distribution of neighborhood purity per degree group.
 
     Nodes are grouped by their 1-hop degree.  For each group the full
     distribution of per-node purity values is shown as a boxplot.
     The overall weighted-mean purity is overlaid as a horizontal dashed line.
 
-    When ``has_labeled_neighbor`` is provided, the fraction of test nodes in
-    each degree group that have at least one training neighbor (labelling ratio)
-    is overlaid as a line on a secondary right-hand axis.
+    When ``has_same_class_train`` / ``has_diff_class_train`` are provided
+    (k=1 only), two labelling-ratio lines are overlaid on a secondary axis:
+      • Green  — fraction of test nodes with ≥1 same-class training neighbor.
+      • Red    — fraction of test nodes with ≥1 diff-class training neighbor.
 
     purity(v) = |same-class nodes in N_k(v)| / |N_k(v)|
 
@@ -1410,10 +1412,10 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     purity_test          : 1-D FloatTensor of purity values for test nodes (NaN-safe).
     cfg                  : dict
     k                    : neighbourhood radius used to compute purity.
-    has_labeled_neighbor : optional BoolTensor [num_test_nodes] — True when a
-                           test node has ≥1 training neighbor (from
-                           get_labelling_ratio).  When supplied, the per-degree
-                           labelling ratio is overlaid on a secondary axis.
+    has_same_class_train : optional BoolTensor [num_test_nodes] — True when a
+                           test node has ≥1 same-class training neighbor.
+    has_diff_class_train : optional BoolTensor [num_test_nodes] — True when a
+                           test node has ≥1 diff-class training neighbor.
     save_dir             : str or None
     show                 : bool
     """
@@ -1424,12 +1426,14 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     pos    = list(range(len(unique_degrees)))
     prefix = _fname_prefix(cfg)
 
-    counts    = []
-    box_data  = []
-    mean_purs = []
-    label_ratios = []
+    counts     = []
+    box_data   = []
+    mean_purs  = []
+    same_ratios = []
+    diff_ratios = []
 
-    hln = has_labeled_neighbor.cpu().numpy() if has_labeled_neighbor is not None else None
+    hsc = has_same_class_train.cpu().numpy() if has_same_class_train is not None else None
+    hdc = has_diff_class_train.cpu().numpy() if has_diff_class_train is not None else None
 
     for d in unique_degrees:
         mask  = (deg == d).numpy()
@@ -1438,8 +1442,10 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
         counts.append(int(mask.sum()))
         box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
-        if hln is not None:
-            label_ratios.append(float(hln[mask].mean()) if mask.sum() > 0 else float("nan"))
+        if hsc is not None:
+            same_ratios.append(float(hsc[mask].mean()) if mask.sum() > 0 else float("nan"))
+        if hdc is not None:
+            diff_ratios.append(float(hdc[mask].mean()) if mask.sum() > 0 else float("nan"))
 
     n_test   = sum(counts)
     n_deg    = len(unique_degrees)
@@ -1464,23 +1470,27 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
-    # Labelling ratio overlay
-    if label_ratios:
+    # Labelling ratio overlay (same-class green, diff-class red)
+    handles_lr = []
+    if same_ratios or diff_ratios:
         ax_lr = ax.twinx()
-        ax_lr.plot(pos, label_ratios, color="#1565C0", lw=1.8, marker="s",
-                   markersize=3.5, zorder=6, label="Labelling ratio")
-        ax_lr.set_ylabel("Labelling ratio\n(fraction with ≥1 train nb)", fontsize=9,
-                         color="#1565C0")
-        ax_lr.tick_params(axis="y", labelsize=7, colors="#1565C0", length=3)
+        ax_lr.set_ylabel("Fraction of nodes (≥1 train nb)", fontsize=9, color="black")
+        ax_lr.tick_params(axis="y", labelsize=7, length=3)
         ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
         ax_lr.set_ylim(-0.05, 1.15)
-        ax_lr.spines["right"].set_color("#1565C0")
-        handles_lr = [plt.Line2D([0], [0], color="#1565C0", lw=1.8, marker="s",
-                                 markersize=3.5, label="Labelling ratio")]
-    else:
-        handles_lr = []
 
-    # Legend placed outside the plot area (top-left, above the axes)
+        if same_ratios:
+            ax_lr.plot(pos, same_ratios, color="#2E7D32", lw=1.8, marker="^",
+                       markersize=4, zorder=6)
+            handles_lr.append(plt.Line2D([0], [0], color="#2E7D32", lw=1.8, marker="^",
+                                         markersize=4, label="Same-class train nb present"))
+        if diff_ratios:
+            ax_lr.plot(pos, diff_ratios, color="#C62828", lw=1.8, marker="v",
+                       markersize=4, zorder=6)
+            handles_lr.append(plt.Line2D([0], [0], color="#C62828", lw=1.8, marker="v",
+                                         markersize=4, label="Diff-class train nb present"))
+
+    # Legend placed outside the plot area (above the axes)
     purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity dist. (k={k})")
     ax.legend(handles=[purity_handle] + handles_lr,
               loc="lower left", bbox_to_anchor=(0, 1.01), ncol=3,
