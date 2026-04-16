@@ -1396,8 +1396,7 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
 
     Nodes are grouped by their 1-hop degree.  For each group the full
     distribution of per-node purity values is shown as a boxplot.
-    The overall weighted-mean purity is overlaid as a horizontal dashed line,
-    and a light-grey bar shows the node count per group.
+    The overall weighted-mean purity is overlaid as a horizontal dashed line.
 
     When ``has_labeled_neighbor`` is provided, the fraction of test nodes in
     each degree group that have at least one training neighbor (labelling ratio)
@@ -1460,8 +1459,6 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
         ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                    label=f"Overall mean purity ({overall:.1%})", zorder=2)
 
-    _count_bars(ax, pos, counts)
-
     ax.set_ylabel(f"Neighborhood purity  (k={k})", fontsize=11)
     ax.set_ylim(-0.05, 1.10)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
@@ -1483,10 +1480,11 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     else:
         handles_lr = []
 
-    # Unified legend (purity + labelling ratio entries)
+    # Legend placed outside the plot area (top-left, above the axes)
     purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity dist. (k={k})")
-    ax.legend(handles=[purity_handle] + handles_lr, loc="upper left",
-              fontsize=8, framealpha=0.85)
+    ax.legend(handles=[purity_handle] + handles_lr,
+              loc="lower left", bbox_to_anchor=(0, 1.01), ncol=3,
+              fontsize=8, framealpha=0.85, borderaxespad=0)
 
     ax.set_title(
         f"Neighborhood Purity Distribution vs. Node Degree  (k={k})\n{subtitle}",
