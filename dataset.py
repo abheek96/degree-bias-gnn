@@ -3,6 +3,8 @@ import logging
 import torch
 from torch_geometric.datasets import Planetoid, Amazon, Coauthor, WikiCS
 from torch_geometric.transforms import LargestConnectedComponents
+from torch_geometric.utils import to_networkx
+import networkx as nx
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +30,17 @@ def load_dataset(dataset_cfg):
     dataset = DATASET_REGISTRY[name](root)
     data = dataset[0]
     
+    G = to_networkx(data, to_undirected=True)
+    comps = sorted(nx.connected_components(G), key=len, reverse=True)
+    if len(comps) > 1:
+        sizes = [len(c) for c in comps]
+        log.info(
+            "Connected components: %d  (sizes: LCC=%d, others=%s)",
+            len(comps), sizes[0], sizes[1:] if len(sizes[1:]) <= 10 else sizes[1:10] + ["..."],
+        )
+    else:
+        log.info("Graph is fully connected (%d nodes)", data.num_nodes)
+
     if dataset_cfg.get("use_cc", False):
         data = LargestConnectedComponents()(data)
         log.info("Filtered to largest connected component: %d nodes", data.num_nodes)
