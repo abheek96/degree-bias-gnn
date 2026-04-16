@@ -373,6 +373,30 @@ So a low-degree test node adjacent to a high-degree same-class training node get
 
 There is a potential counterpoint: high-degree training nodes aggregate from more neighbours during training and may therefore have richer, more stable learned representations. But the per-edge signal they deliver to test nodes is still attenuated by the normalisation, so the benefit of a better representation may not compensate for the lower edge weight at inference time.
 
+### Reachability plots — two complementary views
+
+The reachability analysis (`analyse_degree1_reachability.py --all-degrees`) produces two plots that answer different questions about training-signal access and misclassification.
+
+**Plot 1 — "Why are misclassified nodes failing?" (current view)**
+`reachability_by_degree.png` — stacked bar chart, one bar per degree group.
+
+Each bar sums to 100% over the misclassified nodes at that degree. The three segments are:
+- **Red**: fraction of misclassified nodes that had *no training node reachable at all* within k hops. These nodes had zero labelled signal to work from.
+- **Orange**: fraction that had training nodes reachable, but *none of the same class*. Every labelled anchor was a wrong-class node — the model received supervision, but from the wrong source.
+- **Blue**: fraction that had a same-class training node reachable, yet *still* failed. Something beyond reachability caused the error (degree-normalisation dilution, diff-class non-training neighbours, dead ReLU paths, etc.).
+
+**Correct interpretation**: "X% of misclassified degree-D nodes had no training node reachable."
+**Incorrect interpretation**: "X% of unreachable degree-D nodes are misclassified." — that is the flipped question, answered by Plot 2.
+
+**Plot 2 — "How much does reachability predict failure?" (flipped view)**
+`misc_rate_by_reachability.png` — three lines, one per reachability bucket, across degree groups.
+
+Each line shows the misclassification *rate* within that bucket: what fraction of all nodes in that bucket (correctly classified + misclassified) are wrong. This answers the flipped question: given that a node falls into a particular reachability category, how likely is it to be misclassified?
+
+**Correct interpretation**: "Among degree-D nodes with no training reachable, Y% are misclassified."
+
+If the red line sits consistently near 100% and the blue line sits near the overall misclassification rate for that degree, it confirms that the absence of any reachable training signal is a near-sufficient condition for failure, while having a same-class anchor does not guarantee correctness (it reduces but does not eliminate misclassification).
+
 ### Degree-1 nodes — high misclassification driven by low reachability to training nodes
 
 Degree-1 nodes tend to show a disproportionately high misclassification rate. The likely primary cause is **low reachability to training nodes** rather than the degree-normalisation imbalance that affects high-degree nodes.

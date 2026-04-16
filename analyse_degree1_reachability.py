@@ -117,27 +117,39 @@ def train_model(data, cfg, device):
 def _compute_reachability(test_idx, all_deg, y, pred, train_set,
                           edge_index, k_hops: int, N: int,
                           deg_min: int, deg_max: int) -> dict:
-    """Compute reachability counts for misclassified test nodes in [deg_min, deg_max].
+    """Compute reachability counts for all (and misclassified) test nodes in
+    [deg_min, deg_max].
+
+    Every node is assigned to exactly one reachability bucket:
+        no_train       — no training node within k hops
+        no_same_train  — training reachable, but none same-class
+        has_same_train — at least one same-class training node reachable
+
+    For each bucket both the total count and the misclassified count are
+    tracked, so the caller can compute:
+        - proportion of *misclassified* nodes per bucket  (current view)
+        - misclassification *rate* within each bucket     (flipped view)
 
     Returns
     -------
     dict with keys:
-        total, n_misc, no_train, no_same_train, has_same_train
+        total, n_misc,
+        no_train,            no_train_misc,
+        no_same_train,       no_same_train_misc,
+        has_same_train,      has_same_train_misc
     """
     in_range = [
         node for node in test_idx
         if deg_min <= int(all_deg[node].item()) <= deg_max
     ]
-    misclassified = [
-        node for node in in_range
-        if int(pred[node].item()) != int(y[node].item())
-    ]
 
-    no_train      = 0
-    no_same_train = 0
+    no_train           = 0;  no_train_misc      = 0
+    no_same_train      = 0;  no_same_train_misc = 0
+    has_same_train     = 0;  has_same_train_misc = 0
 
-    for node in misclassified:
+    for node in in_range:
         true_lbl  = int(y[node].item())
+        is_misc   = int(pred[node].item()) != true_lbl
         neighbors = _khop_neighbors(edge_index, node, k_hops, N)
 
         train_in_field      = [n for n in neighbors if n in train_set]
@@ -146,17 +158,29 @@ def _compute_reachability(test_idx, all_deg, y, pred, train_set,
 
         if not train_in_field:
             no_train += 1
+            if is_misc: no_train_misc += 1
         elif not same_train_in_field:
             no_same_train += 1
+            if is_misc: no_same_train_misc += 1
+        else:
+            has_same_train += 1
+            if is_misc: has_same_train_misc += 1
 
-    n_misc = len(misclassified)
+    n_misc = no_train_misc + no_same_train_misc + has_same_train_misc
     return {
-        "total":          len(in_range),
-        "n_misc":         n_misc,
-        "no_train":       no_train,
-        "no_same_train":  no_same_train,
-        "has_same_train": n_misc - no_train - no_same_train,
+        "total":              len(in_range),
+        "n_misc":             n_misc,
+        "no_train":           no_train,
+        "no_train_misc":      no_train_misc,
+        "no_same_train":      no_same_train,
+        "no_same_train_misc": no_same_train_misc,
+        "has_same_train":     has_same_train,
+        "has_same_train_misc": has_same_train_misc,
     }
+
+
+def _misc_rate(misc: int, total: int) -> float:
+    return misc / total if total > 0 else float("nan")
 
 
 def _log_results(results: dict, deg_label: str, k_hops: int):
@@ -168,19 +192,22 @@ def _log_results(results: dict, deg_label: str, k_hops: int):
     log.info("Receptive field radius: %d hop(s)", k_hops)
     log.info("")
     log.info("── No training node reachable within %d hop(s) ──", k_hops)
-    log.info("  Count : %d / %d  (%.1f%%)", results["no_train"], n_misc,
-             100 * results["no_train"] / n_misc if n_misc else 0)
+    log.info("  Total in bucket   : %d", results["no_train"])
+    log.info("  Misclassified     : %d / %d  (%.1f%% misc rate)",
+             results["no_train_misc"], results["no_train"],
+             100 * _misc_rate(results["no_train_misc"], results["no_train"]))
     log.info("")
-    log.info("── Training node(s) reachable but NO same-class within %d hop(s) ──",
-             k_hops)
-    log.info("  Count : %d / %d  (%.1f%%)", results["no_same_train"], n_misc,
-             100 * results["no_same_train"] / n_misc if n_misc else 0)
+    log.info("── Training reachable but NO same-class within %d hop(s) ──", k_hops)
+    log.info("  Total in bucket   : %d", results["no_same_train"])
+    log.info("  Misclassified     : %d / %d  (%.1f%% misc rate)",
+             results["no_same_train_misc"], results["no_same_train"],
+             100 * _misc_rate(results["no_same_train_misc"], results["no_same_train"]))
     log.info("")
-    log.info("── Summary ──")
-    log.info("  No training node at all   : %d / %d", results["no_train"], n_misc)
-    log.info("  No same-class train node  : %d / %d",
-             results["no_train"] + results["no_same_train"], n_misc)
-    log.info("  Has same-class train node : %d / %d", results["has_same_train"], n_misc)
+    log.info("── Same-class training reachable within %d hop(s) ──", k_hops)
+    log.info("  Total in bucket   : %d", results["has_same_train"])
+    log.info("  Misclassified     : %d / %d  (%.1f%% misc rate)",
+             results["has_same_train_misc"], results["has_same_train"],
+             100 * _misc_rate(results["has_same_train_misc"], results["has_same_train"]))
 
 
 def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
@@ -209,9 +236,9 @@ def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
     for d in degrees:
         r      = degree_results[d]
         n      = r["n_misc"]
-        no_train_prop.append(r["no_train"]       / n)
-        no_same_prop.append(r["no_same_train"]   / n)
-        has_same_prop.append(r["has_same_train"] / n)
+        no_train_prop.append(r["no_train_misc"]       / n)
+        no_same_prop.append(r["no_same_train_misc"]   / n)
+        has_same_prop.append(r["has_same_train_misc"] / n)
         counts.append(n)
 
     x   = np.arange(len(degrees))
@@ -245,6 +272,87 @@ def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
 
     fig.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02),
                ncol=3, fontsize=9, framealpha=0.9)
+    fig.subplots_adjust(bottom=0.22)
+    fig.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        log.info("Plot saved to %s", save_path)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def _plot_misclassification_rate_by_reachability(degree_results: dict, k_hops: int,
+                                                  cfg: dict, save_path: str | None,
+                                                  show: bool):
+    """Line plot of misclassification rate per reachability bucket per degree.
+
+    Flipped view: for each reachability bucket, how many nodes in that bucket
+    are misclassified?  This answers "how strongly does reachability predict
+    misclassification?" rather than "why are misclassified nodes failing?".
+
+    Three lines:
+      - Red   : misclassification rate among nodes with no training reachable
+      - Orange: misclassification rate among nodes with training but no same-class
+      - Blue  : misclassification rate among nodes with same-class training reachable
+
+    Degrees where a bucket is empty are plotted as gaps (NaN).
+    """
+    degrees = sorted(degree_results.keys())
+
+    def _rates(bucket_total_key, bucket_misc_key):
+        vals = []
+        for d in degrees:
+            r = degree_results[d]
+            total = r[bucket_total_key]
+            misc  = r[bucket_misc_key]
+            vals.append(misc / total if total > 0 else float("nan"))
+        return vals
+
+    rate_no_train  = _rates("no_train",       "no_train_misc")
+    rate_no_same   = _rates("no_same_train",  "no_same_train_misc")
+    rate_has_same  = _rates("has_same_train", "has_same_train_misc")
+
+    # bucket sizes for annotation
+    sizes_no_train = [degree_results[d]["no_train"]       for d in degrees]
+    sizes_no_same  = [degree_results[d]["no_same_train"]  for d in degrees]
+    sizes_has_same = [degree_results[d]["has_same_train"] for d in degrees]
+
+    x = np.arange(len(degrees))
+    fig, ax = plt.subplots(figsize=(max(8, len(degrees) * 0.5), 5))
+
+    def _plot_line(rates, sizes, color, label):
+        y = np.array(rates, dtype=float)
+        mask = ~np.isnan(y)
+        ax.plot(x[mask], y[mask], color=color, lw=1.8, marker="o",
+                markersize=4, label=label)
+
+    _plot_line(rate_no_train, sizes_no_train, "#D32F2F",
+               "No train node reachable")
+    _plot_line(rate_no_same,  sizes_no_same,  "#FF8F00",
+               "Train reachable, no same-class")
+    _plot_line(rate_has_same, sizes_has_same, "#1565C0",
+               "Same-class train reachable")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(degrees, rotation=55, ha="right", fontsize=8)
+    ax.set_xlabel("Node degree", fontsize=11)
+    ax.set_ylabel("Misclassification rate within bucket", fontsize=11)
+    ax.set_ylim(-0.05, 1.10)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+    ax.set_title(
+        f"Misclassification rate by reachability bucket\n"
+        f"{dataset} · {model} · {k_hops}-hop receptive field",
+        fontsize=11,
+    )
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+              ncol=3, fontsize=9, framealpha=0.9)
     fig.subplots_adjust(bottom=0.22)
     fig.tight_layout()
 
@@ -318,15 +426,25 @@ def run_all_degrees(cfg, device: torch.device, save_dir: str | None, show: bool)
         if r["n_misc"] > 0:
             _log_results(r, str(d), k_hops)
 
-    save_path = None
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+
+    save_path_current = None
+    save_path_flipped = None
     if save_dir:
-        dataset = cfg["dataset"]["name"]
-        model   = cfg["model"]["name"]
-        save_path = os.path.join(
+        save_path_current = os.path.join(
             save_dir, "reachability",
             f"{dataset}_{model}_reachability_by_degree.png",
         )
-    _plot_reachability_by_degree(degree_results, k_hops, cfg, save_path, show)
+        save_path_flipped = os.path.join(
+            save_dir, "reachability",
+            f"{dataset}_{model}_misc_rate_by_reachability.png",
+        )
+
+    _plot_reachability_by_degree(degree_results, k_hops, cfg, save_path_current, show)
+    _plot_misclassification_rate_by_reachability(
+        degree_results, k_hops, cfg, save_path_flipped, show
+    )
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
