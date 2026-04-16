@@ -94,6 +94,8 @@ def train_model(data, cfg, device):
 
     best_val_acc = 0.0
     best_state = copy.deepcopy(model.state_dict())
+    patience = train_cfg.get("patience", 0)
+    patience_counter = 0
 
     for epoch in range(1, train_cfg["epochs"] + 1):
         loss = train(model, data, optimizer, criterion)
@@ -101,6 +103,13 @@ def train_model(data, cfg, device):
         if results["val"] > best_val_acc:
             best_val_acc = results["val"]
             best_state = copy.deepcopy(model.state_dict())
+            patience_counter = 0
+        else:
+            patience_counter += 1
+
+        if patience > 0 and patience_counter >= patience:
+            log.info("Early stopping at epoch %d", epoch)
+            break
 
     model.load_state_dict(best_state)
     model.eval()
