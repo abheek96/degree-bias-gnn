@@ -1395,10 +1395,12 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
 # ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
 
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=False):
-    """Scatter plot of mean neighborhood purity vs. 1-hop degree.
+    """Boxplot distribution of neighborhood purity per degree group.
 
-    Nodes are grouped by their 1-hop degree.  For each group the mean purity
-    across test nodes is plotted; bubble size encodes node count.
+    Nodes are grouped by their 1-hop degree.  For each group the full
+    distribution of per-node purity values is shown as a boxplot.
+    The overall weighted-mean purity is overlaid as a horizontal dashed line,
+    and a light-grey bar shows the node count per group.
 
     purity(v) = |same-class nodes in N_k(v)| / |N_k(v)|
 
@@ -1412,55 +1414,51 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
     show        : bool
     """
     deg    = test_deg.cpu()
-    purity = purity_test.cpu()
+    purity = purity_test.cpu().numpy()
 
     unique_degrees = sorted(deg.unique().tolist())
     pos    = list(range(len(unique_degrees)))
     prefix = _fname_prefix(cfg)
 
     counts    = []
+    box_data  = []
     mean_purs = []
     for d in unique_degrees:
-        mask  = deg == d
+        mask  = (deg == d).numpy()
         vals  = purity[mask]
-        valid = vals[~torch.isnan(vals)]
+        valid = vals[~np.isnan(vals)]
         counts.append(int(mask.sum()))
+        box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
 
     n_test   = sum(counts)
     n_deg    = len(unique_degrees)
     subtitle = _subtitle(cfg, n_test, n_deg)
 
-    max_count   = max(counts) or 1
-    bubble_size = [max(30, 700 * c / max_count) for c in counts]
-
     fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
 
-    ax.scatter(pos, mean_purs, s=bubble_size, c="#e67e22", alpha=0.78,
-               edgecolors="white", linewidths=0.6, zorder=3)
-
-    ref_counts = sorted({min(counts), int(np.median(counts)), max(counts)})
-    for rc in ref_counts:
-        ax.scatter([], [], s=max(30, 700 * rc / max_count),
-                   c="#e67e22", alpha=0.65, edgecolors="white", label=f"n = {rc}")
+    bp = ax.boxplot(box_data, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp["boxes"]:
+        patch.set_facecolor("#e67e22")
+        patch.set_alpha(0.80)
 
     # Overall mean purity (weighted by node count)
     valid_pairs = [(m, c) for m, c in zip(mean_purs, counts) if not np.isnan(m)]
     if valid_pairs:
         overall = sum(m * c for m, c in valid_pairs) / sum(c for _, c in valid_pairs)
         ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
-                   label=f"Mean purity ({overall:.1%})", zorder=2)
+                   label=f"Overall mean purity ({overall:.1%})", zorder=2)
 
     _count_bars(ax, pos, counts)
 
-    ax.set_ylabel(f"Mean neighborhood purity  (k={k})", fontsize=11)
+    ax.set_ylabel(f"Neighborhood purity  (k={k})", fontsize=11)
     ax.set_ylim(-0.05, 1.10)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.85,
-              title="Node count", title_fontsize=8)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax.set_title(
-        f"Neighborhood Purity vs. Node Degree  (k={k})\n{subtitle}", fontsize=11
+        f"Neighborhood Purity Distribution vs. Node Degree  (k={k})\n{subtitle}",
+        fontsize=11,
     )
 
     ax.set_xlabel("Node degree", fontsize=11)
