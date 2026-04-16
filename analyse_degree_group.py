@@ -127,7 +127,8 @@ def _build_edge_weight_map(edge_index, num_nodes: int) -> dict:
     }
 
 
-def find_qualifying_nodes(data, all_deg, pred, deg_min: int, deg_max: int,
+def find_qualifying_nodes(data, all_deg, pred, edge_weight_map: dict,
+                          deg_min: int, deg_max: int,
                           k_hops: int = 1) -> list[dict]:
     """Return misclassified test nodes in [deg_min, deg_max] that have ≥1
     same-class training node within k_hops hops whose degree is strictly
@@ -145,8 +146,6 @@ def find_qualifying_nodes(data, all_deg, pred, deg_min: int, deg_max: int,
     train_mask = data.train_mask.cpu()
     test_mask  = data.test_mask.cpu()
     deg        = all_deg.cpu()
-
-    edge_weight_map = _build_edge_weight_map(data.edge_index, N)
     test_indices    = test_mask.nonzero(as_tuple=False).view(-1).tolist()
     results = []
 
@@ -204,6 +203,8 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
     all_deg = graph_degree(data.edge_index[1], data.num_nodes).cpu()
     k_hops  = cfg["model"]["num_layers"] - 1
 
+    edge_weight_map = _build_edge_weight_map(data.edge_index, data.num_nodes)
+
     log.info("Training model (%s, %d layers)...",
              cfg["model"]["name"], cfg["model"]["num_layers"])
     set_seed(cfg.get("seed", 42))
@@ -211,7 +212,9 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
 
     log.info("Finding qualifying test nodes in degree range [%d, %d] (k_hops=%d)...",
              deg_min, deg_max, k_hops)
-    qualifying = find_qualifying_nodes(data, all_deg, pred, deg_min, deg_max, k_hops=k_hops)
+    qualifying = find_qualifying_nodes(
+        data, all_deg, pred, edge_weight_map, deg_min, deg_max, k_hops=k_hops
+    )
 
     if not qualifying:
         log.info("No test nodes found matching the condition in degree [%d, %d].",
@@ -275,16 +278,19 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
             result["n_same_train"],
             result["n_diff_train"],
         )
-        log.info("  Top neighbors by influence:")
-        for nb in result["neighbors"][:10]:
+        log.info("  Training neighbors by influence:")
+        for nb in result["neighbors"]:
             if nb["type"] == "non_train":
                 continue
+            ew = edge_weight_map.get((nb["node_idx"], node))
+            ew_str = f"ew={ew:.6f}" if ew is not None else "ew=N/A"
             log.info(
-                "    [%s] node %-5d  deg=%-4d  hop=%-2d  norm=%.4f",
+                "    [%s] node %-5d  deg=%-4d  hop=%-2d  %s  norm=%.4f",
                 nb["type"],
                 nb["node_idx"],
                 nb["degree"],
                 nb["hop_distance"],
+                ew_str,
                 nb["influence_norm"],
             )
 
