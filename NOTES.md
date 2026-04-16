@@ -373,6 +373,24 @@ So a low-degree test node adjacent to a high-degree same-class training node get
 
 There is a potential counterpoint: high-degree training nodes aggregate from more neighbours during training and may therefore have richer, more stable learned representations. But the per-edge signal they deliver to test nodes is still attenuated by the normalisation, so the benefit of a better representation may not compensate for the lower edge weight at inference time.
 
+### Degree-1 nodes — high misclassification driven by low reachability to training nodes
+
+Degree-1 nodes tend to show a disproportionately high misclassification rate. The likely primary cause is **low reachability to training nodes** rather than the degree-normalisation imbalance that affects high-degree nodes.
+
+**Why reachability is the bottleneck for degree-1 nodes:**
+
+1. **Single neighbour limits structural access.** A degree-1 node has exactly one neighbour. For a 2-layer GCN (k=1 message-passing hop before the linear head), its receptive field is that one neighbour and any nodes two hops away via that neighbour. If the single neighbour is not a training node, direct supervision is absent — the node depends entirely on indirect signal propagated through an intermediary.
+
+2. **Labelling ratio is low.** The probability that the single neighbour happens to be a training node is low — roughly equal to the global training node fraction (~4% for Cora with 20 labels per class). Most degree-1 nodes therefore have no direct training anchor at hop=1.
+
+3. **High average SPL to training nodes.** With only one structural path into the graph, degree-1 nodes tend to have longer shortest-path distances to training nodes than higher-degree nodes, which have multiple paths and are more likely to sit near a densely-labelled hub.
+
+4. **No redundancy in the signal path.** Higher-degree nodes can receive same-class signal through multiple neighbours even if some are diff-class — the correct signal still has other routes. A degree-1 node has no such redundancy. If its single neighbour is diff-class or poorly-trained, there is no alternative path.
+
+**Contrast with the high-degree failure mode.** High-degree nodes fail because they aggregate too much — diff-class neighbours numerically overwhelm same-class signal through the degree-normalised sum. Degree-1 nodes fail because they aggregate too little — their single neighbour may not carry the right class signal at all, regardless of edge weights. These are opposite ends of the same structural spectrum.
+
+**Connection to the node 1305 case study.** Node 1305 (degree=2) had a same-class training anchor (node 1555, deg=19) but was still misclassified because that anchor's high degree diluted its edge weight below that of the diff-class neighbour. A degree-1 node in the same situation would have only the one high-degree training anchor and no competing neighbours — yet if the anchor is high-degree, the effective signal is still weak. The degree-1 failure is therefore partly about the same edge-weight penalty, compounded by the complete absence of path redundancy.
+
 ---
 
 ## Open Questions / To Explore
