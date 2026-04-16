@@ -265,10 +265,11 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
     set_seed(cfg.get("seed", 42))
     pred, model = train_model(data, cfg, device)
 
-    log.info("Finding qualifying test nodes in degree range [%d, %d] (k_hops=%d)...",
+    log.info("Finding qualifying misclassified test nodes in degree range [%d, %d] "
+             "(qualifying condition: 1-hop, influence radius: %d-hop)...",
              deg_min, deg_max, k_hops)
     qualifying = find_qualifying_nodes(
-        data, all_deg, pred, edge_weight_map, deg_min, deg_max, k_hops=k_hops
+        data, all_deg, pred, edge_weight_map, deg_min, deg_max, k_hops=1
     )
 
     if not qualifying:
