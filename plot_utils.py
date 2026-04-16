@@ -2320,6 +2320,70 @@ def plot_train_neighbor_degree_stats(
           f"{prefix}_train_neighbor_degree_k{k}.png", show)
 
 
+# ── max same-class training-neighbor degree vs test-node degree ───────────────
+
+def plot_max_same_train_deg_vs_degree(max_same_train_deg, test_deg, cfg,
+                                      save_dir=None, show=False):
+    """Boxplots of the max same-class training-neighbor degree per test-node degree group.
+
+    For each test node that has ≥1 same-class training neighbor in its 1-hop
+    neighborhood, records the highest degree among those neighbors.  Test nodes
+    with no same-class training neighbor are excluded (NaN).
+
+    For each test-node degree group, the distribution of these max-degree values
+    is shown as a boxplot.  This visualises whether lower-degree test nodes tend
+    to be connected to higher-degree same-class training nodes, whose signal is
+    more diluted by GCN's 1/sqrt(deg) normalisation.
+
+    Parameters
+    ----------
+    max_same_train_deg : FloatTensor [num_test_nodes] — NaN where no same-class
+                         training neighbor exists (from
+                         get_max_same_class_train_neighbor_degree, sliced to
+                         test nodes).
+    test_deg           : LongTensor [num_test_nodes]
+    cfg                : dict
+    save_dir           : str or None
+    show               : bool
+    """
+    deg     = test_deg.cpu().numpy().astype(int)
+    max_deg = max_same_train_deg.cpu().numpy()
+
+    all_degrees = sorted(set(deg.tolist()))
+    pos         = list(range(len(all_degrees)))
+    prefix      = _fname_prefix(cfg)
+    n_test      = len(deg)
+    subtitle    = _subtitle(cfg, n_test, len(all_degrees))
+
+    box_data = []
+    counts   = []
+    for d in all_degrees:
+        mask  = deg == d
+        vals  = max_deg[mask]
+        valid = vals[~np.isnan(vals)]
+        box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
+        counts.append(int(mask.sum()))
+
+    fig, ax = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
+
+    bp = ax.boxplot(box_data, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp["boxes"]:
+        patch.set_facecolor("#7B1FA2")
+        patch.set_alpha(0.80)
+
+    ax.set_ylabel("Max degree of same-class 1-hop training neighbors", fontsize=10)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.set_title(
+        "Max same-class training-neighbor degree vs. test-node degree\n" + subtitle,
+        fontsize=10,
+    )
+    _degree_axis(ax, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "train_neighbor_degree"),
+          f"{prefix}_max_same_train_deg_vs_degree.png", show)
+
+
 # ── 1-hop training-neighbor degree vs accuracy ─────────────────────────────────
 
 def plot_1hop_train_deg_vs_accuracy(

@@ -454,6 +454,46 @@ def get_class_labelling_ratio(data) -> tuple[torch.Tensor, torch.Tensor]:
     return has_same, has_diff
 
 
+def get_max_same_class_train_neighbor_degree(data) -> torch.Tensor:
+    """For each node, the maximum degree of its same-class 1-hop training neighbors.
+
+    For every node v, considers all immediate neighbors u that are (a) in the
+    training set and (b) share the same label as v.  Returns the maximum degree
+    among those neighbors.  Nodes with no qualifying neighbor receive NaN.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index, .train_mask, .y)
+
+    Returns
+    -------
+    max_same_train_deg : FloatTensor, shape [num_nodes]
+        NaN where no same-class training neighbor exists.
+    """
+    from torch_geometric.utils import degree as pyg_degree
+
+    N          = data.num_nodes
+    deg        = pyg_degree(data.edge_index[1], N).cpu()
+    labels     = data.y.cpu()
+    train_mask = data.train_mask.cpu()
+
+    src, dst = data.edge_index[0].cpu(), data.edge_index[1].cpu()
+
+    # Keep only edges where src is a same-class training neighbor of dst
+    same_train_mask = train_mask[src] & (labels[src] == labels[dst])
+    src_f = src[same_train_mask]
+    dst_f = dst[same_train_mask]
+
+    max_deg = torch.full((N,), float("-inf"))
+    if len(dst_f) > 0:
+        src_deg = deg[src_f]
+        max_deg.scatter_reduce_(0, dst_f, src_deg, reduce="amax", include_self=True)
+
+    # Nodes with no same-class training neighbor remain -inf → set to NaN
+    max_deg[max_deg == float("-inf")] = float("nan")
+    return max_deg
+
+
 def get_training_neighbor_degree_stats(data, k: int = 2) -> dict:
     """Degree statistics of same-class and diff-class training nodes in each
     test node's k-hop neighborhood.

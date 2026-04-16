@@ -49,5 +49,6 @@ plot:
   influence_disparity: false     # disparity for ALL test nodes (expensive: one Jacobian per node)
   train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
   train_1hop_deg_accuracy: true  # 1-hop training-neighbor degree boxplots + accuracy overlay
+  max_same_train_deg: true       # boxplots of max same-class training-neighbor degree per degree group
   save: true
   show: false
