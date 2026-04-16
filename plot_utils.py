@@ -1477,8 +1477,8 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
 
     # Labelling ratio lines on secondary axis (same-class vs diff-class only)
     _LR_LINES = [
-        (same_ratios, "#2E7D32", "Same-class train nb"),
-        (diff_ratios, "#B71C1C", "Diff-class train nb"),
+        (same_ratios, "#1565C0", "Same-class train nb"),
+        (diff_ratios, "#F9A825", "Diff-class train nb"),
     ]
     handles_lr = []
     if any(r for r, *_ in _LR_LINES):
