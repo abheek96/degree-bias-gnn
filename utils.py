@@ -454,6 +454,34 @@ def get_class_labelling_ratio(data) -> tuple[torch.Tensor, torch.Tensor]:
     return has_same, has_diff
 
 
+def get_khop_labelling_ratio(data, k: int) -> torch.Tensor:
+    """For every node, indicate whether it has a training node within k hops.
+
+    Iteratively propagates the training mask through the adjacency matrix k
+    times, accumulating reachability.  A node is marked True if at least one
+    training node is reachable within k hops (including exactly 1 hop).
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index and .train_mask)
+    k    : int — receptive-field radius (= num_layers - 1 for a GCN)
+
+    Returns
+    -------
+    has_train_within_k : BoolTensor, shape [num_nodes]
+    """
+    from torch_geometric.utils import to_dense_adj
+
+    N      = data.num_nodes
+    A      = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0).cpu()
+    signal = data.train_mask.cpu().float()   # [N]: 1 at training nodes
+    reached = signal.bool()                  # training nodes reach themselves (hop 0)
+    for _ in range(k):
+        signal  = (A @ signal).clamp(max=1)  # propagate one hop
+        reached = reached | signal.bool()
+    return reached
+
+
 def get_max_same_class_train_neighbor_degree(data) -> torch.Tensor:
     """For each node, the maximum degree of its same-class 1-hop training neighbors.
 

@@ -16,7 +16,7 @@ from dataset_utils import apply_split
 from logger import setup_logger
 from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_node_similarity_analysis, plot_train_neighbor_degree_stats, plot_max_same_train_deg_vs_degree, plot_1hop_train_deg_vs_accuracy, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree, plot_train_degree_distribution
 from influence import compute_influence_analysis, compute_influence_disparity_all
-from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_class_labelling_ratio, get_max_same_class_train_neighbor_degree, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta, compute_node_similarity_analysis
+from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_class_labelling_ratio, get_khop_labelling_ratio, get_max_same_class_train_neighbor_degree, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta, compute_node_similarity_analysis
 from train import train
 from test import evaluate
 from models.gcn import inspect_node_aggregation
@@ -212,11 +212,14 @@ def main():
     train_labels = data.y[data.train_mask].cpu()
 
     # Labelling ratio is graph-fixed — compute once, sliced to test nodes
-    has_labeled_neighbor = get_labelling_ratio(data)[data.test_mask.cpu()]
-    _same_lr, _diff_lr   = get_class_labelling_ratio(data)
-    has_same_class_train = _same_lr[data.test_mask.cpu()]
-    has_diff_class_train = _diff_lr[data.test_mask.cpu()]
-    max_same_train_deg   = get_max_same_class_train_neighbor_degree(data)[data.test_mask.cpu()]
+    # k_hops is not yet available here (depends on model config); read it directly
+    _k_hops_lr = cfg["model"]["num_layers"] - 1
+    has_labeled_neighbor      = get_labelling_ratio(data)[data.test_mask.cpu()]
+    has_khop_labeled_neighbor = get_khop_labelling_ratio(data, k=_k_hops_lr)[data.test_mask.cpu()]
+    _same_lr, _diff_lr        = get_class_labelling_ratio(data)
+    has_same_class_train      = _same_lr[data.test_mask.cpu()]
+    has_diff_class_train      = _diff_lr[data.test_mask.cpu()]
+    max_same_train_deg        = get_max_same_class_train_neighbor_degree(data)[data.test_mask.cpu()]
 
     # Average SPL to training nodes is graph-fixed — compute once, sliced to test nodes
     avg_spl            = get_avg_spl_to_train(data)[data.test_mask.cpu()]
@@ -398,6 +401,8 @@ def main():
         )
         plot_acc_and_labelling_ratio_vs_degree(
             deg_acc_results, test_deg, has_labeled_neighbor, cfg,
+            has_khop_labeled_neighbor=has_khop_labeled_neighbor,
+            k_hops=k_hops,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )
