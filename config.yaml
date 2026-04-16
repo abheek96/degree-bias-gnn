@@ -48,5 +48,6 @@ plot:
   feature_similarity: false      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
   influence_disparity: true     # disparity for ALL test nodes (expensive: one Jacobian per node)
   train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
+  train_1hop_deg_accuracy: true  # 1-hop training-neighbor degree boxplots + accuracy overlay
   save: true
   show: false

@@ -14,7 +14,7 @@ from torch_geometric.utils import degree as graph_degree
 from dataset import load_dataset
 from dataset_utils import apply_split
 from logger import setup_logger
-from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_node_similarity_analysis, plot_train_neighbor_degree_stats, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree, plot_train_degree_distribution
+from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_node_similarity_analysis, plot_train_neighbor_degree_stats, plot_1hop_train_deg_vs_accuracy, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree, plot_train_degree_distribution
 from influence import compute_influence_analysis, compute_influence_disparity_all
 from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta, compute_node_similarity_analysis
 from train import train
@@ -253,6 +253,12 @@ def main():
         if plot_cfg.get("train_neighbor_degree", False) else None
     )
 
+    # 1-hop training-neighbor degree stats (graph-fixed) — for degree-normalisation plot
+    train_1hop_deg_stats = (
+        get_training_neighbor_degree_stats(data, k=1)
+        if plot_cfg.get("train_1hop_deg_accuracy", False) else None
+    )
+
     # Neighbourhood cardinality (k=1, k=2) is graph-fixed — compute once
     cardinality_by_k = (
         {k: get_khop_cardinality(data, k)[data.test_mask].cpu()
@@ -412,6 +418,13 @@ def main():
         plot_train_neighbor_degree_stats(
             train_nb_deg_stats, test_deg, pred, data, cfg,
             k=k_hops,
+            save_dir=exec_dir if plot_cfg.get("save", True) else None,
+            show=plot_cfg.get("show", False),
+        )
+
+    if plot_cfg.get("train_1hop_deg_accuracy", False) and train_1hop_deg_stats is not None:
+        plot_1hop_train_deg_vs_accuracy(
+            train_1hop_deg_stats, deg_acc_results, test_deg, cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
         )

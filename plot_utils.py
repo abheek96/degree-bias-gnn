@@ -2275,6 +2275,129 @@ def plot_train_neighbor_degree_stats(
           f"{prefix}_train_neighbor_degree_k{k}.png", show)
 
 
+# ── 1-hop training-neighbor degree vs accuracy ─────────────────────────────────
+
+def plot_1hop_train_deg_vs_accuracy(
+    stats, run_results, test_deg, cfg, save_dir=None, show=False
+):
+    """Boxplots of 1-hop training-neighbor degree per test-node degree group,
+    with degree-wise accuracy overlaid.
+
+    For each test-node degree group, two side-by-side boxplots are shown:
+      • Blue  — distribution of per-node *mean degree* of same-class 1-hop
+                training neighbors across all test nodes in the group.
+      • Orange — distribution of per-node *mean degree* of diff-class 1-hop
+                training neighbors.
+
+    The hypothesis: if same-class training neighbors tend to have higher degree
+    than diff-class ones, GCN's 1/sqrt(deg_u * deg_v) normalisation dilutes
+    their contribution more, potentially explaining lower accuracy in groups
+    where this imbalance is strongest.
+
+    Accuracy (mean across runs) is overlaid as a dark-green line on a secondary
+    y-axis (right).
+
+    Parameters
+    ----------
+    stats       : dict from get_training_neighbor_degree_stats(data, k=1)
+                  keys: same_mean_deg, diff_mean_deg  (numpy arrays, NaN if none)
+    run_results : list of dicts from get_accuracy_deg — one per run.
+    test_deg    : LongTensor [num_test_nodes]
+    cfg         : dict
+    save_dir    : str or None
+    show        : bool
+    """
+    test_deg_np  = test_deg.cpu().numpy().astype(int)
+    all_degrees  = sorted(set(test_deg_np.tolist()))
+    pos          = list(range(len(all_degrees)))
+    prefix       = _fname_prefix(cfg)
+    n_test       = len(test_deg_np)
+    subtitle     = _subtitle(cfg, n_test, len(all_degrees))
+
+    same_md = stats["same_mean_deg"]   # [num_test_nodes], NaN if no same-class train nb
+    diff_md = stats["diff_mean_deg"]   # [num_test_nodes], NaN if no diff-class train nb
+
+    # Group per-node mean-degree values by test-node degree
+    same_by_deg  = {d: [] for d in all_degrees}
+    diff_by_deg  = {d: [] for d in all_degrees}
+
+    for i, d in enumerate(test_deg_np.tolist()):
+        if not np.isnan(same_md[i]):
+            same_by_deg[d].append(same_md[i])
+        if not np.isnan(diff_md[i]):
+            diff_by_deg[d].append(diff_md[i])
+
+    def _clean(arr):
+        return arr if arr else [float("nan")]
+
+    # Mean accuracy per degree group averaged across runs
+    all_degs_run, deg_data_run = _collect(run_results)
+    deg_to_acc = {}
+    for d in all_degrees:
+        if d in deg_data_run:
+            arrs = [a for a in deg_data_run[d] if len(a) > 0]
+            deg_to_acc[d] = float(np.mean([a.mean() for a in arrs])) if arrs else np.nan
+        else:
+            deg_to_acc[d] = np.nan
+    mean_acc = [deg_to_acc[d] for d in all_degrees]
+
+    # ── Figure ─────────────────────────────────────────────────────────────────
+    fig, ax_box = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
+
+    # Side-by-side boxplots
+    offset = 0.22
+    same_data = [_clean(same_by_deg[d]) for d in all_degrees]
+    diff_data = [_clean(diff_by_deg[d]) for d in all_degrees]
+    pos_same  = [p - offset for p in pos]
+    pos_diff  = [p + offset for p in pos]
+
+    bp_s = ax_box.boxplot(same_data, positions=pos_same, widths=0.35, **_BP_KWARGS)
+    for patch in bp_s["boxes"]:
+        patch.set_facecolor("#1f78b4")
+        patch.set_alpha(0.80)
+
+    bp_d = ax_box.boxplot(diff_data, positions=pos_diff, widths=0.35, **_BP_KWARGS)
+    for patch in bp_d["boxes"]:
+        patch.set_facecolor("#ff7f00")
+        patch.set_alpha(0.80)
+
+    ax_box.set_ylabel("Mean degree of 1-hop training neighbors", fontsize=10)
+    ax_box.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    # Accuracy line on a right-hand secondary axis
+    ax_acc = ax_box.twinx()
+    ax_acc.plot(pos, mean_acc, color=_ACC_COLOR, lw=2.0, marker="o",
+                markersize=4, zorder=6)
+    ax_acc.set_ylabel("Accuracy", fontsize=10, color=_ACC_COLOR)
+    ax_acc.tick_params(axis="y", labelsize=8, colors=_ACC_COLOR, length=3)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_acc.set_ylim(-0.05, 1.15)
+    ax_acc.spines["right"].set_color(_ACC_COLOR)
+
+    # Legend
+    ax_box.legend(
+        handles=[
+            plt.Rectangle((0, 0), 1, 1, color="#1f78b4", alpha=0.80,
+                           label="Same-class 1-hop train nbs"),
+            plt.Rectangle((0, 0), 1, 1, color="#ff7f00", alpha=0.80,
+                           label="Diff-class 1-hop train nbs"),
+            plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="o",
+                       markersize=4, label="Test accuracy (mean)"),
+        ],
+        fontsize=9, framealpha=0.85, loc="upper left",
+        title="1-hop neighborhood", title_fontsize=8,
+    )
+    ax_box.set_title(
+        "1-hop training-neighbor degree distribution vs. accuracy\n" + subtitle,
+        fontsize=10,
+    )
+    _degree_axis(ax_box, pos, all_degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "train_neighbor_degree"),
+          f"{prefix}_1hop_train_deg_vs_accuracy.png", show)
+
+
 # # ── AMP heterogeneity distribution + DMP counts vs degree ──────────────────────
 # 
 # def plot_amp_dmp_vs_degree(amp_deg_data, dmp_deg_data, cfg,
