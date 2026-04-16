@@ -1433,13 +1433,11 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     counts      = []
     box_data    = []
     mean_purs   = []
-    any_ratios  = []
     same_ratios = []
     diff_ratios = []
 
-    hln = has_labeled_neighbor.cpu().numpy()  if has_labeled_neighbor  is not None else None
-    hsc = has_same_class_train.cpu().numpy()  if has_same_class_train  is not None else None
-    hdc = has_diff_class_train.cpu().numpy()  if has_diff_class_train  is not None else None
+    hsc = has_same_class_train.cpu().numpy() if has_same_class_train is not None else None
+    hdc = has_diff_class_train.cpu().numpy() if has_diff_class_train is not None else None
 
     for d in unique_degrees:
         mask = (deg == d).numpy()
@@ -1449,8 +1447,6 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
         box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
         n = mask.sum()
-        if hln is not None:
-            any_ratios.append(float(hln[mask].mean())  if n > 0 else float("nan"))
         if hsc is not None:
             same_ratios.append(float(hsc[mask].mean()) if n > 0 else float("nan"))
         if hdc is not None:
@@ -1479,11 +1475,10 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
-    # Labelling ratio lines on secondary axis
+    # Labelling ratio lines on secondary axis (same-class vs diff-class only)
     _LR_LINES = [
-        (any_ratios,  "#1565C0", "o", "Any train nb"),
-        (same_ratios, "#2E7D32", "^", "Same-class train nb"),
-        (diff_ratios, "#B71C1C", "v", "Diff-class train nb"),
+        (same_ratios, "#2E7D32", "Same-class train nb"),
+        (diff_ratios, "#B71C1C", "Diff-class train nb"),
     ]
     handles_lr = []
     if any(r for r, *_ in _LR_LINES):
@@ -1492,12 +1487,10 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
         ax_lr.tick_params(axis="y", labelsize=7, length=3)
         ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
         ax_lr.set_ylim(-0.05, 1.15)
-        for ratios, color, marker, label in _LR_LINES:
+        for ratios, color, label in _LR_LINES:
             if ratios:
-                ax_lr.plot(pos, ratios, color=color, lw=1.8, marker=marker,
-                           markersize=4, zorder=6)
-                handles_lr.append(plt.Line2D([0], [0], color=color, lw=1.8,
-                                             marker=marker, markersize=4, label=label))
+                ax_lr.plot(pos, ratios, color=color, lw=2.0, zorder=6)
+                handles_lr.append(plt.Line2D([0], [0], color=color, lw=2.0, label=label))
 
     # Legend below the x-axis to avoid overlapping the title
     purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity (k={k})")
