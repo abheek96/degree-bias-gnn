@@ -1433,11 +1433,13 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     counts      = []
     box_data    = []
     mean_purs   = []
+    any_ratios  = []
     same_ratios = []
     diff_ratios = []
 
-    hsc = has_same_class_train.cpu().numpy() if has_same_class_train is not None else None
-    hdc = has_diff_class_train.cpu().numpy() if has_diff_class_train is not None else None
+    hln = has_labeled_neighbor.cpu().numpy()  if has_labeled_neighbor  is not None else None
+    hsc = has_same_class_train.cpu().numpy()  if has_same_class_train  is not None else None
+    hdc = has_diff_class_train.cpu().numpy()  if has_diff_class_train  is not None else None
 
     for d in unique_degrees:
         mask = (deg == d).numpy()
@@ -1447,6 +1449,8 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
         box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
         n = mask.sum()
+        if hln is not None:
+            any_ratios.append(float(hln[mask].mean())  if n > 0 else float("nan"))
         if hsc is not None:
             same_ratios.append(float(hsc[mask].mean()) if n > 0 else float("nan"))
         if hdc is not None:
@@ -1477,6 +1481,7 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
 
     # Labelling ratio lines on secondary axis (same-class vs diff-class only)
     _LR_LINES = [
+        (any_ratios,  "#555555", "Any train nb"),
         (same_ratios, "#1565C0", "Same-class train nb"),
         (diff_ratios, "#F9A825", "Diff-class train nb"),
     ]
