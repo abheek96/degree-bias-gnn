@@ -19,9 +19,11 @@ Usage
 import argparse
 import copy
 import logging
+import os
 import random
 import sys
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
@@ -112,90 +114,219 @@ def train_model(data, cfg, device):
 
 # ── core analysis ──────────────────────────────────────────────────────────────
 
-def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
-    data = load_dataset(cfg["dataset"])
+def _compute_reachability(test_idx, all_deg, y, pred, train_set,
+                          edge_index, k_hops: int, N: int,
+                          deg_min: int, deg_max: int) -> dict:
+    """Compute reachability counts for misclassified test nodes in [deg_min, deg_max].
 
-    split = cfg.get("split", "random")
-    if split == "random":
-        set_seed(cfg.get("seed", 42))
-    data = apply_split(data, split, cfg["dataset"])
-    data = data.to(device)
-
-    N      = data.num_nodes
-    k_hops = cfg["model"]["num_layers"] - 1
-
-    all_deg    = graph_degree(data.edge_index[1], N).cpu()
-    y          = data.y.cpu()
-    train_mask = data.train_mask.cpu()
-    test_mask  = data.test_mask.cpu()
-
-    train_set  = set(train_mask.nonzero(as_tuple=False).view(-1).tolist())
-    test_idx   = test_mask.nonzero(as_tuple=False).view(-1).tolist()
-
-    log.info("Training model (%s, %d layers, k_hops=%d)...",
-             cfg["model"]["name"], cfg["model"]["num_layers"], k_hops)
-    set_seed(cfg.get("seed", 42))
-    pred, _ = train_model(data, cfg, device)
-    pred = pred.cpu()
-
-    # Collect misclassified test nodes in the degree range
-    misclassified_deg1 = [
+    Returns
+    -------
+    dict with keys:
+        total, n_misc, no_train, no_same_train, has_same_train
+    """
+    in_range = [
         node for node in test_idx
         if deg_min <= int(all_deg[node].item()) <= deg_max
-        and int(pred[node].item()) != int(y[node].item())
+    ]
+    misclassified = [
+        node for node in in_range
+        if int(pred[node].item()) != int(y[node].item())
     ]
 
-    total_deg1 = sum(
-        1 for node in test_idx
-        if deg_min <= int(all_deg[node].item()) <= deg_max
-    )
+    no_train      = 0
+    no_same_train = 0
 
-    deg_label = str(deg_min) if deg_min == deg_max else f"{deg_min}–{deg_max}"
-    log.info("")
-    log.info("Degree-%s test nodes : %d total, %d misclassified (%.1f%%)",
-             deg_label, total_deg1, len(misclassified_deg1),
-             100 * len(misclassified_deg1) / total_deg1 if total_deg1 else 0)
-    log.info("Receptive field radius: %d hop(s)", k_hops)
-    log.info("")
-
-    no_train         = []   # no training node of any class reachable
-    no_same_train    = []   # training nodes reachable, but none same-class
-
-    for node in misclassified_deg1:
+    for node in misclassified:
         true_lbl  = int(y[node].item())
-        neighbors = _khop_neighbors(data.edge_index, node, k_hops, N)
+        neighbors = _khop_neighbors(edge_index, node, k_hops, N)
 
         train_in_field      = [n for n in neighbors if n in train_set]
         same_train_in_field = [n for n in train_in_field
                                if int(y[n].item()) == true_lbl]
 
         if not train_in_field:
-            no_train.append(node)
+            no_train += 1
         elif not same_train_in_field:
-            no_same_train.append(node)
+            no_same_train += 1
 
-    n_misc = len(misclassified_deg1)
+    n_misc = len(misclassified)
+    return {
+        "total":          len(in_range),
+        "n_misc":         n_misc,
+        "no_train":       no_train,
+        "no_same_train":  no_same_train,
+        "has_same_train": n_misc - no_train - no_same_train,
+    }
 
+
+def _log_results(results: dict, deg_label: str, k_hops: int):
+    n_misc = results["n_misc"]
+    log.info("")
+    log.info("Degree-%s test nodes : %d total, %d misclassified (%.1f%%)",
+             deg_label, results["total"], n_misc,
+             100 * n_misc / results["total"] if results["total"] else 0)
+    log.info("Receptive field radius: %d hop(s)", k_hops)
+    log.info("")
     log.info("── No training node reachable within %d hop(s) ──", k_hops)
-    log.info("  Count : %d / %d  (%.1f%% of misclassified degree-1 nodes)",
-             len(no_train), n_misc, 100 * len(no_train) / n_misc if n_misc else 0)
-    log.info("  Nodes : %s", no_train if no_train else "none")
-
+    log.info("  Count : %d / %d  (%.1f%%)", results["no_train"], n_misc,
+             100 * results["no_train"] / n_misc if n_misc else 0)
     log.info("")
     log.info("── Training node(s) reachable but NO same-class within %d hop(s) ──",
              k_hops)
-    log.info("  Count : %d / %d  (%.1f%% of misclassified degree-1 nodes)",
-             len(no_same_train), n_misc,
-             100 * len(no_same_train) / n_misc if n_misc else 0)
-    log.info("  Nodes : %s", no_same_train if no_same_train else "none")
-
+    log.info("  Count : %d / %d  (%.1f%%)", results["no_same_train"], n_misc,
+             100 * results["no_same_train"] / n_misc if n_misc else 0)
     log.info("")
     log.info("── Summary ──")
-    log.info("  No training node at all   : %d / %d", len(no_train), n_misc)
+    log.info("  No training node at all   : %d / %d", results["no_train"], n_misc)
     log.info("  No same-class train node  : %d / %d",
-             len(no_train) + len(no_same_train), n_misc)
-    log.info("  Has same-class train node : %d / %d",
-             n_misc - len(no_train) - len(no_same_train), n_misc)
+             results["no_train"] + results["no_same_train"], n_misc)
+    log.info("  Has same-class train node : %d / %d", results["has_same_train"], n_misc)
+
+
+def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
+                                  save_path: str | None, show: bool):
+    """Stacked bar chart of misclassified-node reachability proportions per degree.
+
+    Three stacked segments per degree bar (proportions of misclassified nodes):
+      - No training node reachable          (red)
+      - Train reachable, no same-class      (orange)
+      - Same-class training node reachable  (steelblue)
+
+    Degrees with zero misclassified nodes are skipped.
+    """
+    degrees = sorted(degree_results.keys())
+    degrees = [d for d in degrees if degree_results[d]["n_misc"] > 0]
+
+    if not degrees:
+        log.info("No misclassified nodes found for any degree — skipping plot.")
+        return
+
+    no_train_prop      = []
+    no_same_prop       = []
+    has_same_prop      = []
+    counts             = []
+
+    for d in degrees:
+        r      = degree_results[d]
+        n      = r["n_misc"]
+        no_train_prop.append(r["no_train"]       / n)
+        no_same_prop.append(r["no_same_train"]   / n)
+        has_same_prop.append(r["has_same_train"] / n)
+        counts.append(n)
+
+    x   = np.arange(len(degrees))
+    fig, ax = plt.subplots(figsize=(max(8, len(degrees) * 0.5), 5))
+
+    b1 = ax.bar(x, no_train_prop,  color="#D32F2F", label="No train node reachable")
+    b2 = ax.bar(x, no_same_prop,   bottom=no_train_prop,
+                color="#FF8F00", label="Train reachable, no same-class")
+    b3 = ax.bar(x, has_same_prop,
+                bottom=[a + b for a, b in zip(no_train_prop, no_same_prop)],
+                color="#1565C0", label="Same-class train reachable")
+
+    # Annotate misclassified count above each bar
+    for i, n in enumerate(counts):
+        ax.text(x[i], 1.01, str(n), ha="center", va="bottom", fontsize=7, color="dimgrey")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(degrees, rotation=55, ha="right", fontsize=8)
+    ax.set_xlabel("Node degree", fontsize=11)
+    ax.set_ylabel("Proportion of misclassified nodes", fontsize=11)
+    ax.set_ylim(0, 1.12)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+    ax.set_title(
+        f"Training-node reachability for misclassified test nodes\n"
+        f"{dataset} · {model} · {k_hops}-hop receptive field",
+        fontsize=11,
+    )
+
+    fig.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02),
+               ncol=3, fontsize=9, framealpha=0.9)
+    fig.subplots_adjust(bottom=0.22)
+    fig.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        log.info("Plot saved to %s", save_path)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def _load_data_and_train(cfg, device):
+    """Load dataset, apply split, train model. Returns (data, pred, k_hops)."""
+    data = load_dataset(cfg["dataset"])
+    split = cfg.get("split", "random")
+    if split == "random":
+        set_seed(cfg.get("seed", 42))
+    data = apply_split(data, split, cfg["dataset"])
+    data = data.to(device)
+
+    k_hops = cfg["model"]["num_layers"] - 1
+    log.info("Training model (%s, %d layers, k_hops=%d)...",
+             cfg["model"]["name"], cfg["model"]["num_layers"], k_hops)
+    set_seed(cfg.get("seed", 42))
+    pred, _ = train_model(data, cfg, device)
+    return data, pred.cpu(), k_hops
+
+
+def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
+    data, pred, k_hops = _load_data_and_train(cfg, device)
+
+    N          = data.num_nodes
+    all_deg    = graph_degree(data.edge_index[1], N).cpu()
+    y          = data.y.cpu()
+    train_mask = data.train_mask.cpu()
+    test_mask  = data.test_mask.cpu()
+    train_set  = set(train_mask.nonzero(as_tuple=False).view(-1).tolist())
+    test_idx   = test_mask.nonzero(as_tuple=False).view(-1).tolist()
+
+    results = _compute_reachability(
+        test_idx, all_deg, y, pred, train_set,
+        data.edge_index, k_hops, N, deg_min, deg_max,
+    )
+    deg_label = str(deg_min) if deg_min == deg_max else f"{deg_min}–{deg_max}"
+    _log_results(results, deg_label, k_hops)
+
+
+def run_all_degrees(cfg, device: torch.device, save_dir: str | None, show: bool):
+    data, pred, k_hops = _load_data_and_train(cfg, device)
+
+    N          = data.num_nodes
+    all_deg    = graph_degree(data.edge_index[1], N).cpu()
+    y          = data.y.cpu()
+    train_mask = data.train_mask.cpu()
+    test_mask  = data.test_mask.cpu()
+    train_set  = set(train_mask.nonzero(as_tuple=False).view(-1).tolist())
+    test_idx   = test_mask.nonzero(as_tuple=False).view(-1).tolist()
+
+    unique_degrees = sorted(all_deg[test_mask].unique().long().tolist())
+    log.info("Computing reachability for %d unique test-node degrees...",
+             len(unique_degrees))
+
+    degree_results = {}
+    for d in unique_degrees:
+        r = _compute_reachability(
+            test_idx, all_deg, y, pred, train_set,
+            data.edge_index, k_hops, N, d, d,
+        )
+        degree_results[d] = r
+        if r["n_misc"] > 0:
+            _log_results(r, str(d), k_hops)
+
+    save_path = None
+    if save_dir:
+        dataset = cfg["dataset"]["name"]
+        model   = cfg["model"]["name"]
+        save_path = os.path.join(
+            save_dir, "reachability",
+            f"{dataset}_{model}_reachability_by_degree.png",
+        )
+    _plot_reachability_by_degree(degree_results, k_hops, cfg, save_path, show)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -207,7 +338,14 @@ def main():
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--device", default=None,
                         help="Device override, e.g. cuda:0 or cpu")
+    parser.add_argument("--save-dir", default=None,
+                        help="Directory to save the plot (--all-degrees only)")
+    parser.add_argument("--show", action="store_true",
+                        help="Display the plot interactively (--all-degrees only)")
+
     deg_group = parser.add_mutually_exclusive_group()
+    deg_group.add_argument("--all-degrees", action="store_true",
+                           help="Run for every unique test-node degree and plot results")
     deg_group.add_argument("--degree", type=int, default=None,
                            help="Exact degree value (default: 1)")
     deg_group.add_argument("--degree-min", type=int,
@@ -216,16 +354,6 @@ def main():
                         help="Upper bound of degree range (inclusive); "
                              "required when --degree-min is used")
     args = parser.parse_args()
-
-    if args.degree_min is not None:
-        if args.degree_max is None:
-            parser.error("--degree-max is required when --degree-min is used")
-        deg_min, deg_max = args.degree_min, args.degree_max
-        if deg_min > deg_max:
-            parser.error("--degree-min must be ≤ --degree-max")
-    else:
-        d = args.degree if args.degree is not None else 1
-        deg_min = deg_max = d
 
     logging.basicConfig(
         level=logging.INFO,
@@ -237,7 +365,6 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    import os
     model_cfg_path = os.path.join(
         "configs", f"{cfg['model']['name']}_{cfg['dataset']['name']}.yaml"
     )
@@ -250,9 +377,24 @@ def main():
         else ("cuda" if torch.cuda.is_available() else "cpu")
     )
     log.info("Device: %s", device)
-    log.info("Degree range: [%d, %d]", deg_min, deg_max)
 
-    run_analysis(cfg, deg_min, deg_max, device)
+    if args.all_degrees:
+        run_all_degrees(cfg, device,
+                        save_dir=args.save_dir,
+                        show=args.show)
+    else:
+        if args.degree_min is not None:
+            if args.degree_max is None:
+                parser.error("--degree-max is required when --degree-min is used")
+            deg_min, deg_max = args.degree_min, args.degree_max
+            if deg_min > deg_max:
+                parser.error("--degree-min must be ≤ --degree-max")
+        else:
+            d = args.degree if args.degree is not None else 1
+            deg_min = deg_max = d
+
+        log.info("Degree range: [%d, %d]", deg_min, deg_max)
+        run_analysis(cfg, deg_min, deg_max, device)
 
 
 if __name__ == "__main__":
