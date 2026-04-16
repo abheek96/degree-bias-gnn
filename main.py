@@ -8,12 +8,12 @@ from datetime import datetime
 
 import numpy as np
 
-# Suppress NumPy 2.4 deprecation warning from torch_geometric's Planetoid loader
+# Suppress NumPy 2.x deprecation warning from torch_geometric's Planetoid loader
 # (passes align=0 instead of align=False to np.dtype; cosmetic, no effect on data)
 warnings.filterwarnings(
     "ignore",
     message="dtype.*align",
-    category=np.VisibleDeprecationWarning,
+    category=DeprecationWarning,
     module=r"torch_geometric\.io\.planetoid",
 )
 import torch
