@@ -172,6 +172,10 @@ def find_qualifying_nodes(data, all_deg, pred, edge_weight_map: dict,
 
         hop_dist  = _khop_distances(data.edge_index, node, k_hops, N)
 
+        # For degree > 5, also include same-class training neighbours with
+        # equal degree (not just strictly higher).
+        min_nb_deg = node_deg if node_deg > 5 else node_deg + 1
+
         qualifying = []
         for nb, hop in hop_dist.items():
             if not train_mask[nb].item():
@@ -179,7 +183,7 @@ def find_qualifying_nodes(data, all_deg, pred, edge_weight_map: dict,
             if int(y[nb].item()) != true_lbl:
                 continue
             nb_deg = int(deg[nb].item())
-            if nb_deg <= node_deg:
+            if nb_deg < min_nb_deg:
                 continue
             ew = edge_weight_map.get((nb, node)) if hop == 1 else None
             qualifying.append({
