@@ -1,6 +1,7 @@
 """
 analyse_degree_group.py — Influence analysis for test nodes in a degree group
-that have a higher-degree same-class training node in their 1-hop neighbourhood.
+that have a higher-degree same-class training node within their k-hop receptive
+field (k = num_layers − 1).
 
 Usage
 -----
@@ -9,11 +10,14 @@ Usage
     python analyse_degree_group.py --degree 3 --config config.yaml --device cpu
 
 For every test node in the specified degree group the script:
-  1. Checks whether the node has ≥1 same-class training node among its
-     1-hop neighbours whose degree is strictly greater than the test node's
-     own degree.
-  2. For each qualifying node, runs the exact Jacobian-based influence
+  1. Checks whether the node has ≥1 same-class training node within its
+     k-hop receptive field whose degree is strictly greater than the test
+     node's own degree.
+  2. Reports whether each qualifying node is correctly classified or not.
+  3. For each qualifying node, runs the exact Jacobian-based influence
      analysis and reports the same/diff-class training-node breakdown.
+     For 1-hop qualifying neighbours the GCN-normalised edge weight is also
+     shown; multi-hop entries report their hop distance instead.
 
 Output is written to stdout/log only — no plots are generated.
 """
@@ -29,9 +33,11 @@ import torch
 import yaml
 from torch_geometric.utils import degree as graph_degree
 
+from torch_geometric.nn.conv.gcn_conv import gcn_norm
+
 from dataset import load_dataset
 from dataset_utils import apply_split
-from influence import _analyse_node
+from influence import _analyse_node, _khop_distances
 from models import get_model
 from train import train
 from test import evaluate
@@ -105,13 +111,33 @@ def train_model(data, cfg, device):
 
 # ── core analysis ──────────────────────────────────────────────────────────────
 
-def find_qualifying_nodes(data, all_deg, deg_min: int, deg_max: int) -> list[dict]:
+def _build_edge_weight_map(edge_index, num_nodes: int) -> dict:
+    """Return a dict mapping (src, dst) → GCN-normalised edge weight.
+
+    Uses gcn_norm with add_self_loops=True, matching the default GCNConv
+    behaviour (symmetric normalisation: w = 1/sqrt((deg_u+1)*(deg_v+1))).
+    """
+    norm_ei, norm_ew = gcn_norm(
+        edge_index.cpu(), edge_weight=None, num_nodes=num_nodes,
+        improved=False, add_self_loops=True, flow="source_to_target",
+    )
+    return {
+        (int(s), int(d)): float(w)
+        for s, d, w in zip(norm_ei[0].tolist(), norm_ei[1].tolist(), norm_ew.tolist())
+    }
+
+
+def find_qualifying_nodes(data, all_deg, deg_min: int, deg_max: int,
+                          k_hops: int = 1) -> list[dict]:
     """Return test nodes in [deg_min, deg_max] that have ≥1 same-class training
-    neighbour whose degree is strictly greater than the test node's own degree.
+    node within k_hops hops whose degree is strictly greater than the test
+    node's own degree.
 
     Returns a list of dicts:
         node_idx, degree, true_label,
-        qualifying_train_neighbors: list of {node_idx, degree}
+        qualifying_train_neighbors: list of {node_idx, degree, hop, edge_weight}
+            edge_weight is the GCN-normalised weight for the direct edge (hop=1)
+            or None for multi-hop neighbours.
     """
     N          = data.num_nodes
     y          = data.y.cpu()
@@ -119,37 +145,37 @@ def find_qualifying_nodes(data, all_deg, deg_min: int, deg_max: int) -> list[dic
     test_mask  = data.test_mask.cpu()
     deg        = all_deg.cpu()
 
-    src, dst = data.edge_index[0].cpu(), data.edge_index[1].cpu()
-
-    # Build adjacency: dst → list of src (incoming edges = what gets aggregated)
-    adj = [[] for _ in range(N)]
-    for u, v in zip(src.tolist(), dst.tolist()):
-        adj[v].append(u)
-
-    test_indices = test_mask.nonzero(as_tuple=False).view(-1).tolist()
+    edge_weight_map = _build_edge_weight_map(data.edge_index, N)
+    test_indices    = test_mask.nonzero(as_tuple=False).view(-1).tolist()
     results = []
 
     for node in test_indices:
-        node_deg   = int(deg[node].item())
+        node_deg = int(deg[node].item())
         if not (deg_min <= node_deg <= deg_max):
             continue
 
-        true_lbl = int(y[node].item())
+        true_lbl  = int(y[node].item())
+        hop_dist  = _khop_distances(data.edge_index, node, k_hops, N)
 
         qualifying = []
-        for nb in adj[node]:
-            if nb == node:
-                continue
+        for nb, hop in hop_dist.items():
             if not train_mask[nb].item():
                 continue
             if int(y[nb].item()) != true_lbl:
                 continue
             nb_deg = int(deg[nb].item())
-            if nb_deg > node_deg:
-                qualifying.append({"node_idx": nb, "degree": nb_deg})
+            if nb_deg <= node_deg:
+                continue
+            ew = edge_weight_map.get((nb, node)) if hop == 1 else None
+            qualifying.append({
+                "node_idx":    nb,
+                "degree":      nb_deg,
+                "hop":         hop,
+                "edge_weight": ew,
+            })
 
         if qualifying:
-            qualifying.sort(key=lambda d: d["degree"], reverse=True)
+            qualifying.sort(key=lambda d: (d["hop"], -d["degree"]))
             results.append({
                 "node_idx":                   node,
                 "degree":                     node_deg,
@@ -177,9 +203,9 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
     set_seed(cfg.get("seed", 42))
     pred, model = train_model(data, cfg, device)
 
-    log.info("Finding qualifying test nodes in degree range [%d, %d]...",
-             deg_min, deg_max)
-    qualifying = find_qualifying_nodes(data, all_deg, deg_min, deg_max)
+    log.info("Finding qualifying test nodes in degree range [%d, %d] (k_hops=%d)...",
+             deg_min, deg_max, k_hops)
+    qualifying = find_qualifying_nodes(data, all_deg, deg_min, deg_max, k_hops=k_hops)
 
     if not qualifying:
         log.info("No test nodes found matching the condition in degree [%d, %d].",
@@ -188,16 +214,17 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
 
     log.info("Found %d qualifying node(s):", len(qualifying))
     for q in qualifying:
-        nb_str = ", ".join(
-            f"node {nb['node_idx']} (deg={nb['degree']})"
-            for nb in q["qualifying_train_neighbors"]
-        )
+        def _nb_str(nb):
+            if nb["hop"] == 1:
+                return (f"node {nb['node_idx']} (deg={nb['degree']}, hop=1, "
+                        f"ew={nb['edge_weight']:.6f})")
+            return f"node {nb['node_idx']} (deg={nb['degree']}, hop={nb['hop']})"
         correct = int(pred[q["node_idx"]].item()) == q["true_label"]
         log.info(
             "  node %d  deg=%d  label=%d  %s  — higher-deg same-class train neighbors: %s",
             q["node_idx"], q["degree"], q["true_label"],
             "CORRECT" if correct else "MISCLASSIFIED",
-            nb_str,
+            ", ".join(_nb_str(nb) for nb in q["qualifying_train_neighbors"]),
         )
 
     log.info("")
@@ -220,12 +247,15 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
             int(pred[node].item()),
             "CORRECT" if correct else "MISCLASSIFIED",
         )
+        def _nb_detail(nb):
+            if nb["hop"] == 1:
+                return (f"node {nb['node_idx']} (deg={nb['degree']}, hop=1, "
+                        f"ew={nb['edge_weight']:.6f})")
+            return f"node {nb['node_idx']} (deg={nb['degree']}, hop={nb['hop']})"
         log.info(
-            "Higher-deg same-class 1-hop train neighbors: %s",
-            ", ".join(
-                f"node {nb['node_idx']} (deg={nb['degree']})"
-                for nb in q["qualifying_train_neighbors"]
-            ),
+            "Higher-deg same-class train neighbors (within %d hops): %s",
+            k_hops,
+            ", ".join(_nb_detail(nb) for nb in q["qualifying_train_neighbors"]),
         )
         result = _analyse_node(
             model, data, pred, node, k_hops, train_set, y, all_deg
