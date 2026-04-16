@@ -1394,7 +1394,8 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
 
 # ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
 
-def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=False):
+def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
+                          has_labeled_neighbor=None, save_dir=None, show=False):
     """Boxplot distribution of neighborhood purity per degree group.
 
     Nodes are grouped by their 1-hop degree.  For each group the full
@@ -1402,16 +1403,24 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
     The overall weighted-mean purity is overlaid as a horizontal dashed line,
     and a light-grey bar shows the node count per group.
 
+    When ``has_labeled_neighbor`` is provided, the fraction of test nodes in
+    each degree group that have at least one training neighbor (labelling ratio)
+    is overlaid as a line on a secondary right-hand axis.
+
     purity(v) = |same-class nodes in N_k(v)| / |N_k(v)|
 
     Parameters
     ----------
-    test_deg    : 1-D LongTensor of 1-hop degrees for test nodes.
-    purity_test : 1-D FloatTensor of purity values for test nodes (NaN-safe).
-    cfg         : dict
-    k           : neighbourhood radius used to compute purity.
-    save_dir    : str or None
-    show        : bool
+    test_deg             : 1-D LongTensor of 1-hop degrees for test nodes.
+    purity_test          : 1-D FloatTensor of purity values for test nodes (NaN-safe).
+    cfg                  : dict
+    k                    : neighbourhood radius used to compute purity.
+    has_labeled_neighbor : optional BoolTensor [num_test_nodes] — True when a
+                           test node has ≥1 training neighbor (from
+                           get_labelling_ratio).  When supplied, the per-degree
+                           labelling ratio is overlaid on a secondary axis.
+    save_dir             : str or None
+    show                 : bool
     """
     deg    = test_deg.cpu()
     purity = purity_test.cpu().numpy()
@@ -1423,6 +1432,10 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
     counts    = []
     box_data  = []
     mean_purs = []
+    label_ratios = []
+
+    hln = has_labeled_neighbor.cpu().numpy() if has_labeled_neighbor is not None else None
+
     for d in unique_degrees:
         mask  = (deg == d).numpy()
         vals  = purity[mask]
@@ -1430,6 +1443,8 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
         counts.append(int(mask.sum()))
         box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
+        if hln is not None:
+            label_ratios.append(float(hln[mask].mean()) if mask.sum() > 0 else float("nan"))
 
     n_test   = sum(counts)
     n_deg    = len(unique_degrees)
@@ -1454,8 +1469,29 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k, save_dir=None, show=Fal
     ax.set_ylabel(f"Neighborhood purity  (k={k})", fontsize=11)
     ax.set_ylim(-0.05, 1.10)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    # Labelling ratio overlay
+    if label_ratios:
+        ax_lr = ax.twinx()
+        ax_lr.plot(pos, label_ratios, color="#1565C0", lw=1.8, marker="s",
+                   markersize=3.5, zorder=6, label="Labelling ratio")
+        ax_lr.set_ylabel("Labelling ratio\n(fraction with ≥1 train nb)", fontsize=9,
+                         color="#1565C0")
+        ax_lr.tick_params(axis="y", labelsize=7, colors="#1565C0", length=3)
+        ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_lr.set_ylim(-0.05, 1.15)
+        ax_lr.spines["right"].set_color("#1565C0")
+        handles_lr = [plt.Line2D([0], [0], color="#1565C0", lw=1.8, marker="s",
+                                 markersize=3.5, label="Labelling ratio")]
+    else:
+        handles_lr = []
+
+    # Unified legend (purity + labelling ratio entries)
+    purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity dist. (k={k})")
+    ax.legend(handles=[purity_handle] + handles_lr, loc="upper left",
+              fontsize=8, framealpha=0.85)
+
     ax.set_title(
         f"Neighborhood Purity Distribution vs. Node Degree  (k={k})\n{subtitle}",
         fontsize=11,
