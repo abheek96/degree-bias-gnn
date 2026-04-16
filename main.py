@@ -400,15 +400,17 @@ def main():
 
     if plot_cfg.get("purity_vs_degree", False):
         save_dir = exec_dir if plot_cfg.get("save", True) else None
-        for k, purity_all in purity_by_k.items():
+        test_mask_cpu = data.test_mask.cpu()
+        purity_by_k_test = {k: v[test_mask_cpu] for k, v in purity_by_k.items()}
+        for k, purity_test in purity_by_k_test.items():
             plot_purity_vs_degree(
-                all_deg, purity_all, cfg, k,
+                test_deg, purity_test, cfg, k,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
-        if len(purity_by_k) > 1:
+        if len(purity_by_k_test) > 1:
             plot_purity_delta_by_degree(
-                all_deg, purity_by_k, cfg,
+                test_deg, purity_by_k_test, cfg,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
