@@ -388,14 +388,14 @@ Each bar sums to 100% over the misclassified nodes at that degree. The three seg
 **Correct interpretation**: "X% of misclassified degree-D nodes had no training node reachable."
 **Incorrect interpretation**: "X% of unreachable degree-D nodes are misclassified." — that is the flipped question, answered by Plot 2.
 
-**Plot 2 — "How much does reachability predict failure?" (flipped view)**
-`misc_rate_by_reachability.png` — three lines, one per reachability bucket, across degree groups.
+**Plot 2 — "Within each bucket, what fraction are correct vs misclassified?"**
+`classification_split_by_bucket.png` — grouped bar chart, three bars per degree (one per bucket), each bar stacked into two segments.
 
-Each line shows the misclassification *rate* within that bucket: what fraction of all nodes in that bucket (correctly classified + misclassified) are wrong. This answers the flipped question: given that a node falls into a particular reachability category, how likely is it to be misclassified?
+For each degree on the x-axis, there are three side-by-side bars. Each bar represents one reachability bucket and shows what proportion of the nodes in that bucket at that degree are correctly classified (light shade, bottom) vs misclassified (dark shade, top). The bar height is always 100% — it is normalised within the bucket, not across buckets.
 
-**Correct interpretation**: "Among degree-D nodes with no training reachable, Y% are misclassified."
+**Correct interpretation**: "Among degree-D nodes in the red bucket (no training reachable), Y% are misclassified and (100−Y)% are correctly classified."
 
-If the red line sits consistently near 100% and the blue line sits near the overall misclassification rate for that degree, it confirms that the absence of any reachable training signal is a near-sufficient condition for failure, while having a same-class anchor does not guarantee correctness (it reduces but does not eliminate misclassification).
+Key things to look for: if the dark segment of the red bar is near 100% for low-degree nodes but shrinks at higher degrees, it suggests that reachability is a near-sufficient condition for failure only at low degrees — at higher degrees, nodes without reachable training signal may still be classified correctly on feature evidence alone. Conversely, if the blue bar (same-class train reachable) shows a substantial dark segment, it confirms that reachability of a same-class training node is necessary but not sufficient for correct classification.
 
 ### Degree-1 nodes — high misclassification driven by low reachability to training nodes
 

@@ -284,76 +284,81 @@ def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
     plt.close(fig)
 
 
-def _plot_misclassification_rate_by_reachability(degree_results: dict, k_hops: int,
-                                                  cfg: dict, save_path: str | None,
-                                                  show: bool):
-    """Line plot of misclassification rate per reachability bucket per degree.
+def _plot_classification_split_by_bucket(degree_results: dict, k_hops: int,
+                                          cfg: dict, save_path: str | None,
+                                          show: bool):
+    """Grouped stacked bar chart: correct vs misclassified split per bucket per degree.
 
-    Flipped view: for each reachability bucket, how many nodes in that bucket
-    are misclassified?  This answers "how strongly does reachability predict
-    misclassification?" rather than "why are misclassified nodes failing?".
+    For each degree on the x-axis there are three grouped bars, one per
+    reachability bucket.  Each bar is stacked into two segments:
+        - Light shade (bottom): correctly classified proportion
+        - Dark shade  (top)   : misclassified proportion
 
-    Three lines:
-      - Red   : misclassification rate among nodes with no training reachable
-      - Orange: misclassification rate among nodes with training but no same-class
-      - Blue  : misclassification rate among nodes with same-class training reachable
-
-    Degrees where a bucket is empty are plotted as gaps (NaN).
+    Degrees where ALL buckets are empty are skipped.
     """
     degrees = sorted(degree_results.keys())
+    degrees = [d for d in degrees if degree_results[d]["total"] > 0]
+    if not degrees:
+        log.info("No nodes found for any degree — skipping plot.")
+        return
 
-    def _rates(bucket_total_key, bucket_misc_key):
-        vals = []
+    n_deg    = len(degrees)
+    x        = np.arange(n_deg)
+    w        = 0.22
+    offsets  = [-w, 0, w]
+
+    # (total_key, misc_key, dark_color, light_color, label)
+    buckets = [
+        ("no_train",      "no_train_misc",       "#C62828", "#FFCDD2", "No train reachable"),
+        ("no_same_train", "no_same_train_misc",  "#E65100", "#FFE0B2", "Train, no same-class"),
+        ("has_same_train","has_same_train_misc",  "#1565C0", "#BBDEFB", "Same-class train reachable"),
+    ]
+
+    fig, ax = plt.subplots(figsize=(max(10, n_deg * 0.75), 5))
+
+    legend_handles = []
+    for (tot_key, misc_key, dark, light, label), offset in zip(buckets, offsets):
+        pos          = x + offset
+        correct_prop = []
+        misc_prop    = []
         for d in degrees:
-            r = degree_results[d]
-            total = r[bucket_total_key]
-            misc  = r[bucket_misc_key]
-            vals.append(misc / total if total > 0 else float("nan"))
-        return vals
+            r     = degree_results[d]
+            total = r[tot_key]
+            misc  = r[misc_key]
+            if total > 0:
+                correct_prop.append((total - misc) / total)
+                misc_prop.append(misc / total)
+            else:
+                correct_prop.append(0.0)
+                misc_prop.append(0.0)
 
-    rate_no_train  = _rates("no_train",       "no_train_misc")
-    rate_no_same   = _rates("no_same_train",  "no_same_train_misc")
-    rate_has_same  = _rates("has_same_train", "has_same_train_misc")
+        ax.bar(pos, correct_prop, width=w, color=light, edgecolor=dark, linewidth=0.6)
+        ax.bar(pos, misc_prop, width=w, bottom=correct_prop,
+               color=dark, edgecolor=dark, linewidth=0.6)
 
-    # bucket sizes for annotation
-    sizes_no_train = [degree_results[d]["no_train"]       for d in degrees]
-    sizes_no_same  = [degree_results[d]["no_same_train"]  for d in degrees]
-    sizes_has_same = [degree_results[d]["has_same_train"] for d in degrees]
-
-    x = np.arange(len(degrees))
-    fig, ax = plt.subplots(figsize=(max(8, len(degrees) * 0.5), 5))
-
-    def _plot_line(rates, sizes, color, label):
-        y = np.array(rates, dtype=float)
-        mask = ~np.isnan(y)
-        ax.plot(x[mask], y[mask], color=color, lw=1.8, marker="o",
-                markersize=4, label=label)
-
-    _plot_line(rate_no_train, sizes_no_train, "#D32F2F",
-               "No train node reachable")
-    _plot_line(rate_no_same,  sizes_no_same,  "#FF8F00",
-               "Train reachable, no same-class")
-    _plot_line(rate_has_same, sizes_has_same, "#1565C0",
-               "Same-class train reachable")
+        legend_handles.append(
+            mpatches.Patch(facecolor=light, edgecolor=dark, linewidth=0.8,
+                           label=f"{label}  (light=correct, dark=misc)")
+        )
 
     ax.set_xticks(x)
     ax.set_xticklabels(degrees, rotation=55, ha="right", fontsize=8)
     ax.set_xlabel("Node degree", fontsize=11)
-    ax.set_ylabel("Misclassification rate within bucket", fontsize=11)
-    ax.set_ylim(-0.05, 1.10)
+    ax.set_ylabel("Proportion within bucket", fontsize=11)
+    ax.set_ylim(0, 1.08)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
     dataset = cfg["dataset"]["name"]
     model   = cfg["model"]["name"]
     ax.set_title(
-        f"Misclassification rate by reachability bucket\n"
+        f"Correct vs misclassified proportion per reachability bucket\n"
         f"{dataset} · {model} · {k_hops}-hop receptive field",
         fontsize=11,
     )
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
-              ncol=3, fontsize=9, framealpha=0.9)
-    fig.subplots_adjust(bottom=0.22)
+    ax.legend(handles=legend_handles, loc="upper center",
+              bbox_to_anchor=(0.5, -0.18), ncol=1, fontsize=9, framealpha=0.9)
+    fig.subplots_adjust(bottom=0.28)
     fig.tight_layout()
 
     if save_path:
@@ -429,21 +434,21 @@ def run_all_degrees(cfg, device: torch.device, save_dir: str | None, show: bool)
     dataset = cfg["dataset"]["name"]
     model   = cfg["model"]["name"]
 
-    save_path_current = None
-    save_path_flipped = None
+    save_path_stacked = None
+    save_path_split   = None
     if save_dir:
-        save_path_current = os.path.join(
+        save_path_stacked = os.path.join(
             save_dir, "reachability",
             f"{dataset}_{model}_reachability_by_degree.png",
         )
-        save_path_flipped = os.path.join(
+        save_path_split = os.path.join(
             save_dir, "reachability",
-            f"{dataset}_{model}_misc_rate_by_reachability.png",
+            f"{dataset}_{model}_classification_split_by_bucket.png",
         )
 
-    _plot_reachability_by_degree(degree_results, k_hops, cfg, save_path_current, show)
-    _plot_misclassification_rate_by_reachability(
-        degree_results, k_hops, cfg, save_path_flipped, show
+    _plot_reachability_by_degree(degree_results, k_hops, cfg, save_path_stacked, show)
+    _plot_classification_split_by_bucket(
+        degree_results, k_hops, cfg, save_path_split, show
     )
 
 
