@@ -2330,16 +2330,25 @@ def plot_1hop_train_deg_vs_accuracy(
     def _clean(arr):
         return arr if arr else [float("nan")]
 
-    # Mean accuracy per degree group averaged across runs
+    # Mean ± std accuracy per degree group across runs
     all_degs_run, deg_data_run = _collect(run_results)
-    deg_to_acc = {}
+    mean_acc = []
+    std_acc  = []
     for d in all_degrees:
         if d in deg_data_run:
             arrs = [a for a in deg_data_run[d] if len(a) > 0]
-            deg_to_acc[d] = float(np.mean([a.mean() for a in arrs])) if arrs else np.nan
+            if arrs:
+                per_run = np.array([a.mean() for a in arrs])
+                mean_acc.append(float(per_run.mean()))
+                std_acc.append(float(per_run.std()))
+            else:
+                mean_acc.append(np.nan)
+                std_acc.append(np.nan)
         else:
-            deg_to_acc[d] = np.nan
-    mean_acc = [deg_to_acc[d] for d in all_degrees]
+            mean_acc.append(np.nan)
+            std_acc.append(np.nan)
+    mean_acc = np.array(mean_acc)
+    std_acc  = np.array(std_acc)
 
     # ── Figure ─────────────────────────────────────────────────────────────────
     fig, ax_box = plt.subplots(figsize=(_fig_w(len(all_degrees)), 5))
@@ -2364,10 +2373,14 @@ def plot_1hop_train_deg_vs_accuracy(
     ax_box.set_ylabel("Mean degree of 1-hop training neighbors", fontsize=10)
     ax_box.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
-    # Accuracy line on a right-hand secondary axis
+    # Accuracy line ± std band on a right-hand secondary axis
     ax_acc = ax_box.twinx()
     ax_acc.plot(pos, mean_acc, color=_ACC_COLOR, lw=2.0, marker="o",
                 markersize=4, zorder=6)
+    ax_acc.fill_between(pos,
+                        np.clip(mean_acc - std_acc, 0, 1),
+                        np.clip(mean_acc + std_acc, 0, 1),
+                        color=_ACC_COLOR, alpha=0.15, zorder=5)
     ax_acc.set_ylabel("Accuracy", fontsize=10, color=_ACC_COLOR)
     ax_acc.tick_params(axis="y", labelsize=8, colors=_ACC_COLOR, length=3)
     ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
@@ -2382,7 +2395,7 @@ def plot_1hop_train_deg_vs_accuracy(
             plt.Rectangle((0, 0), 1, 1, color="#ff7f00", alpha=0.80,
                            label="Diff-class 1-hop train nbs"),
             plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="o",
-                       markersize=4, label="Test accuracy (mean)"),
+                       markersize=4, label="Test accuracy (mean ± std)"),
         ],
         fontsize=9, framealpha=0.85, loc="upper left",
         title="1-hop neighborhood", title_fontsize=8,
