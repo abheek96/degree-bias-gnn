@@ -341,7 +341,7 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
             )
 
         print_khop_neighborhood(node, data, all_deg, pred, y,
-                                edge_weight_map, k_hops)
+                                edge_weight_map, k_hops=1)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
