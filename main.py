@@ -406,8 +406,9 @@ def main():
         for k, purity_test in purity_by_k.items():
             plot_purity_vs_degree(
                 test_deg, purity_test, cfg, k,
-                has_same_class_train=has_same_class_train if k == 1 else None,
-                has_diff_class_train=has_diff_class_train if k == 1 else None,
+                has_labeled_neighbor=has_labeled_neighbor   if k == 1 else None,
+                has_same_class_train=has_same_class_train   if k == 1 else None,
+                has_diff_class_train=has_diff_class_train   if k == 1 else None,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )

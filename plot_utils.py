@@ -1391,6 +1391,7 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
 # ── neighborhood purity vs. 1-hop degree ───────────────────────────────────────
 
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
+                          has_labeled_neighbor=None,
                           has_same_class_train=None, has_diff_class_train=None,
                           save_dir=None, show=False):
     """Boxplot distribution of neighborhood purity per degree group.
@@ -1399,10 +1400,11 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     distribution of per-node purity values is shown as a boxplot.
     The overall weighted-mean purity is overlaid as a horizontal dashed line.
 
-    When ``has_same_class_train`` / ``has_diff_class_train`` are provided
-    (k=1 only), two labelling-ratio lines are overlaid on a secondary axis:
-      • Green  — fraction of test nodes with ≥1 same-class training neighbor.
-      • Red    — fraction of test nodes with ≥1 diff-class training neighbor.
+    When labelling-ratio tensors are provided (k=1 only), up to three lines
+    are overlaid on a secondary right-hand axis:
+      • Dark blue  (○) — any training neighbor present (overall labelling ratio).
+      • Dark green (▲) — same-class training neighbor present.
+      • Dark red   (▼) — diff-class training neighbor present.
 
     purity(v) = |same-class nodes in N_k(v)| / |N_k(v)|
 
@@ -1412,6 +1414,8 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     purity_test          : 1-D FloatTensor of purity values for test nodes (NaN-safe).
     cfg                  : dict
     k                    : neighbourhood radius used to compute purity.
+    has_labeled_neighbor : optional BoolTensor [num_test_nodes] — True when a
+                           test node has ≥1 training neighbor of any class.
     has_same_class_train : optional BoolTensor [num_test_nodes] — True when a
                            test node has ≥1 same-class training neighbor.
     has_diff_class_train : optional BoolTensor [num_test_nodes] — True when a
@@ -1426,26 +1430,31 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     pos    = list(range(len(unique_degrees)))
     prefix = _fname_prefix(cfg)
 
-    counts     = []
-    box_data   = []
-    mean_purs  = []
+    counts      = []
+    box_data    = []
+    mean_purs   = []
+    any_ratios  = []
     same_ratios = []
     diff_ratios = []
 
-    hsc = has_same_class_train.cpu().numpy() if has_same_class_train is not None else None
-    hdc = has_diff_class_train.cpu().numpy() if has_diff_class_train is not None else None
+    hln = has_labeled_neighbor.cpu().numpy()  if has_labeled_neighbor  is not None else None
+    hsc = has_same_class_train.cpu().numpy()  if has_same_class_train  is not None else None
+    hdc = has_diff_class_train.cpu().numpy()  if has_diff_class_train  is not None else None
 
     for d in unique_degrees:
-        mask  = (deg == d).numpy()
+        mask = (deg == d).numpy()
         vals  = purity[mask]
         valid = vals[~np.isnan(vals)]
         counts.append(int(mask.sum()))
         box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
+        n = mask.sum()
+        if hln is not None:
+            any_ratios.append(float(hln[mask].mean())  if n > 0 else float("nan"))
         if hsc is not None:
-            same_ratios.append(float(hsc[mask].mean()) if mask.sum() > 0 else float("nan"))
+            same_ratios.append(float(hsc[mask].mean()) if n > 0 else float("nan"))
         if hdc is not None:
-            diff_ratios.append(float(hdc[mask].mean()) if mask.sum() > 0 else float("nan"))
+            diff_ratios.append(float(hdc[mask].mean()) if n > 0 else float("nan"))
 
     n_test   = sum(counts)
     n_deg    = len(unique_degrees)
@@ -1470,30 +1479,30 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
-    # Labelling ratio overlay (same-class green, diff-class red)
+    # Labelling ratio lines on secondary axis
+    _LR_LINES = [
+        (any_ratios,  "#1565C0", "o", "Any train nb"),
+        (same_ratios, "#2E7D32", "^", "Same-class train nb"),
+        (diff_ratios, "#B71C1C", "v", "Diff-class train nb"),
+    ]
     handles_lr = []
-    if same_ratios or diff_ratios:
+    if any(r for r, *_ in _LR_LINES):
         ax_lr = ax.twinx()
-        ax_lr.set_ylabel("Fraction of nodes (≥1 train nb)", fontsize=9, color="black")
+        ax_lr.set_ylabel("Labelling ratio", fontsize=9, color="black")
         ax_lr.tick_params(axis="y", labelsize=7, length=3)
         ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
         ax_lr.set_ylim(-0.05, 1.15)
+        for ratios, color, marker, label in _LR_LINES:
+            if ratios:
+                ax_lr.plot(pos, ratios, color=color, lw=1.8, marker=marker,
+                           markersize=4, zorder=6)
+                handles_lr.append(plt.Line2D([0], [0], color=color, lw=1.8,
+                                             marker=marker, markersize=4, label=label))
 
-        if same_ratios:
-            ax_lr.plot(pos, same_ratios, color="#2E7D32", lw=1.8, marker="^",
-                       markersize=4, zorder=6)
-            handles_lr.append(plt.Line2D([0], [0], color="#2E7D32", lw=1.8, marker="^",
-                                         markersize=4, label="Same-class train nb present"))
-        if diff_ratios:
-            ax_lr.plot(pos, diff_ratios, color="#C62828", lw=1.8, marker="v",
-                       markersize=4, zorder=6)
-            handles_lr.append(plt.Line2D([0], [0], color="#C62828", lw=1.8, marker="v",
-                                         markersize=4, label="Diff-class train nb present"))
-
-    # Legend placed outside the plot area (above the axes)
-    purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity dist. (k={k})")
+    # Legend below the x-axis to avoid overlapping the title
+    purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity (k={k})")
     ax.legend(handles=[purity_handle] + handles_lr,
-              loc="lower left", bbox_to_anchor=(0, 1.01), ncol=3,
+              loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=4,
               fontsize=8, framealpha=0.85, borderaxespad=0)
 
     ax.set_title(
@@ -1508,6 +1517,7 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     ax.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
 
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.22)
     _save(fig, _subdir(save_dir, "purity_vs_degree"), f"{prefix}_purity_vs_degree_k{k}.png", show)
 
 
