@@ -127,11 +127,11 @@ def _build_edge_weight_map(edge_index, num_nodes: int) -> dict:
     }
 
 
-def find_qualifying_nodes(data, all_deg, deg_min: int, deg_max: int,
+def find_qualifying_nodes(data, all_deg, pred, deg_min: int, deg_max: int,
                           k_hops: int = 1) -> list[dict]:
-    """Return test nodes in [deg_min, deg_max] that have ≥1 same-class training
-    node within k_hops hops whose degree is strictly greater than the test
-    node's own degree.
+    """Return misclassified test nodes in [deg_min, deg_max] that have ≥1
+    same-class training node within k_hops hops whose degree is strictly
+    greater than the test node's own degree.
 
     Returns a list of dicts:
         node_idx, degree, true_label,
@@ -141,6 +141,7 @@ def find_qualifying_nodes(data, all_deg, deg_min: int, deg_max: int,
     """
     N          = data.num_nodes
     y          = data.y.cpu()
+    pred_cpu   = pred.cpu()
     train_mask = data.train_mask.cpu()
     test_mask  = data.test_mask.cpu()
     deg        = all_deg.cpu()
@@ -155,6 +156,11 @@ def find_qualifying_nodes(data, all_deg, deg_min: int, deg_max: int,
             continue
 
         true_lbl  = int(y[node].item())
+
+        # skip correctly classified nodes
+        if int(pred_cpu[node].item()) == true_lbl:
+            continue
+
         hop_dist  = _khop_distances(data.edge_index, node, k_hops, N)
 
         qualifying = []
@@ -205,25 +211,24 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
 
     log.info("Finding qualifying test nodes in degree range [%d, %d] (k_hops=%d)...",
              deg_min, deg_max, k_hops)
-    qualifying = find_qualifying_nodes(data, all_deg, deg_min, deg_max, k_hops=k_hops)
+    qualifying = find_qualifying_nodes(data, all_deg, pred, deg_min, deg_max, k_hops=k_hops)
 
     if not qualifying:
         log.info("No test nodes found matching the condition in degree [%d, %d].",
                  deg_min, deg_max)
         return
 
-    log.info("Found %d qualifying node(s):", len(qualifying))
+    log.info("Found %d misclassified qualifying node(s):", len(qualifying))
     for q in qualifying:
         def _nb_str(nb):
             if nb["hop"] == 1:
                 return (f"node {nb['node_idx']} (deg={nb['degree']}, hop=1, "
                         f"ew={nb['edge_weight']:.6f})")
             return f"node {nb['node_idx']} (deg={nb['degree']}, hop={nb['hop']})"
-        correct = int(pred[q["node_idx"]].item()) == q["true_label"]
         log.info(
-            "  node %d  deg=%d  label=%d  %s  — higher-deg same-class train neighbors: %s",
+            "  node %d  deg=%d  label=%d  pred=%d  — higher-deg same-class train neighbors: %s",
             q["node_idx"], q["degree"], q["true_label"],
-            "CORRECT" if correct else "MISCLASSIFIED",
+            int(pred[q["node_idx"]].item()),
             ", ".join(_nb_str(nb) for nb in q["qualifying_train_neighbors"]),
         )
 
@@ -240,12 +245,10 @@ def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
         node = q["node_idx"]
         log.info("")
         log.info("─" * 60)
-        correct = int(pred[node].item()) == q["true_label"]
         log.info(
-            "Node %d | degree=%d | label=%d | pred=%d | %s",
+            "Node %d | degree=%d | label=%d | pred=%d | MISCLASSIFIED",
             node, q["degree"], q["true_label"],
             int(pred[node].item()),
-            "CORRECT" if correct else "MISCLASSIFIED",
         )
         def _nb_detail(nb):
             if nb["hop"] == 1:
