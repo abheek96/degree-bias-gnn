@@ -498,9 +498,9 @@ def plot_neighborhood_cardinality_vs_degree(
                        and k=2 (orange), grouped by 1-hop degree.
         Right y-axis — median classification accuracy ± IQR across runs (green).
 
-    Bottom panel  (when ``all_deg`` and ``purity_by_k`` are provided)
+    Bottom panel  (when ``purity_by_k`` is provided)
         Mean Δ purity (purity[k_max] − purity[k_min]) ± 1 std per degree group
-        (purple), with a zero reference line.  Uses ALL graph nodes.
+        (purple), with a zero reference line.  Uses test nodes only.
 
     Anomaly highlights
         Degree groups where ALL three structural signals align — accuracy below
@@ -558,18 +558,16 @@ def plot_neighborhood_cardinality_vs_degree(
     acc_median = np.array(acc_median)
     acc_q1, acc_q3 = np.array(acc_q1), np.array(acc_q3)
 
-    # ── delta purity stats per degree group (uses ALL nodes) ─────────────────
-    has_purity = (all_deg is not None and purity_by_k is not None
-                  and len(purity_by_k) >= 2)
+    # ── delta purity stats per degree group (test nodes) ─────────────────────
+    has_purity = (purity_by_k is not None and len(purity_by_k) >= 2)
     if has_purity:
-        full_deg = all_deg.cpu()
-        k_ks     = sorted(purity_by_k.keys())
-        k_lo, k_hi = k_ks[0], k_ks[-1]
-        delta_all = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
+        k_ks        = sorted(purity_by_k.keys())
+        k_lo, k_hi  = k_ks[0], k_ks[-1]
+        delta_all   = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
 
         dp_means = []
         for d in all_degrees:
-            vals  = delta_all[full_deg == d]
+            vals  = delta_all[deg == d]
             valid = vals[~torch.isnan(vals)]
             dp_means.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
         dp_means = np.array(dp_means)
