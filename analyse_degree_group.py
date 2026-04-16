@@ -174,7 +174,7 @@ def find_qualifying_nodes(data, all_deg, pred, edge_weight_map: dict,
 
         # For degree > 5, also include same-class training neighbours with
         # equal degree (not just strictly higher).
-        min_nb_deg = node_deg if node_deg > 5 else node_deg + 1
+        min_nb_deg = node_deg if node_deg >= 5 else node_deg + 1
 
         qualifying = []
         for nb, hop in hop_dist.items():
