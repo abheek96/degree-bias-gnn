@@ -240,7 +240,7 @@ def main():
     _need_purity = (plot_cfg.get("purity_vs_degree", False)
                     or plot_cfg.get("feature_similarity", False))
     purity_by_k  = {
-        k: get_node_purity(data, k=k)
+        k: get_node_purity(data, k=k, node_mask=data.test_mask)
         for k in range(1, purity_k_max + 1)
     } if _need_purity else {}
 
@@ -400,17 +400,15 @@ def main():
 
     if plot_cfg.get("purity_vs_degree", False):
         save_dir = exec_dir if plot_cfg.get("save", True) else None
-        test_mask_cpu = data.test_mask.cpu()
-        purity_by_k_test = {k: v[test_mask_cpu] for k, v in purity_by_k.items()}
-        for k, purity_test in purity_by_k_test.items():
+        for k, purity_test in purity_by_k.items():
             plot_purity_vs_degree(
                 test_deg, purity_test, cfg, k,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
-        if len(purity_by_k_test) > 1:
+        if len(purity_by_k) > 1:
             plot_purity_delta_by_degree(
-                test_deg, purity_by_k_test, cfg,
+                test_deg, purity_by_k, cfg,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
@@ -475,15 +473,10 @@ def main():
     if plot_cfg.get("feature_similarity", False):
         log.info("Computing feature similarity delta (raw vs h^(1))...")
         sim_results = get_feature_similarity_delta(data, model, k_hops=k_hops)
-        # Slice purity to test nodes so it aligns with test_deg
-        purity_by_k_test = (
-            {k: v[data.test_mask.cpu()] for k, v in purity_by_k.items()}
-            if len(purity_by_k) >= 2 else None
-        )
         plot_feature_similarity_delta_vs_degree(
             sim_results, cfg, k_hops=k_hops,
             deg_acc_results=deg_acc_results,
-            purity_by_k=purity_by_k_test,
+            purity_by_k=purity_by_k if len(purity_by_k) >= 2 else None,
             test_deg=test_deg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),

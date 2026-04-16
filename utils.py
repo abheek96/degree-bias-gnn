@@ -477,8 +477,8 @@ def get_training_neighbor_degree_stats(data, k: int = 2) -> dict:
     }
 
 
-def get_node_purity(data, k: int = 1) -> torch.Tensor:
-    """Neighborhood purity for every node at receptive field radius k.
+def get_node_purity(data, k: int = 1, node_mask=None) -> torch.Tensor:
+    """Neighborhood purity for selected nodes at receptive field radius k.
 
     purity(v) = |{u ∈ N_k(v) : label[u] == label[v]}| / |N_k(v)|
 
@@ -488,12 +488,17 @@ def get_node_purity(data, k: int = 1) -> torch.Tensor:
 
     Parameters
     ----------
-    data : torch_geometric.data.Data  (must have .y labels)
-    k    : neighbourhood radius in hops
+    data      : torch_geometric.data.Data  (must have .y labels)
+    k         : neighbourhood radius in hops
+    node_mask : optional BoolTensor of length num_nodes; when provided, purity
+                is computed and returned only for nodes where mask is True
+                (e.g. data.test_mask).  Returns shape [mask.sum()].
+                When None, purity is computed for all nodes; returns shape
+                [num_nodes].
 
     Returns
     -------
-    purity : FloatTensor, shape [num_nodes]
+    purity : FloatTensor, shape [num_nodes] or [mask.sum()]
     """
     from torch_geometric.utils import to_dense_adj
 
@@ -512,13 +517,22 @@ def get_node_purity(data, k: int = 1) -> torch.Tensor:
     labels      = data.y.cpu()                                   # (N,)
     label_match = (labels.unsqueeze(0) == labels.unsqueeze(1))  # (N, N)
 
-    reach_cpu        = reach.cpu()
-    total_counts     = reach_cpu.sum(dim=1).float()              # |N_k(v)|
+    # Restrict to requested rows
+    reach_cpu = reach.cpu()
+    if node_mask is not None:
+        mask_cpu        = node_mask.cpu()
+        reach_cpu       = reach_cpu[mask_cpu]        # (M, N)
+        label_match     = label_match[mask_cpu]      # (M, N)
+        out_size        = int(mask_cpu.sum())
+    else:
+        out_size        = N
+
+    total_counts     = reach_cpu.sum(dim=1).float()              # (M,) or (N,)
     same_cls_counts  = (reach_cpu & label_match).sum(dim=1).float()
 
-    purity          = torch.full((N,), float("nan"))
-    valid           = total_counts > 0
-    purity[valid]   = same_cls_counts[valid] / total_counts[valid]
+    purity        = torch.full((out_size,), float("nan"))
+    valid         = total_counts > 0
+    purity[valid] = same_cls_counts[valid] / total_counts[valid]
 
     return purity
 
