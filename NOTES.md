@@ -260,6 +260,45 @@ This is distinct from nodes 1362 and 387, where diff-class *training* nodes domi
 
 **Contrast with node 1362.** Node 1362 (degree=22) had `same_train=4`, `diff_train=11` — many training nodes of both classes in-neighbourhood, but same-class influence ≈ 0 due to dead ReLU paths / learned weight suppression. Node 387 is simpler structurally: it has one same-class training anchor that is correctly active, but a single low-degree wrong-class node overwhelms it purely through degree-normalisation arithmetic. These are two distinct mechanisms by which diff-class influence can dominate.
 
+### Case study: node 1305 (degree=2) — high-degree same-class training neighbour, yet dominated by a 2-hop diff-class node
+
+Node 1305 illustrates a failure mode specific to **low-degree test nodes adjacent to a high-degree same-class training node**. It is the only degree-2 misclassified test node with this configuration (found via `analyse_degree_group.py --degree 2`).
+
+**Qualifying condition:** node 1305 (deg=2, class=3) has node 1555 (deg=19, same class) as a direct 1-hop training neighbour.
+
+**1-hop aggregation neighbourhood:**
+
+```
+   neighbor  degree  hop  in_train_set  same_class  correct_pred  edge_weight
+1      1555      19    1          True        True          True     0.129099
+2       536       5    1         False       False          True     0.235702
+```
+
+Only 2 neighbours. Node 1555 is the single same-class training anchor; node 536 is diff-class and non-training. Despite node 536 being correctly predicted itself, it pushes a diff-class representation into node 1305's aggregation.
+
+**Influence analysis:**
+
+```
+influence: node 1305  degree=2  same_train=2  diff_train=1
+raw:  same=7.8450e-02  diff=4.4734e-02  total_train=1.2318e-01
+norm: same=0.6369  diff=0.3631  (fraction of training-node influence)
+  same_train node 1555   deg=19  hop=1  ew=0.129099  norm=0.4887
+  same_train node 456    deg=3   hop=2  ew=N/A        norm=0.1482
+  diff_train node 2303   deg=6   hop=2  ew=N/A        norm=0.3631
+```
+
+**Key observations:**
+
+1. **Same-class influence nominally dominates (63.7% vs 36.3%), yet the node is still misclassified.** This is a case where training-node influence alone does not determine the outcome — the diff-class non-training neighbour 536 (edge weight 0.236) directly corrupts the aggregated representation at hop=1, and that is not captured in the training-node influence score.
+
+2. **The high-degree same-class training node (1555, deg=19) pays a steep edge-weight penalty.** Its direct edge weight is only 0.129 (`1/sqrt((2+1)×(19+1)) ≈ 0.129`). By contrast, diff-class neighbour 536 (deg=5) gets weight 0.236 (`1/sqrt((2+1)×(5+1)) ≈ 0.236`) — nearly twice as strong a signal, despite being diff-class and non-training. The low-degree test node is structurally penalised for being connected to a high-degree training anchor.
+
+3. **A 2-hop diff-class training node (2303, deg=6) contributes 36.3% of training-node influence** — more than node 456 (same class, deg=3, hop=2) at 14.8%. This mirrors the node 387 failure mode: a wrong-class node reaches through the graph more effectively than the right-class anchor because of path structure or degree.
+
+4. **The correct prediction of neighbour 536 does not protect node 1305.** Node 536 is correctly predicted as its own class, meaning the GCN has learned a good representation for it — but that representation is still diff-class, and when aggregated into node 1305, it shifts the embedding toward the wrong class regardless.
+
+**Contrast with node 1894.** Node 1894 failed despite healthy same-class training influence (91%) because of an overwhelmingly diff-class *non-training* neighbourhood (30 of 40 neighbours). Node 1305 fails with only 2 neighbours — one same-class training node (strongly placed, but penalised by high degree) and one diff-class non-training node (lower degree, higher edge weight). The failure here is structural arithmetic: being degree-2 and connected to a high-degree same-class training node means that neighbour's signal is inherently weaker per-edge than a lower-degree diff-class neighbour would be.
+
 ### Does `same_class_influence ≈ 0` mean those training nodes weren't trained?
 
 No. All training nodes participate in the loss and gradient updates as usual.
@@ -371,4 +410,4 @@ A secondary question: does higher degree in training nodes correlate with faster
 
 ---
 
-*Last updated: 2026-03-22*
+*Last updated: 2026-04-16*
