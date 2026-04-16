@@ -263,4 +263,18 @@ The goal of this project is to establish whether degree-bias exists as a structu
 
 ---
 
+## 16. Are high-degree test nodes in the public split better connected to same-class training nodes?
+
+**Question:** In the public split, are high-degree test nodes systematically closer to (or more densely connected with) same-class training nodes than their counterparts in the random split? If so, this would explain why the degree-bias signal is weak or absent on the public split — high-degree nodes happen to have favourable same-class training anchors under the fixed public assignment, masking the structural disadvantage they face under a typical random split.
+
+**Motivation:** The public split fixes exactly 20 training nodes per class. These 20 nodes were not selected to be representative of the degree distribution — they may cluster in dense, well-connected regions of the graph. High-degree nodes (which are themselves well-connected) may therefore be more likely to have a short path to one of these fixed training nodes. Under a random split, training nodes are drawn uniformly across the graph so this bias towards connectivity is absent. Confirming this would show that the public split's lack of degree-bias signal is a structural artefact of the training node placement, not evidence that degree-bias doesn't exist.
+
+**Approach:**
+- For both the public and random splits, compute per test node: (a) number of same-class training nodes within k hops, (b) shortest path length to the nearest same-class training node, (c) GCN-weighted same-class influence sum.
+- Group test nodes by degree bucket and compare these metrics across splits: do high-degree test nodes show higher same-class connectivity under the public split than under the random split?
+- Plot degree vs mean same-class training reachability (count or SPL) for public vs random split as overlaid lines — if the public-split line is consistently higher for high-degree buckets, the hypothesis is confirmed.
+- Cross-reference with the degree-wise accuracy curves for both splits: does the degree bucket where same-class connectivity diverges between splits correspond exactly to where their accuracy curves also diverge?
+
+---
+
 *Last updated: 2026-04-16*
