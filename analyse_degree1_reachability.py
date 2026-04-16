@@ -288,12 +288,16 @@ def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
 def _plot_classification_split_by_bucket(degree_results: dict, k_hops: int,
                                           cfg: dict, save_path: str | None,
                                           show: bool):
-    """Grouped stacked bar chart: correct vs misclassified split per bucket per degree.
+    """Grouped stacked bar chart: correct vs misclassified counts per bucket per degree.
 
     For each degree on the x-axis there are three grouped bars, one per
-    reachability bucket.  Each bar is stacked into two segments:
-        - Light shade (bottom): correctly classified proportion
-        - Dark shade  (top)   : misclassified proportion
+    reachability bucket.  Bar HEIGHT = total nodes in that bucket so sizes
+    are immediately comparable.  Each bar is stacked into two segments:
+        - Light shade (bottom): correctly classified count
+        - Dark shade  (top)   : misclassified count
+
+    The misclassification rate within a bucket reads off as the dark
+    fraction of the bar's total height.
 
     Degrees where ALL buckets are empty are skipped.
     """
@@ -317,24 +321,25 @@ def _plot_classification_split_by_bucket(degree_results: dict, k_hops: int,
 
     fig, ax = plt.subplots(figsize=(max(10, n_deg * 0.75), 5))
 
+    max_count = 0
     legend_handles = []
     for (tot_key, misc_key, dark, light, label), offset in zip(buckets, offsets):
-        pos          = x + offset
-        correct_prop = []
-        misc_prop    = []
+        pos     = x + offset
+        correct = []
+        misc    = []
         for d in degrees:
             r     = degree_results[d]
             total = r[tot_key]
-            misc  = r[misc_key]
-            if total > 0:
-                correct_prop.append((total - misc) / total)
-                misc_prop.append(misc / total)
-            else:
-                correct_prop.append(0.0)
-                misc_prop.append(0.0)
+            m     = r[misc_key]
+            correct.append(total - m)
+            misc.append(m)
+            max_count = max(max_count, total)
 
-        ax.bar(pos, correct_prop, width=w, color=light, edgecolor=dark, linewidth=0.6)
-        ax.bar(pos, misc_prop, width=w, bottom=correct_prop,
+        correct = np.array(correct, dtype=float)
+        misc    = np.array(misc,    dtype=float)
+
+        ax.bar(pos, correct, width=w, color=light, edgecolor=dark, linewidth=0.6)
+        ax.bar(pos, misc, width=w, bottom=correct,
                color=dark, edgecolor=dark, linewidth=0.6)
 
         legend_handles.append(
@@ -345,16 +350,17 @@ def _plot_classification_split_by_bucket(degree_results: dict, k_hops: int,
     ax.set_xticks(x)
     ax.set_xticklabels(degrees, rotation=55, ha="right", fontsize=8)
     ax.set_xlabel("Node degree", fontsize=11)
-    ax.set_ylabel("Proportion within bucket", fontsize=11)
-    ax.set_ylim(0, 1.08)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.set_ylabel("Number of nodes", fontsize=11)
+    ax.set_ylim(0, max_count * 1.15)
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
     dataset = cfg["dataset"]["name"]
     model   = cfg["model"]["name"]
     ax.set_title(
-        f"Correct vs misclassified proportion per reachability bucket\n"
-        f"{dataset} · {model} · {k_hops}-hop receptive field",
+        f"Correct vs misclassified node counts per reachability bucket\n"
+        f"{dataset} · {model} · {k_hops}-hop receptive field  "
+        f"(bar height = bucket size)",
         fontsize=11,
     )
     ax.legend(handles=legend_handles, loc="upper center",
