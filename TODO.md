@@ -233,4 +233,34 @@ The goal of this project is to establish whether degree-bias exists as a structu
 
 ---
 
+## 14. Heterophilous node analysis
+
+**Question:** Do nodes embedded in locally heterophilous neighborhoods (high fraction of diff-class neighbors) exhibit systematic misclassification patterns distinct from the degree-bias effect? Are heterophilous nodes a separate failure mode from low-degree or low-reachability nodes?
+
+**Motivation:** The current analyses condition on degree and reachability to training nodes, but neither captures the local label environment of a node. A high-degree node in a homophilous graph may still be correctly classified if most of its neighbors share its class. Conversely, a low-degree node in a locally heterophilous pocket may be misclassified even when it has a same-class training neighbor at 1-hop — the diff-class signal from the majority of neighbors overwhelms the correct signal. Heterophilous nodes are important to study separately because the mitigation strategies differ: degree-bias calls for degree-aware normalisation, while heterophily calls for attention mechanisms, signed aggregation, or higher-order structural features.
+
+**Approach:**
+- Compute per-node local homophily ratio: fraction of 1-hop neighbors sharing the node's true class.
+- Partition test nodes into homophilous (ratio > 0.5) and heterophilous (ratio ≤ 0.5) groups.
+- Compare misclassification rates across these groups, independently of degree.
+- Check interaction with degree: are heterophilous high-degree nodes the hardest to classify, or does degree compound homophily effects?
+- Run influence analysis on representative heterophilous misclassified nodes: does the influence pattern show diff-class training nodes dominating even when a same-class training node is present?
+- Extend the reachability analysis (`analyse_degree1_reachability.py`) to condition on local homophily — add a fourth bucket: "same-class reachable but heterophilous neighborhood."
+
+---
+
+## 15. Class-balanced test set in random split
+
+**Question:** Does the current random split produce a class-imbalanced test set, and does that imbalance distort degree-wise accuracy measurements?
+
+**Motivation:** The random split assigns training nodes via stratified sampling (fixed `num_train_per_class` per class) but assigns val and test nodes by drawing uniformly from the remainder without any class stratification. For datasets with unequal class sizes (e.g. CiteSeer has 6 classes ranging from ~250 to ~700 nodes), this means the test set will mirror the raw class-size imbalance. Degree-wise accuracy is then confounded by class frequency: if the largest class also tends to have lower-degree nodes, those degree buckets will appear to have lower accuracy simply because they contain more nodes from a harder or easier class — not because of degree-bias per se.
+
+**Approach:**
+- Add a `balanced_test: true` option (or always enforce it) in `apply_split` that draws `num_test // num_classes` test nodes per class from the remaining pool after training and val assignment.
+- Log per-class test counts alongside the existing split summary line so imbalance is visible even without the fix.
+- Verify that degree distributions across classes are not systematically skewed before concluding that class-balancing materially changes the degree-wise accuracy curve.
+- Compare degree-wise accuracy curves with and without class-balanced test sets to quantify the distortion introduced by the current approach.
+
+---
+
 *Last updated: 2026-04-16*
