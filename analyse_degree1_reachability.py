@@ -1,16 +1,19 @@
 """
-analyse_degree1_reachability.py — Reachability analysis for misclassified degree-1 test nodes.
+analyse_degree1_reachability.py — Reachability analysis for misclassified test nodes
+in a given degree group.
 
-For all misclassified test nodes with degree=1, checks within the
-(num_layers - 1)-hop receptive field:
+For all misclassified test nodes in the specified degree range, checks within
+the (num_layers - 1)-hop receptive field:
   1. How many have NO training node of any class reachable.
   2. How many have NO same-class training node reachable
      (but may have diff-class training nodes).
 
 Usage
 -----
-    python analyse_degree1_reachability.py
-    python analyse_degree1_reachability.py --config config.yaml --device cpu
+    python analyse_degree1_reachability.py                      # default: degree=1
+    python analyse_degree1_reachability.py --degree 3
+    python analyse_degree1_reachability.py --degree-min 2 --degree-max 5
+    python analyse_degree1_reachability.py --degree 1 --config config.yaml --device cpu
 """
 
 import argparse
@@ -109,7 +112,7 @@ def train_model(data, cfg, device):
 
 # ── core analysis ──────────────────────────────────────────────────────────────
 
-def run_analysis(cfg, device: torch.device):
+def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
     data = load_dataset(cfg["dataset"])
 
     split = cfg.get("split", "random")
@@ -135,20 +138,22 @@ def run_analysis(cfg, device: torch.device):
     pred, _ = train_model(data, cfg, device)
     pred = pred.cpu()
 
-    # Collect misclassified degree-1 test nodes
+    # Collect misclassified test nodes in the degree range
     misclassified_deg1 = [
         node for node in test_idx
-        if int(all_deg[node].item()) == 1
+        if deg_min <= int(all_deg[node].item()) <= deg_max
         and int(pred[node].item()) != int(y[node].item())
     ]
 
     total_deg1 = sum(
-        1 for node in test_idx if int(all_deg[node].item()) == 1
+        1 for node in test_idx
+        if deg_min <= int(all_deg[node].item()) <= deg_max
     )
 
+    deg_label = str(deg_min) if deg_min == deg_max else f"{deg_min}–{deg_max}"
     log.info("")
-    log.info("Degree-1 test nodes : %d total, %d misclassified (%.1f%%)",
-             total_deg1, len(misclassified_deg1),
+    log.info("Degree-%s test nodes : %d total, %d misclassified (%.1f%%)",
+             deg_label, total_deg1, len(misclassified_deg1),
              100 * len(misclassified_deg1) / total_deg1 if total_deg1 else 0)
     log.info("Receptive field radius: %d hop(s)", k_hops)
     log.info("")
@@ -197,12 +202,30 @@ def run_analysis(cfg, device: torch.device):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Reachability analysis for misclassified degree-1 test nodes."
+        description="Reachability analysis for misclassified test nodes in a degree group."
     )
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--device", default=None,
                         help="Device override, e.g. cuda:0 or cpu")
+    deg_group = parser.add_mutually_exclusive_group()
+    deg_group.add_argument("--degree", type=int, default=None,
+                           help="Exact degree value (default: 1)")
+    deg_group.add_argument("--degree-min", type=int,
+                           help="Lower bound of degree range (inclusive)")
+    parser.add_argument("--degree-max", type=int, default=None,
+                        help="Upper bound of degree range (inclusive); "
+                             "required when --degree-min is used")
     args = parser.parse_args()
+
+    if args.degree_min is not None:
+        if args.degree_max is None:
+            parser.error("--degree-max is required when --degree-min is used")
+        deg_min, deg_max = args.degree_min, args.degree_max
+        if deg_min > deg_max:
+            parser.error("--degree-min must be ≤ --degree-max")
+    else:
+        d = args.degree if args.degree is not None else 1
+        deg_min = deg_max = d
 
     logging.basicConfig(
         level=logging.INFO,
@@ -227,8 +250,9 @@ def main():
         else ("cuda" if torch.cuda.is_available() else "cpu")
     )
     log.info("Device: %s", device)
+    log.info("Degree range: [%d, %d]", deg_min, deg_max)
 
-    run_analysis(cfg, device)
+    run_analysis(cfg, deg_min, deg_max, device)
 
 
 if __name__ == "__main__":
