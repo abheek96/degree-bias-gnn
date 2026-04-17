@@ -306,6 +306,38 @@ The influence score is a property of the **forward pass of the trained model**, 
 It measures how much the trained model *uses* information from each neighbour when making a prediction — not whether that neighbour was part of training.
 A training node with zero influence simply means the model has learned (or failed to learn) weights such that this node's features do not percolate meaningfully to the target node's representation.
 
+### How does this influence measure differ from RawlsGCN's?
+
+RawlsGCN (Theorem 1) also uses a gradient-based influence measure, but it is a fundamentally different quantity:
+
+**RawlsGCN** computes the gradient of the *training loss* with respect to a node's input features:
+
+```
+∂f / ∂H^(0)
+```
+
+This is a **global, aggregate** measure — it captures how much a given node's features shape the weight updates across the entire training set. Their key finding is that this gradient scales with `deg_Â(v)^L` (the node's renormalized degree raised to the number of layers), meaning high-degree nodes dominate the loss landscape structurally, independent of what the weights have learned.
+
+**This repository** computes the Jacobian of a *specific test node's output* with respect to each other node's input features:
+
+```
+I(x, y) = Σ_{i,f} |∂h_x^(k)[i] / ∂h_y^(0)[f]|
+```
+
+This is a **local, pairwise** measure — it captures how much node y's features steer node x's final representation. It is computed numerically through the full trained model.
+
+The key distinctions:
+
+| | RawlsGCN | This repository |
+|---|---|---|
+| Differentiate | Loss `f` (scalar) | Test node output `h_x^(k)` (vector) |
+| w.r.t. | All node features (training effect) | Each node y's features (prediction effect) |
+| Scope | Global — node's role in training | Local — node y's role in a specific prediction |
+| Closed form | Yes — `deg_Â(v)^L` factor | No — numerical Jacobian through trained weights |
+| What it reveals | Degree causes systemic training unfairness | Which training nodes steer a specific test node's prediction, and how much |
+
+**Critical distinction:** RawlsGCN's result is **structural** — the degree dependency holds regardless of the learned weights, because it comes from the renormalized adjacency matrix. This repository's influence is **empirical** — computed through the actual trained weights and nonlinearities, so two same-degree nodes can have very different influence distributions depending on what the model has learned. RawlsGCN explains *that* degree creates unfairness via a structural bound; this repository's Jacobian explains *how* that unfairness manifests for a specific node through the full computation path.
+
 ---
 
 ## Training Node Degree and Influence
