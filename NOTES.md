@@ -308,15 +308,21 @@ A training node with zero influence simply means the model has learned (or faile
 
 ### How does this influence measure differ from RawlsGCN's?
 
-RawlsGCN (Theorem 1) also uses a gradient-based influence measure, but it is a fundamentally different quantity:
+RawlsGCN (Theorem 1) also uses a gradient-based influence measure, but it is a fundamentally different quantity operating at a different stage of computation.
 
-**RawlsGCN** computes the gradient of the *training loss* with respect to a node's input features:
+**RawlsGCN's influence (Theorem 1)** computes the gradient of the *training loss* with respect to the weight parameters `W^(l)`:
 
 ```
-∂f / ∂H^(0)
+∂f / ∂W^(l) = Σ_i  deg_Â(i) · V̂_i^(col)
 ```
 
-This is a **global, aggregate** measure — it captures how much a given node's features shape the weight updates across the entire training set. Their key finding is that this gradient scales with `deg_Â(v)^L` (the node's renormalized degree raised to the number of layers), meaning high-degree nodes dominate the loss landscape structurally, independent of what the weights have learned.
+The gradient of the loss w.r.t. the weights decomposes as a weighted summation of per-node influence matrices `V̂_i^(col)`, where each node i's contribution is scaled by its degree in the renormalized graph Laplacian `Â = D^{-1/2}(A+I)D^{-1/2}`:
+
+- `deg_Â(i) = Σ_j Â_{ij}` — the row-wise sum of Â for node i
+- `V̂_i^(col)` — the column-wise influence matrix of node i, derived from the hidden embeddings `H^(l-1)` and the upstream gradient `∂f/∂t_i`
+- `Ĥ^(l) = Â · H^(l-1) · W^(l)` — the node embeddings before nonlinear activation
+
+This means high-degree nodes contribute proportionally more to the gradient update of the weights. The model is effectively trained more on high-degree nodes and less on low-degree nodes — the weight update disproportionately serves the high-degree population.
 
 **This repository** computes the Jacobian of a *specific test node's output* with respect to each other node's input features:
 
@@ -331,12 +337,15 @@ The key distinctions:
 | | RawlsGCN | This repository |
 |---|---|---|
 | Differentiate | Loss `f` (scalar) | Test node output `h_x^(k)` (vector) |
-| w.r.t. | All node features (training effect) | Each node y's features (prediction effect) |
+| w.r.t. | Weight parameters `W^(l)` (training effect) | Each node y's input features (prediction effect) |
 | Scope | Global — node's role in training | Local — node y's role in a specific prediction |
-| Closed form | Yes — `deg_Â(v)^L` factor | No — numerical Jacobian through trained weights |
-| What it reveals | Degree causes systemic training unfairness | Which training nodes steer a specific test node's prediction, and how much |
+| Stage | Training loop: node → gradient → weight update | Forward pass: node features → message passing → target representation |
+| Closed form | Yes — `deg_Â(v)` factor | No — numerical Jacobian through trained weights |
+| What it reveals | Degree causes systemic training unfairness (high-degree nodes dominate weight updates) | Which training nodes steer a specific test node's prediction, and how much |
 
 **Critical distinction:** RawlsGCN's result is **structural** — the degree dependency holds regardless of the learned weights, because it comes from the renormalized adjacency matrix. This repository's influence is **empirical** — computed through the actual trained weights and nonlinearities, so two same-degree nodes can have very different influence distributions depending on what the model has learned. RawlsGCN explains *that* degree creates unfairness via a structural bound; this repository's Jacobian explains *how* that unfairness manifests for a specific node through the full computation path.
+
+Both arrive at the same conclusion (degree causes unfairness) through complementary lenses: RawlsGCN from the training-time gradient perspective, this repository from the inference-time prediction perspective.
 
 ---
 
