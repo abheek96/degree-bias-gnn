@@ -1,14 +1,14 @@
 model:
   name: GCN
-  hidden_dim: 256
-  num_layers: 2
-  dropout: 0.7
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.5
 
 train:
-  lr: 0.005
+  lr: 0.01
   weight_decay: 5e-4
-  epochs: 1000
-  patience: 100
+  epochs: 10000
+  patience: 200
 
 plot:
   layer_values: [2, 3, 4, 5, 6]
