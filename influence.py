@@ -224,6 +224,15 @@ def jacobian_l1_agg_per_hop(model, data, max_hops: int, node_idx: int,
     per_hop = [influence[s].sum() for s in hop_subsets]
     return torch.stack(per_hop)
 
+def avg_total_influence(
+    influence_all_nodes: Tensor,
+    normalize: bool = True,
+) -> Tensor:
+    """Compute the *influence‑weighted receptive field* ``R``."""
+    avg_total_influences = torch.mean(influence_all_nodes, dim=0)
+    if normalize:  # nomalize by hop_0 (jacobian of the center node feature)
+        avg_total_influences = avg_total_influences / avg_total_influences[0]
+    return avg_total_influences
 
 def total_influence(
     model, data, max_hops: int,
@@ -269,15 +278,15 @@ def total_influence(
     ]
     allnodes = torch.vstack(influence_all_nodes).detach().cpu()
 
-    # if average:
-    #     avg_influence = avg_total_influence(allnodes, normalize=normalize)
-    # else:
-    #     avg_influence = allnodes
+    if average:
+        avg_influence = avg_total_influence(allnodes, normalize=normalize)
+    else:
+        avg_influence = allnodes
 
     # R = influence_weighted_receptive_field(allnodes)
 
     # return avg_influence, R
-    return allnodes
+    return avg_influence
 
 
 # ── node selection + per-node analysis ────────────────────────────────────────
