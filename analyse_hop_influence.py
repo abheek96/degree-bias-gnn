@@ -195,14 +195,9 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     same_class_all = {t for t in train_in_field if int(y[t].item()) == true_lbl}
     diff_class_all = {t for t in train_in_field if int(y[t].item()) != true_lbl}
 
-    # 1-hop neighborhood purity: fraction of immediate neighbors with same label
-    neighbors = data.edge_index[1][data.edge_index[0] == node_x].tolist()
-    purity = (sum(1 for n in neighbors if int(y[n].item()) == true_lbl) / len(neighbors)
-              if neighbors else float("nan"))
-
     log.info(
-        "influence (per-hop): node %d  degree=%d  true=%d  pred=%d  (%s)  purity=%.3f",
-        node_x, degree, true_lbl, pred_lbl, status, purity,
+        "influence (per-hop): node %d  degree=%d  true=%d  pred=%d  (%s)",
+        node_x, degree, true_lbl, pred_lbl, status,
     )
     log.info(
         "  receptive field (k=%d): same_train=%d  diff_train=%d",
@@ -217,7 +212,7 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     header = (
         "  hop | |S_i| | total_inf   | same_inf    | diff_inf    |"
         " same/tot | diff/tot | #same_tr | #diff_tr | #non_tr"
-        " | same_degs | diff_degs"
+        " | purity | same_degs | diff_degs"
     )
     log.info(header)
 
@@ -246,25 +241,28 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         same_degs = _deg_list(same_nodes)
         diff_degs = _deg_list(diff_nodes)
 
+        same_label = sum(1 for n in S_set if int(y[n].item()) == true_lbl)
+        purity = same_label / size if size > 0 else float("nan")
+
         log.info(
             "   %d  | %5d | %.4e  | %.4e  | %.4e  |  %.4f  |  %.4f  |  %5d   |  %5d   |  %5d"
-            "  | %s | %s",
+            "  | %.3f  | %s | %s",
             i, size, total, same_inf, diff_inf,
             frac_same, frac_diff, n_same, n_diff, n_non,
-            same_degs, diff_degs,
+            purity, same_degs, diff_degs,
         )
         rows.append({
             "hop": i, "size": size, "total_inf": total,
             "same_inf": same_inf, "diff_inf": diff_inf,
             "frac_same": frac_same, "frac_diff": frac_diff,
             "n_same_train": n_same, "n_diff_train": n_diff, "n_non_train": n_non,
+            "purity": purity,
             "same_degs": same_degs, "diff_degs": diff_degs,
         })
 
     return {
         "node_idx": node_x, "degree": degree,
         "true_label": true_lbl, "pred_label": pred_lbl,
-        "purity": purity,
         "n_same_train_field": len(same_class_all),
         "n_diff_train_field": len(diff_class_all),
         "per_hop": rows,
