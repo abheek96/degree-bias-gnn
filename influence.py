@@ -269,14 +269,15 @@ def total_influence(
     ]
     allnodes = torch.vstack(influence_all_nodes).detach().cpu()
 
-    if average:
-        avg_influence = avg_total_influence(allnodes, normalize=normalize)
-    else:
-        avg_influence = allnodes
+    # if average:
+    #     avg_influence = avg_total_influence(allnodes, normalize=normalize)
+    # else:
+    #     avg_influence = allnodes
 
-    R = influence_weighted_receptive_field(allnodes)
+    # R = influence_weighted_receptive_field(allnodes)
 
-    return avg_influence, R
+    # return avg_influence, R
+    return allnodes
 
 
 # ── node selection + per-node analysis ────────────────────────────────────────
