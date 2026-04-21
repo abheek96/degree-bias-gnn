@@ -212,8 +212,14 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     header = (
         "  hop | |S_i| | total_inf   | same_inf    | diff_inf    |"
         " same/tot | diff/tot | #same_tr | #diff_tr | #non_tr"
+        " | same_degs | diff_degs"
     )
     log.info(header)
+
+    def _deg_list(nodes):
+        if not nodes:
+            return "[]"
+        return str(sorted(int(all_deg[n].item()) for n in nodes))
 
     rows = []
     for i, S_i in enumerate(hop_subsets):
@@ -232,16 +238,22 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         frac_same = same_inf / total if total > 0 else 0.0
         frac_diff = diff_inf / total if total > 0 else 0.0
 
+        same_degs = _deg_list(same_nodes)
+        diff_degs = _deg_list(diff_nodes)
+
         log.info(
-            "   %d  | %5d | %.4e  | %.4e  | %.4e  |  %.4f  |  %.4f  |  %5d   |  %5d   |  %5d",
+            "   %d  | %5d | %.4e  | %.4e  | %.4e  |  %.4f  |  %.4f  |  %5d   |  %5d   |  %5d"
+            "  | %s | %s",
             i, size, total, same_inf, diff_inf,
             frac_same, frac_diff, n_same, n_diff, n_non,
+            same_degs, diff_degs,
         )
         rows.append({
             "hop": i, "size": size, "total_inf": total,
             "same_inf": same_inf, "diff_inf": diff_inf,
             "frac_same": frac_same, "frac_diff": frac_diff,
             "n_same_train": n_same, "n_diff_train": n_diff, "n_non_train": n_non,
+            "same_degs": same_degs, "diff_degs": diff_degs,
         })
 
     return {
