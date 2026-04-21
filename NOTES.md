@@ -148,6 +148,21 @@ norm: same=0.0000   diff=1.0000   (fraction of training-node influence)
 
 Plots use the normalised scores so bars across different nodes are on a common [0, 1] scale.
 
+### Per-hop breakdown (`analyse_hop_influence.py`)
+
+The aggregate table above collapses all hops in the receptive field into a single same/diff comparison, normalised by **training-node total only**. For deeper models (k_hops ≥ 2) this hides *where* the signal comes from and ignores the share routed through non-training nodes.
+
+`analyse_hop_influence.py` breaks the same Jacobian-L1 computation down per hop. For each hop `i` in `[0, k_hops]` it reports:
+
+- `total_inf[i]` — sum of `I_x(y)` over **all** nodes exactly i hops from x (training or not). Derived from one Jacobian call via `k_hop_subsets_exact` + `influence_distribution`, so numerically identical to `jacobian_l1_agg_per_hop` but without re-running the forward pass.
+- `same_inf[i]` / `diff_inf[i]` — raw (unnormalised) sums over same-class / diff-class training nodes at hop i.
+- Fractions use the hop's **total** as the denominator (not the training total), so `same/tot + diff/tot + non_train_frac = 1` at each hop.
+- Cardinalities: `#same_tr`, `#diff_tr`, `#non_tr` summing to `|S_i|` (the hop set).
+
+`k_hops = num_layers - 1` (final linear layer does no message passing), so `hop 0` is self-influence of node x's own features and `hop k_hops` is the outer shell.
+
+Model source: `--checkpoint PATH` loads a saved state_dict; `--run N` auto-locates the most recent `results/{dataset}_{model}_{split}_{CC|noCC}_*/checkpoints/run{N:02d}_*.pt`; neither retrains from scratch. `main.py` now writes these checkpoints after every run under `{exec_dir}/checkpoints/` (gated by `train.save_checkpoints`, default True).
+
 ### What is `influence_top_n` / why was it there?
 
 It was a cap on the number of nodes analysed per degree value, to limit compute when many nodes share a degree.

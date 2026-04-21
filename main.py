@@ -323,6 +323,16 @@ def main():
             influence_model = model
             log.info("Saved run %d (seed=%d) model/pred for influence analysis", i, seed)
 
+        if cfg.get("train", {}).get("save_checkpoints", True):
+            ckpt_dir = os.path.join(exec_dir, "checkpoints")
+            os.makedirs(ckpt_dir, exist_ok=True)
+            ckpt_path = os.path.join(ckpt_dir, f"{run_name}.pt")
+            torch.save(
+                {"model_state": model.state_dict(), "pred": pred.cpu(), "seed": seed},
+                ckpt_path,
+            )
+            log.info("Checkpoint saved: %s", ckpt_path)
+
     val_mean,   val_std   = np.mean(val_accs),   np.std(val_accs)
     test_mean,  test_std  = np.mean(test_accs),  np.std(test_accs)
     train_mean, train_std = np.mean(train_accs), np.std(train_accs)
