@@ -13,40 +13,85 @@ or by explicit node index.
 import logging
 
 import torch
+from torch import Tensor
 from torch.autograd.functional import jacobian as torch_jacobian
 from torch_geometric.utils import degree as graph_degree
+from torch_geometric.utils import k_hop_subgraph
+from tqdm import tqdm
 
 log = logging.getLogger(__name__)
 
 
 # ── core influence computation ─────────────────────────────────────────────────
 
-def influence_distribution(model, data, node_x: int) -> torch.Tensor:
-    """Exact influence distribution I_x(y) for node x over all nodes y.
+def influence_distribution(model, data, node_x: int, k_hops: int,
+                            *, vectorize: bool = True) -> Tensor:
+    """Pair-wise Jacobian-based influence scores for node x over all nodes y.
 
-    I(x, y)  = Σ_{i,f} |∂h_x^(k)[i] / ∂h_y^(0)[f]|
-    I_x(y)   = I(x, y) / Σ_z I(x, z)
+    Computes the **L1 norm** of the Jacobian of node x's final-layer output
+    with respect to each other node's input features, evaluated on the
+    **k-hop induced sub-graph** centred at node x. Results are scattered
+    back to the original global node index space so the returned tensor has
+    length ``data.num_nodes``; nodes outside the k-hop subgraph have
+    influence 0 (the true value — no message-passing path exists).
+
+    I(x, y) = Σ_{i, f} |∂h_x^(k)[i] / ∂h_y^(0)[f]|
+
+    Evaluating on the induced subgraph instead of the full graph makes this
+    tractable for large graphs: the Jacobian is of shape [d_k, |V_sub|, d_0]
+    rather than [d_k, N, d_0]. For GCN-style local aggregation the two
+    formulations are mathematically equivalent at the root node.
+
+    Compatibility with this repository
+    ----------------------------------
+    CC filtering is handled transparently — by the time this function is
+    called, ``data`` has already been reindexed by ``LargestConnectedComponents``
+    in ``dataset.py``, so ``node_x``, ``data.edge_index``, ``data.x`` and
+    ``data.num_nodes`` are all in the filtered node index space.
 
     Parameters
     ----------
-    model  : trained GNN, called as model(x, edge_index) → [N, d_k]
-    data   : PyG Data object
-    node_x : index of the node to compute influence for
+    model     : trained GNN, called as ``model(x, edge_index) → [N, d_k]``
+    data      : PyG Data object
+    node_x    : global (post-CC) index of the node to compute influence for
+    k_hops    : receptive field radius (= number of GCN message-passing layers)
+    vectorize : vectorise ``torch.autograd.functional.jacobian`` (faster)
 
     Returns
     -------
-    I_x : FloatTensor [N], normalised influence scores summing to 1.
+    influence_full : FloatTensor [data.num_nodes] on data.x's device.
+        Raw L1-norm Jacobian sums; NOT normalised to sum to 1. Downstream
+        code derives same-/diff-class fractions as ratios, so the absolute
+        magnitude does not affect interpretation.
     """
     model.eval()
     edge_index = data.edge_index
+    x          = data.x
 
-    def forward_fn(X):
-        return model(X, edge_index)[node_x]   # [d_k]
+    # Induced k-hop sub-graph centred at node_x, with local re-labelling
+    k_hop_nodes, sub_edge_index, mapping, _ = k_hop_subgraph(
+        node_x, k_hops, edge_index, relabel_nodes=True,
+        num_nodes=data.num_nodes,
+    )
+    root_pos = int(mapping[0].item())
 
-    # J[i, y, f] = ∂h_x^(k)[i] / ∂h_y^(0)[f],  shape [d_k, N, d_0]
-    J    = torch_jacobian(forward_fn, data.x)
-    I_xy = J.abs().sum(dim=(0, 2))             # [N]
-    return I_xy / I_xy.sum()
+    device         = x.device
+    sub_x          = x[k_hop_nodes].to(device)
+    sub_edge_index = sub_edge_index.to(device)
+
+    def _forward(X: Tensor) -> Tensor:
+        return model(X, sub_edge_index)[root_pos]   # [d_k]
+
+    # J[i, y_local, f] = ∂h_x^(k)[i] / ∂h_{y_local}^(0)[f]
+    # shape: [d_k, |V_sub|, d_0]
+    jac           = torch_jacobian(_forward, sub_x, vectorize=vectorize)
+    influence_sub = jac.abs().sum(dim=(0, 2))   # [|V_sub|]
+
+    influence_full = torch.zeros(
+        data.num_nodes, dtype=influence_sub.dtype, device=device,
+    )
+    influence_full[k_hop_nodes] = influence_sub
+    return influence_full
 
 
 def _khop_neighbors(edge_index, node_x: int, k: int, num_nodes: int) -> set:
@@ -99,6 +144,141 @@ def _khop_distances(edge_index, node_x: int, k: int, num_nodes: int) -> dict:
     return dist
 
 
+def k_hop_subsets_rough(node_idx: int, num_hops: int, edge_index: Tensor,
+                         num_nodes: int) -> list:
+    """Return *rough* (possibly overlapping) k-hop node subsets.
+
+    Thin wrapper around the BFS used by
+    :pyfunc:`torch_geometric.utils.k_hop_subgraph`, but returns **all**
+    intermediate hop subsets rather than the full union only.
+
+    Returns
+    -------
+    list[Tensor]
+        ``[H_0, H_1, …, H_k]`` where ``H_0 = [node_idx]`` and ``H_i`` (i>0)
+        contains all nodes exactly i hops away in the *expanded*
+        neighbourhood (overlaps with earlier hops are **not** removed).
+    """
+    col, row = edge_index
+
+    node_mask = row.new_empty(num_nodes, dtype=torch.bool)
+    edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
+
+    node_idx_ = torch.tensor([node_idx], device=row.device)
+
+    subsets = [node_idx_]
+    for _ in range(num_hops):
+        node_mask.zero_()
+        node_mask[subsets[-1]] = True
+        torch.index_select(node_mask, 0, row, out=edge_mask)
+        subsets.append(col[edge_mask])
+
+    return subsets
+
+
+def k_hop_subsets_exact(node_idx: int, num_hops: int, edge_index: Tensor,
+                         num_nodes: int, device) -> list:
+    """Return **disjoint** k-hop subsets ``[S_0, S_1, …, S_k]``.
+
+    Refines :pyfunc:`k_hop_subsets_rough` by removing nodes that have already
+    appeared in previous hops, so each subset contains nodes *exactly* i hops
+    away from the seed. Used by ``jacobian_l1_agg_per_hop`` to bucket
+    influence by hop distance.
+    """
+    rough_subsets = k_hop_subsets_rough(node_idx, num_hops, edge_index,
+                                        num_nodes)
+
+    exact_subsets = [rough_subsets[0].tolist()]
+    visited       = set(exact_subsets[0])
+
+    for hop_subset in rough_subsets[1:]:
+        fresh = set(hop_subset.tolist()) - visited
+        visited |= fresh
+        exact_subsets.append(list(fresh))
+
+    return [
+        torch.tensor(s, device=device, dtype=edge_index.dtype)
+        for s in exact_subsets
+    ]
+
+
+def jacobian_l1_agg_per_hop(model, data, max_hops: int, node_idx: int,
+                             *, vectorize: bool = True) -> Tensor:
+    """Aggregate Jacobian L1 influence **per hop** for ``node_idx``.
+
+    Returns a vector ``[I_0, I_1, …, I_k]`` where ``I_i`` is the *total*
+    influence exerted on ``node_idx`` by nodes at exactly hop distance ``i``.
+    ``I_0`` is the self-influence (jacobian w.r.t. node_idx's own features).
+
+    Uses ``influence_distribution`` (the Jacobian-L1 implementation) for the
+    pairwise scores, then buckets them by hop distance via
+    ``k_hop_subsets_exact``.
+    """
+    num_nodes  = int(data.num_nodes)
+    influence  = influence_distribution(
+        model, data, node_idx, max_hops, vectorize=vectorize,
+    )
+    hop_subsets = k_hop_subsets_exact(
+        node_idx, max_hops, data.edge_index, num_nodes, influence.device,
+    )
+    per_hop = [influence[s].sum() for s in hop_subsets]
+    return torch.stack(per_hop)
+
+
+def total_influence(
+    model, data, max_hops: int,
+    num_samples: int | None = None,
+    normalize: bool = True,
+    average: bool = True,
+    device="cpu",
+    vectorize: bool = True,
+):
+    """Jacobian-based influence aggregates across multiple seed nodes.
+
+    Introduced in "Towards Quantifying Long-Range Interactions in Graph
+    Machine Learning" (https://arxiv.org/abs/2503.09008). For every sampled
+    node v, computes the per-hop Jacobian-L1 influence vector
+    (I_0, I_1, …, I_k), then optionally averages over seeds and normalises
+    by I_0.
+
+    Parameters
+    ----------
+    model       : GNN with forward ``model(x, edge_index)``.
+    data        : PyG Data with ``x`` and ``edge_index``.
+    max_hops    : maximum hop distance k.
+    num_samples : number of random seed nodes (default: all nodes).
+    normalize   : divide per-hop influence by I_0 (self-influence).
+    average     : if True, mean over seeds — shape [k+1]; else full matrix
+                  of shape [num_samples, k+1].
+    device      : forwarded to downstream calls (derived from data tensors
+                  in this implementation).
+    vectorize   : forwarded to ``torch.autograd.functional.jacobian``.
+
+    Returns
+    -------
+    avg_influence : Tensor, shape [k+1] or [num_samples, k+1].
+    R             : float, influence-weighted receptive-field breadth.
+    """
+    num_nodes   = int(data.num_nodes)
+    num_samples = num_nodes if num_samples is None else num_samples
+    nodes       = torch.randperm(num_nodes)[:num_samples].tolist()
+
+    influence_all_nodes = [
+        jacobian_l1_agg_per_hop(model, data, max_hops, n, vectorize=vectorize)
+        for n in tqdm(nodes, desc="Influence")
+    ]
+    allnodes = torch.vstack(influence_all_nodes).detach().cpu()
+
+    if average:
+        avg_influence = avg_total_influence(allnodes, normalize=normalize)
+    else:
+        avg_influence = allnodes
+
+    R = influence_weighted_receptive_field(allnodes)
+
+    return avg_influence, R
+
+
 # ── node selection + per-node analysis ────────────────────────────────────────
 
 def _analyse_node(model, data, pred, node_x: int, k_hops: int,
@@ -129,7 +309,7 @@ def _analyse_node(model, data, pred, node_x: int, k_hops: int,
     log.info("influence: node %d  degree=%d  same_train=%d  diff_train=%d",
              node_x, degree, len(same_class), len(diff_class))
 
-    I_x = influence_distribution(model, data, node_x)
+    I_x = influence_distribution(model, data, node_x, k_hops)
 
     same_set        = set(same_class)
     diff_set        = set(diff_class)
@@ -373,7 +553,7 @@ def compute_influence_disparity_all(model, data, pred, k_hops: int) -> list:
         same_class = [t for t in train_in_field if int(y[t].item()) == true_lbl]
         diff_class = [t for t in train_in_field if int(y[t].item()) != true_lbl]
 
-        I_x = influence_distribution(model, data, node_x)
+        I_x = influence_distribution(model, data, node_x, k_hops)
 
         same_inf  = float(I_x[same_class].sum()) if same_class else 0.0
         diff_inf  = float(I_x[diff_class].sum()) if diff_class else 0.0
