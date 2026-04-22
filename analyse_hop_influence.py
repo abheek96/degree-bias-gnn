@@ -216,10 +216,18 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     )
     log.info(header)
 
-    def _deg_list(nodes):
+    import math
+    focal_deg = degree  # degree of node_x
+
+    def _deg_weight_list(nodes):
         if not nodes:
             return "[]"
-        return str(sorted(int(all_deg[n].item()) for n in nodes))
+        tuples = sorted(
+            (int(all_deg[n].item()),
+             round(1.0 / math.sqrt((int(all_deg[n].item()) + 1) * (focal_deg + 1)), 4))
+            for n in nodes
+        )
+        return str(tuples)
 
     rows = []
     for i, S_i in enumerate(hop_subsets):
@@ -238,8 +246,8 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         frac_same = same_inf / total if total > 0 else 0.0
         frac_diff = diff_inf / total if total > 0 else 0.0
 
-        same_degs = _deg_list(same_nodes)
-        diff_degs = _deg_list(diff_nodes)
+        same_degs = _deg_weight_list(same_nodes)
+        diff_degs = _deg_weight_list(diff_nodes)
 
         same_label = sum(1 for n in S_set if int(y[n].item()) == true_lbl)
         purity = same_label / size if size > 0 else float("nan")
