@@ -3,7 +3,7 @@ num_runs: 10
 device: 'cuda'
 
 results_dir: ./results
-split: 'public'        # random, public, or custom
+split: 'random'        # random, public, or custom
 
 dataset:
   name: Cora
