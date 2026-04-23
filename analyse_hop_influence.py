@@ -258,7 +258,7 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
 
         table.add_row([
             i, size,
-            f"{total:.4e}", f"{same_inf:.4e}", f"{diff_inf:.4e}",
+            f"{total:.4f}", f"{same_inf:.4f}", f"{diff_inf:.4f}",
             f"{frac_same:.4f}", f"{frac_diff:.4f}",
             n_same, n_diff, n_non,
             f"{purity:.3f}",
