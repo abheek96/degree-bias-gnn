@@ -3,10 +3,10 @@ num_runs: 10
 device: 'cuda'
 
 results_dir: ./results
-split: 'random'        # random, public, or custom
+split: 'public'        # random, public, or custom
 
 dataset:
-  name: Cora
+  name: PubMed
   root: ./data
   use_cc: true
   num_train_per_class: 20
@@ -40,8 +40,8 @@ plot:
   purity_k_max: 2
   class_accuracy: true
   train_degree_distribution: true
-  influence_analysis: true
-  influence_degrees: [3]        # exact degree values to investigate, e.g. [3, 5, 10]
+  influence_analysis: false
+  influence_degrees: []        # exact degree values to investigate, e.g. [3, 5, 10]
   # influence_nodes: [1894]            # explicit node indices to investigate, e.g. [1362, 42]
   similarity_nodes: []          # node indices for per-node layer-wise similarity analysis, e.g. [1858, 1930]
   inspect_nodes: []             # node indices to inspect aggregation neighborhood, e.g. [42, 1362]
