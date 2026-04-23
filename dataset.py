@@ -18,9 +18,9 @@ DATASET_REGISTRY = {
     "Physics": lambda root: Coauthor(root=root, name="Physics"),
     "WikiCS":    lambda root: WikiCS(root=root),
     "Chameleon": lambda root: WikipediaNetwork(root=root, name="chameleon",
-                                               geom_gcn_preprocess=False),
+                                               geom_gcn_preprocess=True),
     "Squirrel":  lambda root: WikipediaNetwork(root=root, name="squirrel",
-                                               geom_gcn_preprocess=False),
+                                               geom_gcn_preprocess=True),
 }
 
 
@@ -33,7 +33,14 @@ def load_dataset(dataset_cfg):
 
     dataset = DATASET_REGISTRY[name](root)
     data = dataset[0]
-    
+
+    # geom_gcn_preprocess=True gives 2D masks [N, 10] (10 fixed splits).
+    # Flatten to 1D by selecting column 0 so downstream code sees bool vectors.
+    for attr in ("train_mask", "val_mask", "test_mask"):
+        mask = getattr(data, attr, None)
+        if mask is not None and mask.dim() == 2:
+            setattr(data, attr, mask[:, 0])
+
     G = to_networkx(data, to_undirected=True)
     comps = sorted(nx.connected_components(G), key=len, reverse=True)
     if len(comps) > 1:
