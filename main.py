@@ -21,8 +21,7 @@ import yaml
 from tqdm import tqdm
 from torch_geometric.utils import degree as graph_degree
 
-from dataset import load_dataset
-from dataset_utils import apply_split
+from dataset_utils import apply_split, load_or_create_split
 from logger import setup_logger
 from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_labelling_ratio_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_node_similarity_analysis, plot_train_neighbor_degree_stats, plot_max_same_train_deg_vs_degree, plot_1hop_train_deg_vs_accuracy, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree, plot_train_degree_distribution
 from influence import compute_influence_analysis, compute_influence_disparity_all
@@ -202,14 +201,8 @@ def main():
     num_runs = cfg.get("num_runs", 1)
     split = cfg.get("split", "random")
 
-    # Load dataset once. For random splits, fix the partition with base_seed
-    # so all runs share the same train/val/test nodes. For public splits with
-    # use_cc=True, apply_split logs the surviving mask counts after CC filtering.
-    data = load_dataset(cfg["dataset"])
-
-    if split == "random":
-        set_seed(base_seed)
-    data = apply_split(data, split, cfg["dataset"])
+    cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
+    data = load_or_create_split(cfg["dataset"], split, base_seed, cache_dir)
     data = data.to(device)
 
     # Degree is a fixed property of the graph — compute once for test nodes

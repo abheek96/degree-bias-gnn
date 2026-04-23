@@ -38,8 +38,7 @@ import torch
 import yaml
 from torch_geometric.utils import degree as graph_degree
 
-from dataset import load_dataset
-from dataset_utils import apply_split
+from dataset_utils import load_or_create_split
 from influence import (
     _khop_distances,
     influence_distribution,
@@ -280,11 +279,10 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
 # ── CLI orchestration ─────────────────────────────────────────────────────────
 
 def _load_data(cfg, device):
-    data = load_dataset(cfg["dataset"])
-    split = cfg.get("split", "random")
-    if split == "random":
-        set_seed(cfg.get("seed", 42))
-    data = apply_split(data, split, cfg["dataset"])
+    cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
+    data = load_or_create_split(
+        cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
+    )
     return data.to(device)
 
 

@@ -1,9 +1,55 @@
 import logging
+import os
+import random
+
 import numpy as np
 import torch
 from torch_geometric.utils import degree, to_dense_adj
 
 log = logging.getLogger(__name__)
+
+
+def load_or_create_split(dataset_cfg, split: str, seed: int,
+                         cache_dir: str = "dataset_cache"):
+    """Return a split Data object, loading from disk cache if available.
+
+    Cache path: ``{cache_dir}/{name}_{split}_{CC|noCC}_seed{seed}.pt``
+
+    For public+noCC the split is deterministic, but we still key by seed so
+    the call signature is uniform. Both ``main.py`` and analysis scripts can
+    call this with the same arguments and are guaranteed to get the same
+    train/val/test masks.
+    """
+    from dataset import load_dataset
+
+    cc_tag = "CC" if dataset_cfg.get("use_cc", False) else "noCC"
+    name   = dataset_cfg["name"]
+    fname  = f"{name}_{split}_{cc_tag}_seed{seed}.pt"
+    path   = os.path.join(cache_dir, fname)
+
+    if os.path.exists(path):
+        log.info("Loading cached split: %s", path)
+        return torch.load(path, weights_only=False)
+
+    log.info("No cache found — creating split and saving to %s", path)
+    _set_seed(seed)
+    data = load_dataset(dataset_cfg)
+    if split == "random":
+        pass  # seed already set; apply_split will draw from current RNG state
+    data = apply_split(data, split, dataset_cfg)
+
+    os.makedirs(cache_dir, exist_ok=True)
+    torch.save(data, path)
+    log.info("Cached split saved: %s", path)
+    return data
+
+
+def _set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def apply_split(data, split, dataset_cfg):
