@@ -208,25 +208,30 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         node_x, k_hops, data.edge_index, N, I_x.device,
     )
 
-    header = (
-        "  hop | |S_i| | total_inf   | same_inf    | diff_inf    |"
-        " same/tot | diff/tot | #same_tr | #diff_tr | #non_tr"
-        " | purity | same_degs | diff_degs"
-    )
-    log.info(header)
-
     import math
-    focal_deg = degree  # degree of node_x
+    from prettytable import PrettyTable
+
+    focal_deg = degree
 
     def _deg_weight_list(nodes):
         if not nodes:
-            return "[]"
+            return "—"
         tuples = sorted(
             (int(all_deg[n].item()),
              round(1.0 / math.sqrt((int(all_deg[n].item()) + 1) * (focal_deg + 1)), 4))
             for n in nodes
         )
         return str(tuples)
+
+    table = PrettyTable()
+    table.field_names = [
+        "hop", "|S_i|", "total_inf", "same_inf", "diff_inf",
+        "same/tot", "diff/tot", "#same_tr", "#diff_tr", "#non_tr",
+        "purity", "same (deg, w)", "diff (deg, w)",
+    ]
+    table.align = "r"
+    table.align["same (deg, w)"] = "l"
+    table.align["diff (deg, w)"] = "l"
 
     rows = []
     for i, S_i in enumerate(hop_subsets):
@@ -240,24 +245,25 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         n_diff     = len(diff_nodes)
         n_non      = size - n_same - n_diff
 
-        same_inf = float(I_x[same_nodes].sum().item()) if same_nodes else 0.0
-        diff_inf = float(I_x[diff_nodes].sum().item()) if diff_nodes else 0.0
+        same_inf  = float(I_x[same_nodes].sum().item()) if same_nodes else 0.0
+        diff_inf  = float(I_x[diff_nodes].sum().item()) if diff_nodes else 0.0
         frac_same = same_inf / total if total > 0 else 0.0
         frac_diff = diff_inf / total if total > 0 else 0.0
-
-        same_degs = _deg_weight_list(same_nodes)
-        diff_degs = _deg_weight_list(diff_nodes)
 
         same_label = sum(1 for n in S_set if int(y[n].item()) == true_lbl)
         purity = same_label / size if size > 0 else float("nan")
 
-        log.info(
-            "   %d  | %5d | %.4f  | %.4f  | %.4f  |  %.4f  |  %.4f  |  %5d   |  %5d   |  %5d"
-            "  | %.3f  | %s | %s",
-            i, size, total, same_inf, diff_inf,
-            frac_same, frac_diff, n_same, n_diff, n_non,
-            purity, same_degs, diff_degs,
-        )
+        same_degs = _deg_weight_list(same_nodes)
+        diff_degs = _deg_weight_list(diff_nodes)
+
+        table.add_row([
+            i, size,
+            f"{total:.4e}", f"{same_inf:.4e}", f"{diff_inf:.4e}",
+            f"{frac_same:.4f}", f"{frac_diff:.4f}",
+            n_same, n_diff, n_non,
+            f"{purity:.3f}",
+            same_degs, diff_degs,
+        ])
         rows.append({
             "hop": i, "size": size, "total_inf": total,
             "same_inf": same_inf, "diff_inf": diff_inf,
@@ -266,6 +272,9 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
             "purity": purity,
             "same_degs": same_degs, "diff_degs": diff_degs,
         })
+
+    for line in table.get_string().splitlines():
+        log.info(line)
 
     return {
         "node_idx": node_x, "degree": degree,
