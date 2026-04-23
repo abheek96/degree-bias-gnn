@@ -1,0 +1,19 @@
+dataset:
+  name: Chameleon
+  use_cc: false         # Chameleon is a single connected component
+
+model:
+  name: GCN
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+
+train:
+  lr: 0.01
+  weight_decay: 5e-4
+  epochs: 500
+  patience: 100
+
+plot:
+  layer_values: [1, 2, 3, 4]
+  compare_models: [GCN]

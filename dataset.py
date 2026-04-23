@@ -1,7 +1,7 @@
 import logging
 
 import torch
-from torch_geometric.datasets import Planetoid, Amazon, Coauthor, WikiCS
+from torch_geometric.datasets import Planetoid, Amazon, Coauthor, WikiCS, WikipediaNetwork
 from torch_geometric.transforms import LargestConnectedComponents
 from torch_geometric.utils import to_networkx
 import networkx as nx
@@ -16,7 +16,11 @@ DATASET_REGISTRY = {
     "Photo": lambda root: Amazon(root=root, name="Photo"),
     "CS": lambda root: Coauthor(root=root, name="CS"),
     "Physics": lambda root: Coauthor(root=root, name="Physics"),
-    "WikiCS": lambda root: WikiCS(root=root),
+    "WikiCS":    lambda root: WikiCS(root=root),
+    "Chameleon": lambda root: WikipediaNetwork(root=root, name="chameleon",
+                                               geom_gcn_preprocess=False),
+    "Squirrel":  lambda root: WikipediaNetwork(root=root, name="squirrel",
+                                               geom_gcn_preprocess=False),
 }
 
 
