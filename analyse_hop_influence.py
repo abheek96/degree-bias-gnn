@@ -226,6 +226,7 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     table = PrettyTable()
     table.field_names = [
         "hop", "|S_i|", "total_inf", "same_inf", "diff_inf",
+        "same_unlab_inf", "diff_unlab_inf",
         "same/tot", "diff/tot", "#same_tr", "#diff_tr", "#non_tr",
         "purity", "same (deg, w)", "diff (deg, w)",
     ]
@@ -250,6 +251,12 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         frac_same = same_inf / total if total > 0 else 0.0
         frac_diff = diff_inf / total if total > 0 else 0.0
 
+        # unlabelled (non-training) nodes split by class
+        unlab_same = [n for n in S_set if n not in train_set and int(y[n].item()) == true_lbl]
+        unlab_diff = [n for n in S_set if n not in train_set and int(y[n].item()) != true_lbl]
+        same_unlab_inf = float(I_x[unlab_same].sum().item()) if unlab_same else 0.0
+        diff_unlab_inf = float(I_x[unlab_diff].sum().item()) if unlab_diff else 0.0
+
         same_label = sum(1 for n in S_set if int(y[n].item()) == true_lbl)
         purity = same_label / size if size > 0 else float("nan")
 
@@ -258,7 +265,8 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
 
         table.add_row([
             i, size,
-            f"{total:.4f}", f"{same_inf:.4f}", f"{diff_inf:.4f}",
+            f"{total:.4e}", f"{same_inf:.4e}", f"{diff_inf:.4e}",
+            f"{same_unlab_inf:.4e}", f"{diff_unlab_inf:.4e}",
             f"{frac_same:.4f}", f"{frac_diff:.4f}",
             n_same, n_diff, n_non,
             f"{purity:.3f}",
@@ -267,6 +275,7 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         rows.append({
             "hop": i, "size": size, "total_inf": total,
             "same_inf": same_inf, "diff_inf": diff_inf,
+            "same_unlab_inf": same_unlab_inf, "diff_unlab_inf": diff_unlab_inf,
             "frac_same": frac_same, "frac_diff": frac_diff,
             "n_same_train": n_same, "n_diff_train": n_diff, "n_non_train": n_non,
             "purity": purity,
