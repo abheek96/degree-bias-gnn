@@ -252,7 +252,7 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         purity = same_label / size if size > 0 else float("nan")
 
         log.info(
-            "   %d  | %5d | %.4e  | %.4e  | %.4e  |  %.4f  |  %.4f  |  %5d   |  %5d   |  %5d"
+            "   %d  | %5d | %.4f  | %.4f  | %.4f  |  %.4f  |  %.4f  |  %5d   |  %5d   |  %5d"
             "  | %.3f  | %s | %s",
             i, size, total, same_inf, diff_inf,
             frac_same, frac_diff, n_same, n_diff, n_non,
