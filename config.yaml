@@ -3,7 +3,7 @@ num_runs: 10
 device: 'cuda'
 
 results_dir: ./results
-split: 'random'        # random, public, or custom
+split: 'public'        # random, public, or custom
 
 dataset:
   name: Cora
@@ -47,8 +47,8 @@ plot:
   inspect_nodes: []             # node indices to inspect aggregation neighborhood, e.g. [42, 1362]
   feature_similarity: false      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
   influence_disparity: false     # disparity for ALL test nodes (expensive: one Jacobian per node)
-  train_neighbor_degree: true  # degree distribution of same vs diff training neighbors
-  train_1hop_deg_accuracy: true  # 1-hop training-neighbor degree boxplots + accuracy overlay
-  max_same_train_deg: true       # boxplots of max same-class training-neighbor degree per degree group
+  train_neighbor_degree: false  # degree distribution of same vs diff training neighbors
+  train_1hop_deg_accuracy: false  # 1-hop training-neighbor degree boxplots + accuracy overlay
+  max_same_train_deg: false       # boxplots of max same-class training-neighbor degree per degree group
   save: true
   show: false
