@@ -36,8 +36,7 @@ from torch_geometric.utils import degree as graph_degree
 import pandas as pd
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 
-from dataset import load_dataset
-from dataset_utils import apply_split
+from dataset_utils import load_or_create_split
 from influence import _analyse_node, _khop_distances
 from models import get_model
 from train import train
@@ -251,13 +250,10 @@ def print_khop_neighborhood(node: int, data, all_deg, pred, y,
 
 
 def run_analysis(cfg, deg_min: int, deg_max: int, device: torch.device):
-    data = load_dataset(cfg["dataset"])
-
-    split = cfg.get("split", "random")
-    if split == "random":
-        set_seed(cfg.get("seed", 42))
-    data = apply_split(data, split, cfg["dataset"])
-    data = data.to(device)
+    cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
+    data = load_or_create_split(
+        cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
+    ).to(device)
 
     all_deg = graph_degree(data.edge_index[1], data.num_nodes).cpu()
     k_hops  = cfg["model"]["num_layers"] - 1
