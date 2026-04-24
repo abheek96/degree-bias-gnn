@@ -321,7 +321,7 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
         figsize=(_fig_w(len(all_degrees)), 5),
     )
 
-    bp = ax_main.boxplot(per_run_means, positions=pos, widths=0.6, **_BP_KWARGS)
+    bp = ax_main.boxplot(per_run_means, positions=pos, widths=0.6, whis=(0, 100), **_BP_KWARGS)
     for patch in bp["boxes"]:
         patch.set_facecolor("#5b9bd5")
         patch.set_alpha(0.72)
