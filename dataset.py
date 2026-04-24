@@ -56,6 +56,14 @@ def load_dataset(dataset_cfg):
         data = LargestConnectedComponents()(data)
         log.info("Filtered to largest connected component: %d nodes", data.num_nodes)
 
+    norm = dataset_cfg.get("normalize_features", None)
+    if norm == "l1":
+        data.x = data.x / data.x.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        log.info("Feature normalization: L1 (row-sum)")
+    elif norm == "l2":
+        data.x = data.x / data.x.norm(dim=1, keepdim=True).clamp(min=1e-8)
+        log.info("Feature normalization: L2 (row-norm)")
+
     log.info("Dataset: %s  Nodes: %d  Edges: %d  Features: %d  Classes: %d",
              name, data.num_nodes, data.num_edges, data.num_node_features, dataset.num_classes)
 

@@ -1,6 +1,7 @@
 dataset:
   name: Chameleon
   use_cc: false         # Chameleon is a single connected component
+  normalize_features: l1
 
 model:
   name: GCN
