@@ -285,12 +285,12 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         purity = same_label / size if size > 0 else float("nan")
 
         # raw influences
-        same_inf       = float(I_x[same_nodes].sum().item())  if same_nodes  else 0.0
-        diff_inf       = float(I_x[diff_nodes].sum().item())  if diff_nodes  else 0.0
-        same_unlab_inf = float(I_x[unlab_same].sum().item())  if unlab_same  else 0.0
-        diff_unlab_inf = float(I_x[unlab_diff].sum().item())  if unlab_diff  else 0.0
-        frac_same_raw  = same_inf / total if total > 0 else 0.0
-        frac_diff_raw  = diff_inf / total if total > 0 else 0.0
+        same_lab_infl = float(I_x[same_nodes].sum().item())  if same_nodes  else 0.0
+        diff_labl_infl       = float(I_x[diff_nodes].sum().item())  if diff_nodes  else 0.0
+        same_unlab_infl = float(I_x[unlab_same].sum().item())  if unlab_same  else 0.0
+        diff_unlab_infl = float(I_x[unlab_diff].sum().item())  if unlab_diff  else 0.0
+        frac_same_raw  = same_lab_infl / total if total > 0 else 0.0
+        frac_diff_raw  = diff_labl_infl / total if total > 0 else 0.0
 
         # effective influences
         same_eff       = float(eff_I_x[same_nodes].sum().item()) if same_nodes  else 0.0
@@ -304,24 +304,24 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         tail   = [n_same, n_diff, n_non, f"{purity:.3f}"]
 
         table_raw.add_row(common + [
-            f"{same_inf:.4e}", f"{diff_inf:.4e}",
-            f"{same_unlab_inf:.4e}", f"{diff_unlab_inf:.4e}",
+            f"{same_lab_infl:.4f}", f"{diff_labl_infl:.4f}",
+            f"{same_unlab_infl:.4f}", f"{diff_unlab_infl:.4f}",
             f"{frac_same_raw:.4f}", f"{frac_diff_raw:.4f}",
         ] + tail + [_raw_tuples(same_nodes), _raw_tuples(diff_nodes)])
 
         table_eff.add_row(common + [
-            f"{same_eff:.4e}", f"{diff_eff:.4e}",
-            f"{same_unlab_eff:.4e}", f"{diff_unlab_eff:.4e}",
+            f"{same_eff:.4f}", f"{diff_eff:.4f}",
+            f"{same_unlab_eff:.4f}", f"{diff_unlab_eff:.4f}",
             f"{frac_same_eff:.4f}", f"{frac_diff_eff:.4f}",
         ] + tail + [_eff_tuples(same_nodes), _eff_tuples(diff_nodes)])
 
         rows.append({
             "hop": i, "size": size, "total_inf": total,
-            "same_inf": same_inf, "diff_inf": diff_inf,
-            "same_unlab_inf": same_unlab_inf, "diff_unlab_inf": diff_unlab_inf,
+            "same_lab_infl": same_lab_infl, "diff_labl_infl": diff_labl_infl,
+            "same_unlab_infl": same_unlab_infl, "diff_unlab_infl": diff_unlab_infl,
             "frac_same": frac_same_raw, "frac_diff": frac_diff_raw,
-            "same_eff_inf": same_eff, "diff_eff_inf": diff_eff,
-            "same_unlab_eff_inf": same_unlab_eff, "diff_unlab_eff_inf": diff_unlab_eff,
+            "same_eff": same_eff, "diff_eff": diff_eff,
+            "same_unlab_eff": same_unlab_eff, "diff_unlab_eff": diff_unlab_eff,
             "frac_same_eff": frac_same_eff, "frac_diff_eff": frac_diff_eff,
             "n_same_train": n_same, "n_diff_train": n_diff, "n_non_train": n_non,
             "purity": purity,
