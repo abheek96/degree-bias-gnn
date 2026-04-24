@@ -1,12 +1,12 @@
 model:
   name: GCN
-  hidden_dim: 512
+  hidden_dim: 64
   num_layers: 3
-  dropout: 0.7
+  dropout: 0.8
 
 train:
-  lr: 0.001
-  weight_decay: 5e-4
+  lr: 0.01
+  weight_decay: 1e-3
   epochs: 500
   patience: 50
 

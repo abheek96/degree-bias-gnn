@@ -1,0 +1,19 @@
+dataset:
+  name: Squirrel
+  use_cc: false         # Squirrel is a single connected component
+
+model:
+  name: GCN
+  hidden_dim: 256
+  num_layers: 5
+  dropout: 0.7
+
+train:
+  lr: 0.01
+  weight_decay: 0.0
+  epochs: 200
+  patience: 20
+
+plot:
+  layer_values: [1, 2, 3, 4]
+  compare_models: [GCN]

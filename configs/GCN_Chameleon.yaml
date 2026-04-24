@@ -5,15 +5,15 @@ dataset:
 
 model:
   name: GCN
-  hidden_dim: 64
-  num_layers: 2
-  dropout: 0.5
+  hidden_dim: 32
+  num_layers: 6
+  dropout: 0.0
 
 train:
   lr: 0.01
-  weight_decay: 5e-4
+  weight_decay: 0.0
   epochs: 500
-  patience: 100
+  patience: 20
 
 plot:
   layer_values: [1, 2, 3, 4]
