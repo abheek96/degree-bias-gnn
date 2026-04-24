@@ -7,3 +7,5 @@ csv_exports/
 dataset_cache/Chameleon_public_noCC_seed42.pt
 dataset_cache/*
 *.pt
+results/*
+*.md
