@@ -326,6 +326,17 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
         patch.set_facecolor("#5b9bd5")
         patch.set_alpha(0.72)
 
+    # Strip plot: jitter each run's mean so every value is explicitly visible
+    rng = np.random.default_rng(0)
+    for xi, means in zip(pos, per_run_means):
+        clean = [m for m in means if not np.isnan(m)]
+        if not clean:
+            continue
+        jitter = rng.uniform(-0.18, 0.18, size=len(clean))
+        ax_main.scatter(xi + jitter, clean,
+                        s=18, color="#1a5276", alpha=0.6,
+                        edgecolors="white", linewidths=0.3, zorder=5)
+
     _count_bars(ax_main, pos, counts)
     ax_main.axhline(overall, color="dimgrey", lw=1.0, ls=":",
                     label=f"Mean test acc ({overall:.1%})", zorder=2)
