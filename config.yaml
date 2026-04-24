@@ -3,7 +3,7 @@ num_runs: 10
 device: 'cuda'
 
 results_dir: ./results
-split: 'public'        # random, public, or custom
+split: 'random'        # random, public, or custom
 
 dataset:
   name: PubMed
@@ -15,15 +15,15 @@ dataset:
 
 model:
   name: GCN
-  hidden_dim: 512
-  num_layers: 2
-  dropout: 0.0
+  hidden_dim: 64
+  num_layers: 3
+  dropout: 0.8
 
 train:
-  lr: 0.001
-  weight_decay: 5e-4
-  epochs: 1000      # safety cap; loop stops early when train acc = 100%
-  patience: 200        # disabled — stopping criterion is train accuracy, not val
+  lr: 0.01
+  weight_decay: 1e-3
+  epochs: 500      # safety cap; loop stops early when train acc = 100%
+  patience: 50        # disabled — stopping criterion is train accuracy, not val
 
 plot:
   acc_vs_degree: true
