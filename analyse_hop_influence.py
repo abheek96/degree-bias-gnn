@@ -211,17 +211,10 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     import math
     from prettytable import PrettyTable
 
-    focal_deg = degree
-
-    # Effective influence: I_x[n] * w(n, focal), w = 1/sqrt((deg_n+1)*(focal_deg+1))
-    deg_vec = all_deg.to(I_x.device).float()
-    w_vec   = 1.0 / torch.sqrt((deg_vec + 1) * (focal_deg + 1))
-    eff_I_x = I_x * w_vec  # [N]
-
     def _edge_weight(n):
-        return 1.0 / math.sqrt((int(all_deg[n].item()) + 1) * (focal_deg + 1))
+        return 1.0 / math.sqrt((int(all_deg[n].item()) + 1) * (degree + 1))
 
-    def _raw_tuples(nodes):
+    def _node_tuples(nodes):
         if not nodes:
             return "—"
         return str(sorted(
@@ -231,40 +224,18 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
             for n in nodes
         ))
 
-    def _eff_tuples(nodes):
-        if not nodes:
-            return "—"
-        return str(sorted(
-            (int(all_deg[n].item()),
-             round(float(I_x[n].item()), 6),
-             round(_edge_weight(n), 4),
-             round(float(eff_I_x[n].item()), 6))
-            for n in nodes
-        ))
-
-    FIELDS_RAW = [
+    FIELDS = [
         "hop", "|S_i|", "total_inf", "same_inf", "diff_inf",
         "same_unlab_inf", "diff_unlab_inf",
         "same/tot", "diff/tot", "#same_tr", "#diff_tr", "#non_tr",
         "purity", "same (deg, inf, w)", "diff (deg, inf, w)",
     ]
-    FIELDS_EFF = [
-        "hop", "|S_i|", "total_inf", "same_eff_inf", "diff_eff_inf",
-        "same_unlab_eff_inf", "diff_unlab_eff_inf",
-        "same/tot", "diff/tot", "#same_tr", "#diff_tr", "#non_tr",
-        "purity", "same (deg, inf, w, eff)", "diff (deg, inf, w, eff)",
-    ]
 
-    def _make_table(fields):
-        t = PrettyTable()
-        t.field_names = fields
-        t.align = "r"
-        t.align[fields[-2]] = "l"
-        t.align[fields[-1]] = "l"
-        return t
-
-    table_raw = _make_table(FIELDS_RAW)
-    table_eff = _make_table(FIELDS_EFF)
+    table = PrettyTable()
+    table.field_names = FIELDS
+    table.align = "r"
+    table.align[FIELDS[-2]] = "l"
+    table.align[FIELDS[-1]] = "l"
 
     rows = []
     for i, S_i in enumerate(hop_subsets):
@@ -284,54 +255,32 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         same_label = sum(1 for n in S_set if int(y[n].item()) == true_lbl)
         purity = same_label / size if size > 0 else float("nan")
 
-        # raw influences
-        same_lab_infl = float(I_x[same_nodes].sum().item())  if same_nodes  else 0.0
-        diff_labl_infl       = float(I_x[diff_nodes].sum().item())  if diff_nodes  else 0.0
-        same_unlab_infl = float(I_x[unlab_same].sum().item())  if unlab_same  else 0.0
-        diff_unlab_infl = float(I_x[unlab_diff].sum().item())  if unlab_diff  else 0.0
-        frac_same_raw  = same_lab_infl / total if total > 0 else 0.0
-        frac_diff_raw  = diff_labl_infl / total if total > 0 else 0.0
+        same_inf     = float(I_x[same_nodes].sum().item()) if same_nodes else 0.0
+        diff_inf     = float(I_x[diff_nodes].sum().item()) if diff_nodes else 0.0
+        same_unlab_inf = float(I_x[unlab_same].sum().item()) if unlab_same else 0.0
+        diff_unlab_inf = float(I_x[unlab_diff].sum().item()) if unlab_diff else 0.0
+        frac_same    = same_inf / total if total > 0 else 0.0
+        frac_diff    = diff_inf / total if total > 0 else 0.0
 
-        # effective influences
-        same_eff       = float(eff_I_x[same_nodes].sum().item()) if same_nodes  else 0.0
-        diff_eff       = float(eff_I_x[diff_nodes].sum().item()) if diff_nodes  else 0.0
-        same_unlab_eff = float(eff_I_x[unlab_same].sum().item()) if unlab_same  else 0.0
-        diff_unlab_eff = float(eff_I_x[unlab_diff].sum().item()) if unlab_diff  else 0.0
-        frac_same_eff  = same_eff / total if total > 0 else 0.0
-        frac_diff_eff  = diff_eff / total if total > 0 else 0.0
-
-        common = [i, size, f"{total:.4e}"]
-        tail   = [n_same, n_diff, n_non, f"{purity:.3f}"]
-
-        table_raw.add_row(common + [
-            f"{same_lab_infl:.4f}", f"{diff_labl_infl:.4f}",
-            f"{same_unlab_infl:.4f}", f"{diff_unlab_infl:.4f}",
-            f"{frac_same_raw:.4f}", f"{frac_diff_raw:.4f}",
-        ] + tail + [_raw_tuples(same_nodes), _raw_tuples(diff_nodes)])
-
-        table_eff.add_row(common + [
-            f"{same_eff:.4f}", f"{diff_eff:.4f}",
-            f"{same_unlab_eff:.4f}", f"{diff_unlab_eff:.4f}",
-            f"{frac_same_eff:.4f}", f"{frac_diff_eff:.4f}",
-        ] + tail + [_eff_tuples(same_nodes), _eff_tuples(diff_nodes)])
+        table.add_row([
+            i, size, f"{total:.4e}",
+            f"{same_inf:.4f}", f"{diff_inf:.4f}",
+            f"{same_unlab_inf:.4f}", f"{diff_unlab_inf:.4f}",
+            f"{frac_same:.4f}", f"{frac_diff:.4f}",
+            n_same, n_diff, n_non, f"{purity:.3f}",
+            _node_tuples(same_nodes), _node_tuples(diff_nodes),
+        ])
 
         rows.append({
             "hop": i, "size": size, "total_inf": total,
-            "same_lab_infl": same_lab_infl, "diff_labl_infl": diff_labl_infl,
-            "same_unlab_infl": same_unlab_infl, "diff_unlab_infl": diff_unlab_infl,
-            "frac_same": frac_same_raw, "frac_diff": frac_diff_raw,
-            "same_eff": same_eff, "diff_eff": diff_eff,
-            "same_unlab_eff": same_unlab_eff, "diff_unlab_eff": diff_unlab_eff,
-            "frac_same_eff": frac_same_eff, "frac_diff_eff": frac_diff_eff,
+            "same_inf": same_inf, "diff_inf": diff_inf,
+            "same_unlab_inf": same_unlab_inf, "diff_unlab_inf": diff_unlab_inf,
+            "frac_same": frac_same, "frac_diff": frac_diff,
             "n_same_train": n_same, "n_diff_train": n_diff, "n_non_train": n_non,
             "purity": purity,
         })
 
-    log.info("── Raw influence ──────────────────────────────────────────")
-    for line in table_raw.get_string().splitlines():
-        log.info(line)
-    log.info("── Effective influence  (I_x[n] × edge_weight) ───────────")
-    for line in table_eff.get_string().splitlines():
+    for line in table.get_string().splitlines():
         log.info(line)
 
     return {
