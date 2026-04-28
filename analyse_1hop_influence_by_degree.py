@@ -67,16 +67,26 @@ log = logging.getLogger(__name__)
 # ── computation ────────────────────────────────────────────────────────────────
 
 def _compute_all(model, data, pred, k_hops, device):
-    """Compute 1-hop total_same, total_diff, purity for every test node.
+    """Compute per-test-node 1-hop influence and purity metrics.
 
-    Returns a list of dicts, one per test node (skips nodes with no 1-hop
-    neighbours, i.e. isolated nodes that survived CC filtering).
+    For each test node returns:
+      total_same      — I_x sum over all same-class 1-hop nodes (lbl + unlbl)
+      total_diff      — I_x sum over all diff-class 1-hop nodes (lbl + unlbl)
+      infl_balance    — total_same - total_diff
+      lbl_frac_balance— same_lbl_infl/total_1hop_infl - diff_lbl_infl/total_1hop_infl
+      purity_1        — fraction of 1-hop ring that is same-class
+      purity_2        — fraction of 2-hop ring that is same-class (structural BFS)
+      purity_delta    — purity_2 - purity_1  (NaN if 2-hop ring is empty)
+      correct         — whether the model predicts this node correctly
+
+    Skips test nodes with no 1-hop neighbours.
     """
     N          = data.num_nodes
     y          = data.y.cpu()
     pred_cpu   = pred.cpu()
     all_deg    = graph_degree(data.edge_index[1], N).cpu()
     test_mask  = data.test_mask.cpu()
+    train_set  = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
     test_idx   = test_mask.nonzero(as_tuple=False).view(-1).tolist()
 
     model.eval()
@@ -90,6 +100,7 @@ def _compute_all(model, data, pred, k_hops, device):
         true_lbl = int(y[node_x].item())
 
         I_x         = influence_distribution(model, data, node_x, k_hops)
+        # 1-hop subsets from model receptive field
         hop_subsets = k_hop_subsets_exact(
             node_x, k_hops, data.edge_index, N, I_x.device,
         )
@@ -98,21 +109,48 @@ def _compute_all(model, data, pred, k_hops, device):
             continue  # no 1-hop neighbours
 
         S_1 = hop_subsets[1].tolist()
-        same_nodes = [n for n in S_1 if int(y[n].item()) == true_lbl]
-        diff_nodes = [n for n in S_1 if int(y[n].item()) != true_lbl]
+        same_1 = [n for n in S_1 if int(y[n].item()) == true_lbl]
+        diff_1 = [n for n in S_1 if int(y[n].item()) != true_lbl]
 
-        total_same = float(I_x[same_nodes].sum().item()) if same_nodes else 0.0
-        total_diff = float(I_x[diff_nodes].sum().item()) if diff_nodes else 0.0
-        purity     = len(same_nodes) / len(S_1)
-        correct    = int(pred_cpu[node_x].item()) == true_lbl
+        total_same = float(I_x[same_1].sum().item()) if same_1 else 0.0
+        total_diff = float(I_x[diff_1].sum().item()) if diff_1 else 0.0
+
+        # labelled (training) fractions of total hop-1 influence
+        same_lbl_1   = [n for n in same_1 if n in train_set]
+        diff_lbl_1   = [n for n in diff_1 if n in train_set]
+        total_1_infl = float(I_x[S_1].sum().item())
+        if total_1_infl > 0:
+            lbl_frac_balance = (
+                float(I_x[same_lbl_1].sum().item()) / total_1_infl
+                - float(I_x[diff_lbl_1].sum().item()) / total_1_infl
+            )
+        else:
+            lbl_frac_balance = 0.0
+
+        purity_1 = len(same_1) / len(S_1)
+
+        # 2-hop ring — always computed structurally (BFS, independent of k_hops)
+        hop2_subsets = k_hop_subsets_exact(
+            node_x, 2, data.edge_index, N, I_x.device,
+        )
+        if len(hop2_subsets) >= 3 and len(hop2_subsets[2]) > 0:
+            S_2      = hop2_subsets[2].tolist()
+            same_2   = sum(1 for n in S_2 if int(y[n].item()) == true_lbl)
+            purity_2 = same_2 / len(S_2)
+        else:
+            purity_2 = float("nan")
 
         records.append({
-            "node_idx":   node_x,
-            "degree":     int(all_deg[node_x].item()),
-            "total_same": total_same,
-            "total_diff": total_diff,
-            "purity":     purity,
-            "correct":    correct,
+            "node_idx":         node_x,
+            "degree":           int(all_deg[node_x].item()),
+            "total_same":       total_same,
+            "total_diff":       total_diff,
+            "infl_balance":     total_same - total_diff,
+            "lbl_frac_balance": lbl_frac_balance,
+            "purity_1":         purity_1,
+            "purity_2":         purity_2,
+            "purity_delta":     purity_2 - purity_1 if not np.isnan(purity_2) else float("nan"),
+            "correct":          int(pred_cpu[node_x].item()) == true_lbl,
         })
 
     log.info("  Done — %d / %d test nodes had 1-hop neighbours", len(records), n_test)
@@ -120,15 +158,21 @@ def _compute_all(model, data, pred, k_hops, device):
 
 
 def _aggregate_by_degree(records):
-    """Group records by degree → lists of total_same, total_diff, purity, acc."""
+    """Group records by degree."""
     by_deg = defaultdict(lambda: {
-        "total_same": [], "total_diff": [], "purity": [], "correct": []
+        "total_same": [], "total_diff": [],
+        "infl_balance": [], "lbl_frac_balance": [],
+        "purity_1": [], "purity_delta": [], "correct": [],
     })
     for r in records:
         d = r["degree"]
         by_deg[d]["total_same"].append(r["total_same"])
         by_deg[d]["total_diff"].append(r["total_diff"])
-        by_deg[d]["purity"].append(r["purity"])
+        by_deg[d]["infl_balance"].append(r["infl_balance"])
+        by_deg[d]["lbl_frac_balance"].append(r["lbl_frac_balance"])
+        by_deg[d]["purity_1"].append(r["purity_1"])
+        if not np.isnan(r["purity_delta"]):
+            by_deg[d]["purity_delta"].append(r["purity_delta"])
         by_deg[d]["correct"].append(float(r["correct"]))
     return by_deg
 
@@ -181,13 +225,13 @@ def _plot(by_deg, cfg, seed, save_dir, show):
 
     ax_r = ax.twinx()
 
-    pur_med = np.array([np.median(by_deg[d]["purity"]) for d in all_degrees])
-    pur_q1  = np.array([np.percentile(by_deg[d]["purity"], 25) for d in all_degrees])
-    pur_q3  = np.array([np.percentile(by_deg[d]["purity"], 75) for d in all_degrees])
+    pur_med = np.array([np.median(by_deg[d]["purity_1"]) for d in all_degrees])
+    pur_q1  = np.array([np.percentile(by_deg[d]["purity_1"], 25) for d in all_degrees])
+    pur_q3  = np.array([np.percentile(by_deg[d]["purity_1"], 75) for d in all_degrees])
     acc     = np.array([np.mean(by_deg[d]["correct"]) for d in all_degrees])
 
     ax_r.plot(pos, pur_med, color=_PURITY_COLOR, linewidth=1.5,
-              label="Purity (hop 1, median ± IQR)")
+              label="Purity hop 1 (median ± IQR)")
     ax_r.fill_between(pos, pur_q1, pur_q3, color=_PURITY_COLOR, alpha=0.18)
     ax_r.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
               marker="o", markersize=4, label="Accuracy")
@@ -196,7 +240,6 @@ def _plot(by_deg, cfg, seed, save_dir, show):
     ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax_r.set_ylabel("Purity / Accuracy", fontsize=11)
 
-    # combined legend from both axes
     handles_l, labels_l = ax.get_legend_handles_labels()
     handles_r, labels_r = ax_r.get_legend_handles_labels()
     ax.legend(handles_l + handles_r, labels_l + labels_r,
@@ -212,6 +255,97 @@ def _plot(by_deg, cfg, seed, save_dir, show):
 
     prefix    = f"{dataset}_{model}"
     fname     = f"{prefix}_1hop_influence_by_degree_seed{seed}.png"
+    save_path = _subdir(save_dir, "1hop_influence_by_degree")
+    _save(fig, save_path, fname, show)
+
+
+def _plot_delta(by_deg, cfg, seed, save_dir, show):
+    """Single-panel plot of per-degree influence and purity deltas.
+
+    Left y-axis  — boxplots of (total_same - total_diff) per degree group.
+    Right y-axis — median ± IQR lines for:
+                     (same_lbl/tot - diff_lbl/tot)  labelled influence balance
+                     purity_delta = purity(hop 2) - purity(hop 1)
+                   and accuracy line.
+    """
+    all_degrees = sorted(by_deg.keys())
+    n_deg       = len(all_degrees)
+    pos         = np.arange(n_deg, dtype=float)
+
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+
+    fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
+
+    # ── left y-axis: influence balance boxplots ───────────────────────────────
+
+    bp_kwargs = {**_BP_KWARGS}
+    bp_kwargs["flierprops"] = dict(marker="", markersize=0)
+
+    infl_bal_data = [by_deg[d]["infl_balance"] for d in all_degrees]
+
+    bp = ax.boxplot(
+        infl_bal_data,
+        positions=pos,
+        widths=0.55,
+        whis=(0, 100),
+        **bp_kwargs,
+    )
+    _BOX_COLOR = "#546E7A"
+    for patch in bp["boxes"]:
+        patch.set_facecolor(_BOX_COLOR)
+        patch.set_alpha(0.65)
+    for component in ("whiskers", "caps", "medians"):
+        for line in bp[component]:
+            line.set_color(_BOX_COLOR)
+
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
+    ax.plot([], [], color=_BOX_COLOR, linewidth=4, alpha=0.65,
+            label="total_same − total_diff (hop 1)")
+    ax.set_ylabel("Influence balance  (same − diff)", fontsize=11)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    # ── right y-axis: normalised lines ───────────────────────────────────────
+
+    ax_r = ax.twinx()
+
+    def _line_iqr(key, color, label):
+        vals = [by_deg[d][key] for d in all_degrees]
+        med  = np.array([np.median(v) if v else np.nan for v in vals])
+        q1   = np.array([np.percentile(v, 25) if v else np.nan for v in vals])
+        q3   = np.array([np.percentile(v, 75) if v else np.nan for v in vals])
+        ax_r.plot(pos, med, color=color, linewidth=1.5, label=label)
+        ax_r.fill_between(pos, q1, q3, color=color, alpha=0.18)
+
+    _line_iqr("lbl_frac_balance", "#1976D2",
+               "same_lbl/tot − diff_lbl/tot (median ± IQR)")
+    _line_iqr("purity_delta",     _PURITY_COLOR,
+               "Purity(hop 2) − Purity(hop 1) (median ± IQR)")
+
+    acc = np.array([np.mean(by_deg[d]["correct"]) for d in all_degrees])
+    ax_r.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
+              marker="o", markersize=4, label="Accuracy")
+
+    ax_r.axhline(0, color="black", linewidth=0.6, linestyle=":", alpha=0.4)
+    ax_r.set_ylim(-1.05, 1.05)
+    ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_r.set_ylabel("Normalised value", fontsize=11)
+
+    handles_l, labels_l = ax.get_legend_handles_labels()
+    handles_r, labels_r = ax_r.get_legend_handles_labels()
+    ax.legend(handles_l + handles_r, labels_l + labels_r,
+              loc="upper right", fontsize=9, framealpha=0.85)
+
+    ax.set_title(
+        f"{dataset} · {model} · 1-hop influence balance by degree   (seed={seed})",
+        fontsize=11,
+    )
+    _degree_axis(ax, pos, np.array(all_degrees))
+
+    fig.tight_layout()
+
+    prefix    = f"{dataset}_{model}"
+    fname     = f"{prefix}_1hop_influence_balance_by_degree_seed{seed}.png"
     save_path = _subdir(save_dir, "1hop_influence_by_degree")
     _save(fig, save_path, fname, show)
 
@@ -244,6 +378,7 @@ def run(cfg, device, checkpoint_path, show, save_dir):
     by_deg  = _aggregate_by_degree(records)
 
     _plot(by_deg, cfg, seed, save_dir, show)
+    _plot_delta(by_deg, cfg, seed, save_dir, show)
 
 
 def main():
