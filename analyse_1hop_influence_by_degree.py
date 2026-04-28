@@ -277,45 +277,13 @@ def _plot_delta(by_deg, cfg, seed, save_dir, show):
 
     fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
 
-    # ── left y-axis: influence balance boxplots ───────────────────────────────
-
-    bp_kwargs = {**_BP_KWARGS}
-    bp_kwargs["flierprops"] = dict(marker="", markersize=0)
-
-    infl_bal_data = [by_deg[d]["infl_balance"] for d in all_degrees]
-
-    bp = ax.boxplot(
-        infl_bal_data,
-        positions=pos,
-        widths=0.55,
-        whis=(0, 100),
-        **bp_kwargs,
-    )
-    _BOX_COLOR = "#546E7A"
-    for patch in bp["boxes"]:
-        patch.set_facecolor(_BOX_COLOR)
-        patch.set_alpha(0.65)
-    for component in ("whiskers", "caps", "medians"):
-        for line in bp[component]:
-            line.set_color(_BOX_COLOR)
-
-    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
-    ax.plot([], [], color=_BOX_COLOR, linewidth=4, alpha=0.65,
-            label="total_same − total_diff (hop 1)")
-    ax.set_ylabel("Influence balance  (same − diff)", fontsize=11)
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-
-    # ── right y-axis: normalised lines ───────────────────────────────────────
-
-    ax_r = ax.twinx()
-
     def _line_iqr(key, color, label):
         vals = [by_deg[d][key] for d in all_degrees]
         med  = np.array([np.median(v) if v else np.nan for v in vals])
         q1   = np.array([np.percentile(v, 25) if v else np.nan for v in vals])
         q3   = np.array([np.percentile(v, 75) if v else np.nan for v in vals])
-        ax_r.plot(pos, med, color=color, linewidth=1.5, label=label)
-        ax_r.fill_between(pos, q1, q3, color=color, alpha=0.18)
+        ax.plot(pos, med, color=color, linewidth=1.5, label=label)
+        ax.fill_between(pos, q1, q3, color=color, alpha=0.18)
 
     _line_iqr("lbl_frac_balance", "#1976D2",
                "same_lbl/tot − diff_lbl/tot (median ± IQR)")
@@ -323,18 +291,15 @@ def _plot_delta(by_deg, cfg, seed, save_dir, show):
                "Purity(hop 2) − Purity(hop 1) (median ± IQR)")
 
     acc = np.array([np.mean(by_deg[d]["correct"]) for d in all_degrees])
-    ax_r.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
-              marker="o", markersize=4, label="Accuracy")
+    ax.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
+            marker="o", markersize=4, label="Accuracy")
 
-    ax_r.axhline(0, color="black", linewidth=0.6, linestyle=":", alpha=0.4)
-    ax_r.set_ylim(-1.05, 1.05)
-    ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_r.set_ylabel("Normalised value", fontsize=11)
-
-    handles_l, labels_l = ax.get_legend_handles_labels()
-    handles_r, labels_r = ax_r.get_legend_handles_labels()
-    ax.legend(handles_l + handles_r, labels_l + labels_r,
-              loc="upper right", fontsize=9, framealpha=0.85)
+    ax.axhline(0, color="black", linewidth=0.6, linestyle="--", alpha=0.4)
+    ax.set_ylim(-1.05, 1.05)
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax.set_ylabel("Value", fontsize=11)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
     ax.set_title(
         f"{dataset} · {model} · 1-hop influence balance by degree   (seed={seed})",
