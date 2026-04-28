@@ -9,3 +9,4 @@ dataset_cache/*
 *.pt
 results/*
 *.md
+*.tex
