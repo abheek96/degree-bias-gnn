@@ -225,10 +225,13 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         ))
 
     FIELDS = [
-        "hop", "|S_i|", "total_inf", "same_inf", "diff_inf",
-        "same_unlab_inf", "diff_unlab_inf",
-        "same/tot", "diff/tot", "#same_tr", "#diff_tr", "#non_tr",
-        "purity", "same (deg, inf, w)", "diff (deg, inf, w)",
+        "hop", "|S_i|", "total_infl.",
+        "same_lbl_infl.", "diff_lbl_infl.",
+        "same_unlbl_infl.", "diff_unlbl_infl.",
+        "total_same", "total_diff",
+        "same_lbl/tot", "diff_lbl/tot",
+        "#same_lbl", "#diff_lbl", "#non_lbl",
+        "purity", "same (deg, infl., w)", "diff (deg, infl., w)",
     ]
 
     table = PrettyTable()
@@ -249,34 +252,38 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
         n_diff     = len(diff_nodes)
         n_non      = size - n_same - n_diff
 
-        unlab_same = [n for n in S_set if n not in train_set and int(y[n].item()) == true_lbl]
-        unlab_diff = [n for n in S_set if n not in train_set and int(y[n].item()) != true_lbl]
+        unlbl_same = [n for n in S_set if n not in train_set and int(y[n].item()) == true_lbl]
+        unlbl_diff = [n for n in S_set if n not in train_set and int(y[n].item()) != true_lbl]
 
         same_label = sum(1 for n in S_set if int(y[n].item()) == true_lbl)
         purity = same_label / size if size > 0 else float("nan")
 
-        same_inf     = float(I_x[same_nodes].sum().item()) if same_nodes else 0.0
-        diff_inf     = float(I_x[diff_nodes].sum().item()) if diff_nodes else 0.0
-        same_unlab_inf = float(I_x[unlab_same].sum().item()) if unlab_same else 0.0
-        diff_unlab_inf = float(I_x[unlab_diff].sum().item()) if unlab_diff else 0.0
-        frac_same    = same_inf / total if total > 0 else 0.0
-        frac_diff    = diff_inf / total if total > 0 else 0.0
+        same_lbl_infl  = float(I_x[same_nodes].sum().item()) if same_nodes else 0.0
+        diff_lbl_infl  = float(I_x[diff_nodes].sum().item()) if diff_nodes else 0.0
+        same_unlbl_infl = float(I_x[unlbl_same].sum().item()) if unlbl_same else 0.0
+        diff_unlbl_infl = float(I_x[unlbl_diff].sum().item()) if unlbl_diff else 0.0
+        total_same     = same_lbl_infl + same_unlbl_infl
+        total_diff     = diff_lbl_infl + diff_unlbl_infl
+        frac_same      = same_lbl_infl / total if total > 0 else 0.0
+        frac_diff      = diff_lbl_infl / total if total > 0 else 0.0
 
         table.add_row([
-            i, size, f"{total:.4e}",
-            f"{same_inf:.4f}", f"{diff_inf:.4f}",
-            f"{same_unlab_inf:.4f}", f"{diff_unlab_inf:.4f}",
+            i, size, f"{total:.5f}",
+            f"{same_lbl_infl:.4f}", f"{diff_lbl_infl:.4f}",
+            f"{same_unlbl_infl:.4f}", f"{diff_unlbl_infl:.4f}",
+            f"{total_same:.4f}", f"{total_diff:.4f}",
             f"{frac_same:.4f}", f"{frac_diff:.4f}",
             n_same, n_diff, n_non, f"{purity:.3f}",
             _node_tuples(same_nodes), _node_tuples(diff_nodes),
         ])
 
         rows.append({
-            "hop": i, "size": size, "total_inf": total,
-            "same_inf": same_inf, "diff_inf": diff_inf,
-            "same_unlab_inf": same_unlab_inf, "diff_unlab_inf": diff_unlab_inf,
-            "frac_same": frac_same, "frac_diff": frac_diff,
-            "n_same_train": n_same, "n_diff_train": n_diff, "n_non_train": n_non,
+            "hop": i, "size": size, "total_infl": total,
+            "same_lbl_infl": same_lbl_infl, "diff_lbl_infl": diff_lbl_infl,
+            "same_unlbl_infl": same_unlbl_infl, "diff_unlbl_infl": diff_unlbl_infl,
+            "total_same": total_same, "total_diff": total_diff,
+            "frac_same_lbl": frac_same, "frac_diff_lbl": frac_diff,
+            "n_same_lbl": n_same, "n_diff_lbl": n_diff, "n_non_lbl": n_non,
             "purity": purity,
         })
 
@@ -286,8 +293,8 @@ def analyse_node_per_hop(model, data, pred, node_x: int, k_hops: int,
     return {
         "node_idx": node_x, "degree": degree,
         "true_label": true_lbl, "pred_label": pred_lbl,
-        "n_same_train_field": len(same_class_all),
-        "n_diff_train_field": len(diff_class_all),
+        "n_same_lbl_field": len(same_class_all),
+        "n_diff_lbl_field": len(diff_class_all),
         "per_hop": rows,
     }
 
