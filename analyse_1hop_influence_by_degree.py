@@ -162,7 +162,7 @@ def _aggregate_by_degree(records):
     by_deg = defaultdict(lambda: {
         "total_same": [], "total_diff": [],
         "infl_balance": [], "lbl_frac_balance": [],
-        "purity_1": [], "purity_delta": [], "correct": [],
+        "purity_1": [], "purity_2": [], "purity_delta": [], "correct": [],
     })
     for r in records:
         d = r["degree"]
@@ -171,6 +171,8 @@ def _aggregate_by_degree(records):
         by_deg[d]["infl_balance"].append(r["infl_balance"])
         by_deg[d]["lbl_frac_balance"].append(r["lbl_frac_balance"])
         by_deg[d]["purity_1"].append(r["purity_1"])
+        if not np.isnan(r["purity_2"]):
+            by_deg[d]["purity_2"].append(r["purity_2"])
         if not np.isnan(r["purity_delta"]):
             by_deg[d]["purity_delta"].append(r["purity_delta"])
         by_deg[d]["correct"].append(float(r["correct"]))
@@ -285,24 +287,21 @@ def _plot_delta(by_deg, cfg, seed, save_dir, show):
         ax.plot(pos, med, color=color, linewidth=1.5, label=label)
         ax.fill_between(pos, q1, q3, color=color, alpha=0.18)
 
-    _line_iqr("lbl_frac_balance", "#1976D2",
-               "same_lbl/tot − diff_lbl/tot (median ± IQR)")
-    _line_iqr("purity_delta",     _PURITY_COLOR,
-               "Purity(hop 2) − Purity(hop 1) (median ± IQR)")
+    _line_iqr("purity_1", _PURITY_COLOR, "Purity hop 1 (median ± IQR)")
+    _line_iqr("purity_2", "#9C27B0",     "Purity hop 2 (median ± IQR)")
 
     acc = np.array([np.mean(by_deg[d]["correct"]) for d in all_degrees])
     ax.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
             marker="o", markersize=4, label="Accuracy")
 
-    ax.axhline(0, color="black", linewidth=0.6, linestyle="--", alpha=0.4)
-    ax.set_ylim(-1.05, 1.05)
+    ax.set_ylim(0, 1.05)
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax.set_ylabel("Value", fontsize=11)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
     ax.set_title(
-        f"{dataset} · {model} · 1-hop influence balance by degree   (seed={seed})",
+        f"{dataset} · {model} · purity by hop & accuracy by degree   (seed={seed})",
         fontsize=11,
     )
     _degree_axis(ax, pos, np.array(all_degrees))
