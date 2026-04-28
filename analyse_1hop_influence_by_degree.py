@@ -144,89 +144,69 @@ def _plot(by_deg, cfg, seed, save_dir, show):
     dataset = cfg["dataset"]["name"]
     model   = cfg["model"]["name"]
 
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1,
-        figsize=(_fig_w(n_deg), 8),
-        sharex=True,
-        gridspec_kw={"height_ratios": [2, 1]},
-    )
+    fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
 
-    # ── top panel: side-by-side boxplots ──────────────────────────────────────
+    # ── left y-axis: side-by-side boxplots ────────────────────────────────────
 
     same_data = [by_deg[d]["total_same"] for d in all_degrees]
     diff_data = [by_deg[d]["total_diff"] for d in all_degrees]
-    counts    = [len(by_deg[d]["total_same"]) for d in all_degrees]
 
-    rng = np.random.default_rng(0)
+    bp_kwargs = {**_BP_KWARGS}
+    bp_kwargs["flierprops"] = dict(marker="", markersize=0)  # no fliers
 
     for data_list, offset, color, label in [
-        (same_data, -w / 2, "#1565C0", "Same-class (hop 1)"),
-        (diff_data, +w / 2, "#E65100", "Diff-class (hop 1)"),
+        (same_data, -w / 2, "#1565C0", "Same-class infl. (hop 1)"),
+        (diff_data, +w / 2, "#E65100", "Diff-class infl. (hop 1)"),
     ]:
-        bp = ax_top.boxplot(
+        bp = ax.boxplot(
             data_list,
             positions=pos + offset,
             widths=w * 0.85,
             whis=(0, 100),
-            **_BP_KWARGS,
+            **bp_kwargs,
         )
         for patch in bp["boxes"]:
             patch.set_facecolor(color)
             patch.set_alpha(0.72)
-        for component in ("whiskers", "caps", "medians", "fliers"):
+        for component in ("whiskers", "caps", "medians"):
             for line in bp[component]:
                 line.set_color(color)
 
-        # jitter scatter
-        for xi, vals in zip(pos + offset, data_list):
-            if not vals:
-                continue
-            jitter = rng.uniform(-0.10, 0.10, size=len(vals))
-            ax_top.scatter(
-                xi + jitter, vals,
-                s=10, color=color, alpha=0.45,
-                edgecolors="white", linewidths=0.2, zorder=5,
-            )
+        ax.plot([], [], color=color, linewidth=4, alpha=0.72, label=label)
 
-        # invisible proxy for legend
-        ax_top.plot([], [], color=color, linewidth=4, alpha=0.72, label=label)
+    ax.set_ylabel("Jacobian-L1 influence (hop 1)", fontsize=11)
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
-    # node-count bars (secondary axis)
-    ax_cnt = ax_top.twinx()
-    ax_cnt.bar(pos, counts, width=0.9, color="lightgrey", alpha=0.35, zorder=0)
-    ax_cnt.set_ylabel("# test nodes", fontsize=9, color="grey")
-    ax_cnt.tick_params(axis="y", labelcolor="grey", labelsize=8)
-    ax_cnt.set_ylim(0, max(counts) * 4)
+    # ── right y-axis: purity (median + IQR) and accuracy ─────────────────────
 
-    ax_top.set_ylabel("Jacobian-L1 influence (hop 1)", fontsize=11)
-    ax_top.legend(loc="upper right", fontsize=9, framealpha=0.85)
-    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-    ax_top.set_title(
-        f"{dataset} · {model} · 1-hop influence by degree   (seed={seed})",
-        fontsize=11,
-    )
-
-    # ── bottom panel: purity (median + IQR) and accuracy ─────────────────────
+    ax_r = ax.twinx()
 
     pur_med = np.array([np.median(by_deg[d]["purity"]) for d in all_degrees])
     pur_q1  = np.array([np.percentile(by_deg[d]["purity"], 25) for d in all_degrees])
     pur_q3  = np.array([np.percentile(by_deg[d]["purity"], 75) for d in all_degrees])
-    acc     = np.array([np.mean(by_deg[d]["correct"])  for d in all_degrees])
+    acc     = np.array([np.mean(by_deg[d]["correct"]) for d in all_degrees])
 
-    ax_bot.plot(pos, pur_med, color=_PURITY_COLOR, linewidth=1.5,
-                label="Purity (hop 1, median ± IQR)")
-    ax_bot.fill_between(pos, pur_q1, pur_q3, color=_PURITY_COLOR, alpha=0.18)
+    ax_r.plot(pos, pur_med, color=_PURITY_COLOR, linewidth=1.5,
+              label="Purity (hop 1, median ± IQR)")
+    ax_r.fill_between(pos, pur_q1, pur_q3, color=_PURITY_COLOR, alpha=0.18)
+    ax_r.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
+              marker="o", markersize=4, label="Accuracy")
 
-    ax_bot.plot(pos, acc, color=_ACC_COLOR, linewidth=1.5,
-                marker="o", markersize=4, label="Accuracy")
+    ax_r.set_ylim(0, 1.05)
+    ax_r.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_r.set_ylabel("Purity / Accuracy", fontsize=11)
 
-    ax_bot.set_ylim(0, 1.05)
-    ax_bot.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_bot.set_ylabel("Value", fontsize=11)
-    ax_bot.legend(loc="upper right", fontsize=9, framealpha=0.85)
-    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    # combined legend from both axes
+    handles_l, labels_l = ax.get_legend_handles_labels()
+    handles_r, labels_r = ax_r.get_legend_handles_labels()
+    ax.legend(handles_l + handles_r, labels_l + labels_r,
+              loc="upper right", fontsize=9, framealpha=0.85)
 
-    _degree_axis(ax_bot, pos, np.array(all_degrees))
+    ax.set_title(
+        f"{dataset} · {model} · 1-hop influence by degree   (seed={seed})",
+        fontsize=11,
+    )
+    _degree_axis(ax, pos, np.array(all_degrees))
 
     fig.tight_layout()
 
