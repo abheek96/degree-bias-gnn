@@ -1,0 +1,307 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1.2in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+\title{\textbf{Jacobian-L1 Influence in Graph Neural Networks}\\[0.4em]
+       \large How pairwise node influence is computed in \texttt{influence.py}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Definition}
+
+For a trained $k$-layer GCN, the \textbf{Jacobian-L1 influence} of node $y$ on
+focal node $x$ is:
+
+\begin{equation}
+  I(x,\, y)
+  \;=\;
+  \sum_{i=1}^{d_k}\;\sum_{f=1}^{d_0}
+  \left|\,
+    \frac{\partial\, h_x^{(k)}[i]}{\partial\, h_y^{(0)}[f]}
+  \,\right|
+  \label{eq:def}
+\end{equation}
+
+where $h_x^{(k)} \in \mathbb{R}^{d_k}$ is node $x$'s embedding after $k$
+message-passing layers, and $h_y^{(0)} \in \mathbb{R}^{d_0}$ is node $y$'s
+raw input feature vector. The double sum collapses the full Jacobian to a
+single non-negative scalar capturing the \emph{total sensitivity} of $x$'s
+prediction to $y$'s input features.
+
+\section{GCN Layer Notation}
+
+Each GCN layer aggregates from the 1-hop neighbourhood with symmetric
+degree normalisation:
+
+\begin{equation}
+  h_v^{(\ell)}
+  \;=\;
+  \sigma\!\left(
+    W^{(\ell)}\;
+    \sum_{u \,\in\, \hat{\mathcal{N}}(v)}
+    \tilde{a}_{vu}\; h_u^{(\ell-1)}
+  \right),
+  \qquad
+  \tilde{a}_{vu}
+  \;=\;
+  \frac{1}{\sqrt{(\deg v + 1)(\deg u + 1)}}
+  \label{eq:gcn}
+\end{equation}
+
+where $\hat{\mathcal{N}}(v)$ includes self-loops, $W^{(\ell)}$ is the
+layer-$\ell$ weight matrix, and $\sigma$ is the activation function (e.g.\
+ReLU). Define the pre-activation at node $v$ and layer $\ell$ as:
+
+\begin{equation}
+  \mathbf{z}_v^{(\ell)}
+  \;=\;
+  W^{(\ell)}\;
+  \sum_{u \,\in\, \hat{\mathcal{N}}(v)}
+  \tilde{a}_{vu}\; h_u^{(\ell-1)},
+  \qquad\text{so}\quad
+  h_v^{(\ell)} = \sigma\!\left(\mathbf{z}_v^{(\ell)}\right).
+\end{equation}
+
+\section{Concrete Example: 2-Layer GCN on a 3-Node Chain}
+
+\textbf{Graph:}\quad $x \;{=}\; 0 \;-\; y \;{=}\; 1 \;-\; z \;{=}\; 2$
+
+The focal node is $x$, so $k = 2$ and the $k$-hop subgraph contains all
+three nodes.
+
+\subsection{Forward Pass}
+
+\paragraph{Layer 1.}
+\begin{align}
+  h_x^{(1)} &= \sigma\!\bigl(W^{(1)}\bigl(\tilde{a}_{xx}\,h_x^{(0)}
+                + \tilde{a}_{xy}\,h_y^{(0)}\bigr)\bigr) \\[4pt]
+  h_y^{(1)} &= \sigma\!\bigl(W^{(1)}\bigl(\tilde{a}_{yx}\,h_x^{(0)}
+                + \tilde{a}_{yy}\,h_y^{(0)}
+                + \tilde{a}_{yz}\,h_z^{(0)}\bigr)\bigr) \\[4pt]
+  h_z^{(1)} &= \sigma\!\bigl(W^{(1)}\bigl(\tilde{a}_{zy}\,h_y^{(0)}
+                + \tilde{a}_{zz}\,h_z^{(0)}\bigr)\bigr)
+\end{align}
+
+\paragraph{Layer 2.}
+\begin{equation}
+  h_x^{(2)} = \sigma\!\bigl(W^{(2)}\bigl(\tilde{a}_{xx}\,h_x^{(1)}
+               + \tilde{a}_{xy}\,h_y^{(1)}\bigr)\bigr)
+\end{equation}
+
+Node $z$ never appears directly in $x$'s layer-2 aggregation (it is 2 hops
+away), but it \emph{indirectly} influences $x$ through $y$'s hidden state
+$h_y^{(1)}$.
+
+\subsection{Derivative for a 1-Hop Neighbour ($y$)}
+
+Applying the chain rule through layer 2 then layer 1:
+
+\begin{equation}
+  \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_y^{(0)}[f]}
+  \;=\;
+  \sum_j
+  \underbrace{%
+    \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_x^{(1)}[j]}
+  }_{\text{layer 2}}
+  \cdot
+  \underbrace{%
+    \frac{\partial\, h_x^{(1)}[j]}{\partial\, h_y^{(0)}[f]}
+  }_{\text{layer 1}}
+\end{equation}
+
+Expanding each factor using equation~\eqref{eq:gcn}:
+
+\begin{align}
+  \frac{\partial\, h_x^{(1)}[j]}{\partial\, h_y^{(0)}[f]}
+  &\;=\;
+  \sigma'\!\bigl(\mathbf{z}_x^{(1)}[j]\bigr)
+  \;\cdot\;
+  W^{(1)}[j,f]
+  \;\cdot\;
+  \tilde{a}_{xy}
+  \\[6pt]
+  \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_x^{(1)}[j]}
+  &\;=\;
+  \sigma'\!\bigl(\mathbf{z}_x^{(2)}[i]\bigr)
+  \;\cdot\;
+  W^{(2)}[i,j]
+  \;\cdot\;
+  \tilde{a}_{xx}
+\end{align}
+
+Combining:
+
+\begin{equation}
+  \boxed{
+  \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_y^{(0)}[f]}
+  \;=\;
+  \sum_j\;
+  \sigma'\!\bigl(\mathbf{z}_x^{(2)}[i]\bigr)\cdot W^{(2)}[i,j]\cdot\tilde{a}_{xx}
+  \;\cdot\;
+  \sigma'\!\bigl(\mathbf{z}_x^{(1)}[j]\bigr)\cdot W^{(1)}[j,f]\cdot\tilde{a}_{xy}
+  }
+\end{equation}
+
+\medskip
+The edge weight $\tilde{a}_{xy}$ appears as a multiplicative factor: a
+high-degree neighbour $y$ has a small $\tilde{a}_{xy}$, attenuating its
+influence on $x$.
+
+\subsection{Derivative for a 2-Hop Neighbour ($z$)}
+
+Node $z$ feeds into $h_y^{(1)}$, which in turn feeds into $h_x^{(2)}$.
+The chain rule now routes through $y$'s hidden state:
+
+\begin{equation}
+  \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_z^{(0)}[f]}
+  \;=\;
+  \sum_j
+  \underbrace{%
+    \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_y^{(1)}[j]}
+  }_{\text{layer 2, via }y}
+  \cdot
+  \underbrace{%
+    \frac{\partial\, h_y^{(1)}[j]}{\partial\, h_z^{(0)}[f]}
+  }_{\text{layer 1, at }y}
+\end{equation}
+
+\begin{align}
+  \frac{\partial\, h_y^{(1)}[j]}{\partial\, h_z^{(0)}[f]}
+  &\;=\;
+  \sigma'\!\bigl(\mathbf{z}_y^{(1)}[j]\bigr)
+  \;\cdot\;
+  W^{(1)}[j,f]
+  \;\cdot\;
+  \tilde{a}_{yz}
+  \\[6pt]
+  \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_y^{(1)}[j]}
+  &\;=\;
+  \sigma'\!\bigl(\mathbf{z}_x^{(2)}[i]\bigr)
+  \;\cdot\;
+  W^{(2)}[i,j]
+  \;\cdot\;
+  \tilde{a}_{xy}
+\end{align}
+
+\begin{equation}
+  \boxed{
+  \frac{\partial\, h_x^{(2)}[i]}{\partial\, h_z^{(0)}[f]}
+  \;=\;
+  \sum_j\;
+  \sigma'\!\bigl(\mathbf{z}_x^{(2)}[i]\bigr)\cdot W^{(2)}[i,j]\cdot\tilde{a}_{xy}
+  \;\cdot\;
+  \sigma'\!\bigl(\mathbf{z}_y^{(1)}[j]\bigr)\cdot W^{(1)}[j,f]\cdot\tilde{a}_{yz}
+  }
+\end{equation}
+
+\medskip
+\noindent\textbf{Key difference from the 1-hop case:} the activation gate
+at layer 1 is now $\sigma'\!\bigl(\mathbf{z}_y^{(1)}\bigr)$ (intermediate
+node $y$'s gate) rather than $\sigma'\!\bigl(\mathbf{z}_x^{(1)}\bigr)$.
+The gradient flows \emph{backward through $y$'s hidden state} to reach $z$.
+Each additional hop introduces another pair of $(\sigma', W, \tilde{a})$
+factors, causing the Jacobian to decay exponentially with distance.
+
+\subsection{Comparison at a Glance}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lll}
+\toprule
+ & \textbf{1-hop neighbour }$y$ & \textbf{2-hop neighbour }$z$ \\
+\midrule
+Layer-1 gate   & $\sigma'\!\left(\mathbf{z}_x^{(1)}\right)$ & $\sigma'\!\left(\mathbf{z}_y^{(1)}\right)$ \\
+Layer-1 weight & $W^{(1)}$ & $W^{(1)}$ \\
+Layer-1 edge   & $\tilde{a}_{xy}$ & $\tilde{a}_{yz}$ \\
+Layer-2 gate   & $\sigma'\!\left(\mathbf{z}_x^{(2)}\right)$ & $\sigma'\!\left(\mathbf{z}_x^{(2)}\right)$ \\
+Layer-2 weight & $W^{(2)}$ & $W^{(2)}$ \\
+Layer-2 edge   & $\tilde{a}_{xx}$ & $\tilde{a}_{xy}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{From Jacobian Tensor to Scalar Influence}
+
+\texttt{torch.autograd.functional.jacobian} returns the full tensor
+\[
+  J \;\in\; \mathbb{R}^{d_k \times |V_\text{sub}| \times d_0},
+  \qquad
+  J[i,\, n_\text{local},\, f]
+  \;=\;
+  \frac{\partial\, h_x^{(k)}[i]}{\partial\, h_{n}^{(0)}[f]}
+\]
+evaluated over the $k$-hop induced subgraph (shape is $|V_\text{sub}|$
+instead of $N$ for tractability; outside the subgraph the true influence
+is exactly 0). The reduction to per-node scalars:
+
+\begin{equation}
+  I(x,\, n)
+  \;=\;
+  \sum_{i=1}^{d_k}\sum_{f=1}^{d_0}
+  \bigl|J[i,\, n_\text{local},\, f]\bigr|
+  \;=\;
+  \bigl\|J[\,:\,,\, n_\text{local},\, :\,]\bigr\|_1
+\end{equation}
+
+In code (from \texttt{influence.py}, line 88):
+\begin{verbatim}
+    influence_sub = jac.abs().sum(dim=(0, 2))   # shape: [|V_sub|]
+\end{verbatim}
+
+The result is scattered back to global node indices, giving a length-$N$
+vector where nodes outside the $k$-hop subgraph have $I(x, n) = 0$.
+
+\section{Effective Influence}
+
+The \emph{effective influence} additionally weights each node's score by
+the GCN symmetric normalisation factor it would receive if it were a direct
+1-hop neighbour of $x$:
+
+\begin{equation}
+  I_\text{eff}(x,\, n)
+  \;=\;
+  I(x,\, n)
+  \;\cdot\;
+  \tilde{a}_{xn}
+  \;=\;
+  I(x,\, n)
+  \;\cdot\;
+  \frac{1}{\sqrt{(\deg x + 1)(\deg n + 1)}}
+\end{equation}
+
+This re-weights raw influence by how strongly a direct edge $x \leftarrow n$
+would be attenuated by degree, making high-degree neighbours appear less
+influential even when their Jacobian norm is large.
+
+\section{Why Autograd, Not Closed Form?}
+
+Computing the Jacobian analytically requires manually unrolling the chain
+rule through every layer for every node, accounting for the activation gates
+$\sigma'$ evaluated at the actual forward-pass pre-activations. PyTorch's
+\texttt{torch.autograd.functional.jacobian} does this automatically by
+either:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Reverse mode} (\texttt{vectorize=False}): runs one backward
+    pass per output dimension $i$ ($d_k$ passes total).
+  \item \textbf{Forward mode} (\texttt{vectorize=True}): uses
+    \texttt{torch.vmap} over the input dimensions, computing all columns of
+    the Jacobian in a single forward sweep — same result, significantly
+    faster.
+\end{itemize}
+
+\end{document}
