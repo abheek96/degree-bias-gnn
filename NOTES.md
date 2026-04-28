@@ -366,6 +366,41 @@ Both arrive at the same conclusion (degree causes unfairness) through complement
 
 ## Training Node Degree and Influence
 
+### Does the Jacobian-L1 influence already account for degree normalisation?
+
+Yes — the degree normalisation factors are baked into the Jacobian by construction.
+
+For a 1-hop neighbour `y` in a 2-layer GCN, the derivative of focal node `x`'s output with respect to `y`'s input features is:
+
+```
+∂h_x^(2)[i] / ∂h_y^(0)[f]
+  = ã_xy · Σ_j  σ'(z_x^(2)[i]) · W²[i,j] · ã_xx · σ'(z_x^(1)[j]) · W¹[j,f]
+```
+
+The factor `ã_xy = 1/sqrt((deg_x+1)(deg_y+1))` appears explicitly as a multiplicative scalar. The rest of the sum depends only on the focal node `x`'s pre-activations and the weight matrices — it is **the same for every 1-hop neighbour of x**. Therefore, among 1-hop neighbours of a fixed focal node, influence is proportional to `ã_xy`, which decreases with `deg_y`. Higher-degree 1-hop neighbours carry lower influence, directly from the Jacobian arithmetic.
+
+For a 2-hop neighbour `z` routed through intermediate node `y`:
+
+```
+∂h_x^(2)[i] / ∂h_z^(0)[f]  ∝  ã_xy · ã_yz
+  = 1/sqrt((deg_x+1)(deg_y+1))  ×  1/sqrt((deg_y+1)(deg_z+1))
+  = 1 / ( sqrt(deg_x+1) · (deg_y+1) · sqrt(deg_z+1) )
+```
+
+The intermediate node `y`'s degree appears with a **full power of 1** in the denominator (not square root). A high-degree hub intermediate node therefore doubly attenuates the influence of 2-hop neighbours compared to a high-degree leaf node at 1-hop.
+
+**Consequence for the "effective influence" measure.** An earlier version of `analyse_hop_influence.py` computed `eff_I_x[n] = I_x[n] × ã_xn` as a second table. This was incorrect: since `ã_xy` is already a factor inside `I_x[y]`, multiplying again double-counts the normalisation for 1-hop neighbours, and applies a hypothetical direct-edge weight for multi-hop neighbours that has no correspondence to anything in the actual computation. The effective influence table has been removed; the raw Jacobian-L1 table is the correct measure.
+
+### Do high-degree nodes have higher influence in general?
+
+It depends on the scope of the question — the answer differs for per-focal-node influence vs graph-wide influence.
+
+**Per focal node (what `analyse_hop_influence.py` shows):** No. Among the neighbours of a fixed focal node `x`, a higher-degree neighbour `y` has *lower* influence because `ã_xy = 1/sqrt((deg_x+1)(deg_y+1))` shrinks as `deg_y` grows, and this factor scales the entire Jacobian for that node. The degree normalisation is a direct attenuation of high-degree neighbours.
+
+**Graph-wide total influence:** Not necessarily lower. A node with degree `d` is a 1-hop neighbour of `d` different focal nodes. Its influence on each is attenuated by `1/sqrt(d+1)`, but summing across all `d` focal nodes gives total influence `∝ d / sqrt(d+1) ≈ sqrt(d)`, which **increases** with degree. High-degree hubs can therefore dominate the graph-wide influence budget even though their per-focal-node contribution is individually small.
+
+For the per-hop influence table — which is always computed from the perspective of one focal node — the per-focal-node interpretation applies: higher-degree training neighbours exert less influence on the focal node.
+
 ### Is influence directly related to edge weight and hop distance?
 
 Yes to both, and the two interact multiplicatively.

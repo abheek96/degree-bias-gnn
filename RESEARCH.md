@@ -203,6 +203,8 @@ This is computed via an exact Jacobian (`torch.autograd.functional.jacobian`). T
 
 **Why:** Accuracy and structural metrics describe *what* happens to a node but not *why* the model fails. The influence distribution directly asks: which input nodes is the trained model actually using to form its prediction for node x? If a misclassified high-degree node receives near-zero influence from its same-class training neighbours and high influence from diff-class neighbours, that is causal evidence of the aggregation mechanism failing for that node.
 
+**Note on degree normalisation and influence.** The raw Jacobian-L1 score already incorporates GCN's degree normalisation factors. For a 1-hop neighbour `y`, the Jacobian contains `ã_xy = 1/sqrt((deg_x+1)(deg_y+1))` as an explicit multiplicative factor, so higher-degree neighbours are automatically attenuated in the influence score. No additional re-weighting by edge weight is needed or meaningful — an earlier "effective influence" measure (`I_x[n] × ã_xn`) was considered and removed because it double-counts the normalisation for 1-hop neighbours and applies a hypothetical edge weight for multi-hop neighbours that does not correspond to the actual computation.
+
 ### 4.8 Training-neighbor degree distribution (`train_neighbor_degree`)
 
 For each test node, finds all training nodes in its k-hop receptive field and records the **mean degree** of same-class vs diff-class training neighbors. Reports per-test-node:
