@@ -282,6 +282,64 @@ def _run_logistic_regression(df: pd.DataFrame):
     return auroc, acc, coef_df
 
 
+# ── interaction analysis ───────────────────────────────────────────────────────
+
+def _analyse_interactions(df: pd.DataFrame):
+    """Test whether high cosine similarity + low purity predicts misclassification.
+
+    For each purity column (1-hop and 2-hop): median-split both cosine sim and
+    purity into high/low bins, report the 2×2 misclassification-rate table, and
+    run a χ² test comparing the (high sim, low purity) quadrant against all others.
+    """
+    from scipy.stats import chi2_contingency
+
+    cos_col = "mean_cosine_sim_1hop"
+    for purity_col in ("purity_1hop", "purity_2hop"):
+        needed = [cos_col, purity_col, "correct"]
+        sub    = df[needed].dropna().copy()
+        if len(sub) == 0:
+            log.warning("No data for interaction analysis (%s)", purity_col)
+            continue
+
+        cos_med    = sub[cos_col].median()
+        purity_med = sub[purity_col].median()
+
+        sub["cos_grp"] = np.where(sub[cos_col]    >= cos_med,    "high_sim",    "low_sim")
+        sub["pur_grp"] = np.where(sub[purity_col] <  purity_med, "low_purity",  "high_purity")
+
+        log.info("── cosine_sim × %s  (median split) ─────────────────────────────", purity_col)
+        log.info("   cos_sim median=%.3f   %s median=%.3f", cos_med, purity_col, purity_med)
+        log.info("   %-14s  %-14s  %6s  %14s  %s",
+                 "cos_group", "purity_group", "n", "misclassified", "misc_rate")
+
+        quadrants = [
+            ("high_sim", "low_purity"),
+            ("high_sim", "high_purity"),
+            ("low_sim",  "low_purity"),
+            ("low_sim",  "high_purity"),
+        ]
+        for cos_g, pur_g in quadrants:
+            grp   = sub[(sub["cos_grp"] == cos_g) & (sub["pur_grp"] == pur_g)]
+            n     = len(grp)
+            n_mis = int((grp["correct"] == 0).sum())
+            rate  = 100.0 * n_mis / n if n > 0 else float("nan")
+            tag   = "  ← hypothesis" if cos_g == "high_sim" and pur_g == "low_purity" else ""
+            log.info("   %-14s  %-14s  %6d  %6d  (%5.1f%%)%s",
+                     cos_g, pur_g, n, n_mis, rate, tag)
+
+        # χ² test: (high sim & low purity) vs all other three quadrants combined
+        target  = sub[(sub["cos_grp"] == "high_sim") & (sub["pur_grp"] == "low_purity")]
+        rest    = sub[~((sub["cos_grp"] == "high_sim") & (sub["pur_grp"] == "low_purity"))]
+        table   = np.array([
+            [(target["correct"] == 0).sum(), (target["correct"] == 1).sum()],
+            [(rest["correct"]   == 0).sum(), (rest["correct"]   == 1).sum()],
+        ])
+        chi2, p, _, _ = chi2_contingency(table)
+        log.info("   χ²(high_sim & low_purity vs rest): χ²=%.3f  p=%.4f%s",
+                 chi2, p, "  **" if p < 0.05 else "")
+        log.info("────────────────────────────────────────────────────────────────────")
+
+
 # ── main orchestration ─────────────────────────────────────────────────────────
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence):
@@ -356,6 +414,9 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence):
 
     # ── logistic regression ────────────────────────────────────────────────────
     _run_logistic_regression(df)
+
+    # ── interaction test: high cosine sim × low purity ─────────────────────────
+    _analyse_interactions(df)
 
     return df
 
