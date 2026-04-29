@@ -344,15 +344,40 @@ def _analyse_interactions(df: pd.DataFrame):
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
-    data      = load_or_create_split(
+    # Load on CPU first so structural-feature functions (which require CPU tensors)
+    # can use the same object without a device conflict.  PyG Data.to() / .cpu()
+    # modify in place, so calling data.cpu() after data.to(device) would silently
+    # move the object back and leave the model on CUDA with CPU inputs.
+    data = load_or_create_split(
         cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
-    ).to(device)
-    data_cpu  = data.cpu()   # used for structural feature functions that require CPU tensors
+    )
 
     k_hops = cfg["model"]["num_layers"] - 1
     seed   = cfg.get("seed", 42)
     log.info("Dataset=%s  model=%s  k_hops=%d  seed=%d",
              cfg["dataset"]["name"], cfg["model"]["name"], k_hops, seed)
+
+    N         = data.num_nodes
+    y         = data.y.cpu()
+    all_deg   = graph_degree(data.edge_index[1], N).cpu()
+    test_mask = data.test_mask.cpu()
+    test_idx  = test_mask.nonzero(as_tuple=False).view(-1).tolist()
+    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
+
+    # ── vectorised structural features — run while data is still on CPU ────────
+    log.info("Computing neighbourhood purity …")
+    purity_1 = get_node_purity(data, k=1, node_mask=test_mask)
+    purity_2 = get_node_purity(data, k=2, node_mask=test_mask)
+
+    log.info("Computing min-SPL to training nodes …")
+    dist_any, dist_same = compute_distances_to_train(data)
+
+    log.info("Computing average SPL to training nodes …")
+    avg_spl      = get_avg_spl_to_train(data)
+    avg_spl_same = get_avg_spl_to_same_class_train(data)
+
+    # ── move data to device before model loading / influence computation ───────
+    data = data.to(device)
 
     if checkpoint_path:
         pred, model = load_from_checkpoint(cfg, data, device, checkpoint_path)
@@ -361,25 +386,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence):
         set_seed(seed)
         pred, model = train_model(data, cfg, device)
 
-    pred      = pred.cpu()
-    N         = data.num_nodes
-    y         = data.y.cpu()
-    all_deg   = graph_degree(data.edge_index[1], N).cpu()
-    test_mask = data.test_mask.cpu()
-    test_idx  = test_mask.nonzero(as_tuple=False).view(-1).tolist()
-    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
-
-    # ── vectorised structural features (computed once, indexed by position in test_idx) ──
-    log.info("Computing neighbourhood purity …")
-    purity_1 = get_node_purity(data_cpu, k=1, node_mask=test_mask)
-    purity_2 = get_node_purity(data_cpu, k=2, node_mask=test_mask)
-
-    log.info("Computing min-SPL to training nodes …")
-    dist_any, dist_same = compute_distances_to_train(data_cpu)
-
-    log.info("Computing average SPL to training nodes …")
-    avg_spl      = get_avg_spl_to_train(data_cpu)       # [N]
-    avg_spl_same = get_avg_spl_to_same_class_train(data_cpu)  # [N]
+    pred = pred.cpu()
 
     # ── per-node loop ──────────────────────────────────────────────────────────
     log.info("Building per-node feature rows %s…",
