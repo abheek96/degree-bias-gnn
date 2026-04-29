@@ -98,6 +98,9 @@ _FEATURE_COLS = [
     "mean_cosine_sim_1hop",
     "total_infl_same_1hop",
     "total_infl_diff_1hop",
+    "emb_sim_same_1hop",
+    "emb_sim_diff_1hop",
+    "emb_purity_delta",
 ]
 
 
@@ -128,6 +131,7 @@ def _build_rows(
     dist_same,              # LongTensor  [num_test]  — min SPL to same-class train node
     avg_spl,                # FloatTensor [num_nodes] — avg SPL to all train nodes
     avg_spl_same,           # FloatTensor [num_nodes] — avg SPL to same-class train nodes
+    embeddings,             # FloatTensor [num_nodes, D] — penultimate GCN embeddings, CPU
     skip_influence: bool,
 ) -> list[dict]:
     N          = data.num_nodes
@@ -173,6 +177,30 @@ def _build_rows(
         else:
             cos_sim = float("nan")
 
+        # ── embedding-space cosine similarity (penultimate GCN layer) ──────────
+        if embeddings is not None and S1:
+            focal_emb  = F.normalize(embeddings[node_x].unsqueeze(0), dim=1)
+            same_nbrs  = [n for n in S1 if int(y[n].item()) == true_lbl]
+            diff_nbrs  = [n for n in S1 if int(y[n].item()) != true_lbl]
+            if same_nbrs:
+                emb_sim_same = float(
+                    (focal_emb * F.normalize(embeddings[same_nbrs], dim=1)).sum(dim=1).mean()
+                )
+            else:
+                emb_sim_same = float("nan")
+            if diff_nbrs:
+                emb_sim_diff = float(
+                    (focal_emb * F.normalize(embeddings[diff_nbrs], dim=1)).sum(dim=1).mean()
+                )
+            else:
+                emb_sim_diff = float("nan")
+            if not (np.isnan(emb_sim_same) or np.isnan(emb_sim_diff)):
+                emb_purity_delta = emb_sim_same - emb_sim_diff
+            else:
+                emb_purity_delta = float("nan")
+        else:
+            emb_sim_same = emb_sim_diff = emb_purity_delta = float("nan")
+
         # ── Jacobian-L1 influence (hop-1, expensive) ─────────────────────────
         if skip_influence:
             total_same_infl = float("nan")
@@ -214,6 +242,9 @@ def _build_rows(
             "mean_cosine_sim_1hop":         cos_sim,
             "total_infl_same_1hop":         total_same_infl,
             "total_infl_diff_1hop":         total_diff_infl,
+            "emb_sim_same_1hop":            emb_sim_same,
+            "emb_sim_diff_1hop":            emb_sim_diff,
+            "emb_purity_delta":             emb_purity_delta,
             "correct":                      int(int(pred[node_x].item()) == true_lbl),
         })
 
@@ -411,6 +442,15 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence):
 
     pred = pred.cpu()
 
+    # ── penultimate embeddings (single forward pass, all nodes) ───────────────
+    log.info("Computing penultimate GCN embeddings …")
+    if hasattr(model, "get_intermediate"):
+        embeddings = model.get_intermediate(data.x, data.edge_index, layer=k_hops).cpu()
+    else:
+        log.warning("Model has no get_intermediate() — falling back to output logits for embeddings")
+        with torch.no_grad():
+            embeddings = model(data.x, data.edge_index).cpu()
+
     # ── per-node loop ──────────────────────────────────────────────────────────
     log.info("Building per-node feature rows %s…",
              "(skipping Jacobian influence)" if skip_influence else
@@ -421,6 +461,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence):
         purity_1=purity_1, purity_2=purity_2,
         dist_any=dist_any, dist_same=dist_same,
         avg_spl=avg_spl, avg_spl_same=avg_spl_same,
+        embeddings=embeddings,
         skip_influence=skip_influence,
     )
 
