@@ -543,4 +543,42 @@ A secondary question: does higher degree in training nodes correlate with faster
 
 ---
 
-*Last updated: 2026-04-16*
+---
+
+## Predicting GCN Misclassification from Node Features
+
+### Why a logistic regression framing?
+
+Qualitative case-by-case analysis (per-node influence tables) shows that anomalous misclassification is caused by a *combination* of factors whose relative weight varies node by node — there is no single clean structural explanation that generalises. A logistic regression on a per-test-node feature table converts this into a quantitative, publishable claim: **given a set of structural and model-derived features, can we predict which nodes the GCN will fail on?**
+
+### What goes into the feature table
+
+`build_node_feature_table.py` produces one row per test node with:
+
+- **Graph-structural:** degree, min SPL to any training node, min SPL to same-class training node, average SPL to all training nodes, average SPL to same-class training nodes
+- **Neighbourhood composition:** purity at 1-hop and 2-hop (cumulative); count and ratio of same-class / diff-class training nodes in the 1-hop ring and the 2-hop ring
+- **Feature-space:** mean cosine similarity between the focal node's raw features and its 1-hop neighbours' raw features
+- **Jacobian influence (model-derived):** total Jacobian-L1 influence from same-class 1-hop nodes (`total_infl_same_1hop`) and from diff-class 1-hop nodes (`total_infl_diff_1hop`)
+- **Target:** `correct` (1 = GCN predicted correctly, 0 = misclassified)
+
+### How to interpret the logistic regression output
+
+- **AUROC** measures how well the factors jointly predict GCN failure (chance = 0.5, strong = ≥0.75)
+- **Signed coefficients** (sorted by |coef|) identify which factors are the strongest predictors and in which direction. A large negative coefficient on `purity_1hop` would confirm that low neighbourhood purity is the dominant structural driver; a large positive coefficient on `total_infl_same_1hop` would confirm that higher same-class influence → fewer failures
+- **Class-balanced LR** is used (`class_weight="balanced"`) because misclassified nodes are a minority
+
+### Usage
+
+```bash
+# Full table including Jacobian influence (slow — one Jacobian per test node)
+uv run build_node_feature_table.py --run 1 --save-dir ./output
+
+# Structural features only (fast)
+uv run build_node_feature_table.py --run 1 --save-dir ./output --no-influence
+```
+
+Saves `output/node_feature_table/{Dataset}_{Model}_node_features_seed{seed}.csv` and logs the LR results to stdout.
+
+---
+
+*Last updated: 2026-04-29*

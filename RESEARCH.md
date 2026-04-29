@@ -490,6 +490,36 @@ Until these are done, the current state is: the structural metrics motivate the 
 
 ---
 
+### 7.6 From qualitative case studies to quantitative prediction
+
+The per-node qualitative analysis (§7.2, influence tables for specific nodes) establishes that misclassification is caused by a *combination* of factors whose relative importance varies node by node.  To make this publishable at a top venue, a quantitative framing is needed: **can we predict which test nodes the GCN will fail on, given only node-level structural and model-derived features?**
+
+#### Approach: logistic regression on a node feature table
+
+For a single run (one checkpoint, one seed) build a table where each row is a test node and each column is a factor measurable before or from the trained model:
+
+| Feature group | Columns |
+|---|---|
+| Graph structure | degree, min_dist_to_train, min_dist_to_same_class_train, avg_spl_to_train, avg_spl_to_same_class_train |
+| Neighbourhood composition | purity_1hop, purity_2hop, n_same_train_1hop, n_diff_train_1hop, n_same_train_2hop, n_diff_train_2hop, same_train_ratio_1hop, diff_train_ratio_1hop, same_train_ratio_2hop, diff_train_ratio_2hop |
+| Feature-space | mean_cosine_sim_1hop (cosine similarity between focal node and 1-hop neighbours in raw feature space) |
+| Jacobian influence (model-derived) | total_infl_same_1hop, total_infl_diff_1hop |
+| **Target** | correct (1 = correctly classified, 0 = misclassified) |
+
+A logistic regression with standardised features is fitted via 5-fold stratified cross-validation.  The output is:
+- **AUROC and accuracy** — quantifies how well the set of factors jointly predicts GCN failure
+- **Signed coefficients** (sorted by magnitude) — identifies which factors are the strongest predictors, and in which direction (e.g. a strong negative coefficient on `purity_1hop` would confirm that low neighbourhood purity is the dominant driver of misclassification)
+
+#### Why logistic regression
+
+A linear classifier intentionally imposes a simple, interpretable model.  If AUROC is high (≥0.75), it means the factors linearly separate failures from successes — a strong, clean result.  If AUROC is modest (0.60–0.75), it may indicate that non-linear interactions matter (degree × purity, for instance), which can be probed with a gradient-boosted tree on the same feature table.  A low AUROC would suggest the factors chosen are insufficient or that GCN failures are too stochastic to predict from structure alone — a meaningful finding in itself.
+
+#### Implementation
+
+`build_node_feature_table.py` computes all features for all test nodes from a single checkpoint, saves the CSV, and runs the logistic regression automatically.  The Jacobian-L1 influence computation is the bottleneck (one Jacobian per test node); `--no-influence` skips it for a fast structural-only run.
+
+---
+
 ## 8. Open Questions / To Explore
 
 *(See `NOTES.md` for detailed Q&A on completed analyses. See `TODO.md` for full descriptions of pending investigations.)*
@@ -539,6 +569,8 @@ Until these are done, the current state is: the structural metrics motivate the 
 | 9 | Influence disparity | `same_class_inf_norm − diff_class_inf_norm` for every test node; plotted vs degree |
 | 10 | Feature similarity delta | Cosine sim to same-class training neighbours in raw vs post-message-passing representation space |
 | 11 | Per-node layer-wise similarity | Cosine sim to each 1-hop neighbour at every representation layer (raw → h¹ → … → hᵏ) |
+| 12 | Aggregate 1-hop influence by degree | Boxplots of total_same / total_diff influence at hop 1, and purity at hop 1 and hop 2, grouped by degree — from `analyse_1hop_influence_by_degree.py` |
+| 13 | Node feature table + logistic regression | Per-test-node table of all structural and model-derived factors; logistic regression to predict GCN misclassification (AUROC, coefficients) — from `build_node_feature_table.py` |
 
 ---
 
