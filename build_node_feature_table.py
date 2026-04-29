@@ -226,10 +226,10 @@ def _build_rows(
 # ── logistic regression ────────────────────────────────────────────────────────
 
 def _run_logistic_regression(df: pd.DataFrame):
-    """5-fold stratified CV logistic regression; logs AUROC, accuracy, and coefficients."""
+    """5-fold stratified CV logistic regression; logs AUROC, PR-AUC, lift@k, and coefficients."""
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import roc_auc_score
-    from sklearn.model_selection import StratifiedKFold, cross_val_score
+    from sklearn.metrics import average_precision_score
+    from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
 
@@ -244,7 +244,9 @@ def _run_logistic_regression(df: pd.DataFrame):
         log.warning("Dropped %d rows with NaN features before LR fitting", n_dropped)
 
     X = df_clean[available].values.astype(float)
-    y = df_clean["correct"].values
+    y = df_clean["correct"].values          # 1 = correct, 0 = misclassified
+    y_misc = 1 - y                          # 1 = misclassified (positive class for PR/lift)
+    baseline = y_misc.mean()               # fraction misclassified
 
     pipe = Pipeline([
         ("scaler", StandardScaler()),
@@ -259,6 +261,19 @@ def _run_logistic_regression(df: pd.DataFrame):
     auroc = cross_val_score(pipe, X, y, cv=cv, scoring="roc_auc")
     acc   = cross_val_score(pipe, X, y, cv=cv, scoring="accuracy")
 
+    # Out-of-fold predicted probabilities for PR-AUC and lift (avoids train-set leakage)
+    # proba[:, 0] = P(misclassified) since class 0 = misclassified
+    oof_proba   = cross_val_predict(pipe, X, y, cv=cv, method="predict_proba")
+    p_misc      = oof_proba[:, 0]           # probability of being misclassified
+    pr_auc      = average_precision_score(y_misc, p_misc)
+
+    # Lift@k: among top-k nodes ranked by p_misc, what fraction are actually misclassified?
+    n           = len(y_misc)
+    sorted_idx  = np.argsort(p_misc)[::-1]
+    k_values    = [k for k in (50, 100, 200) if k <= n]
+    k_values   += [int(round(n * pct)) for pct in (0.10, 0.20) if int(round(n * pct)) not in k_values]
+    k_values    = sorted(set(k_values))
+
     pipe.fit(X, y)
     lr = pipe.named_steps["lr"]
     coef_df = (
@@ -270,16 +285,24 @@ def _run_logistic_regression(df: pd.DataFrame):
     )
 
     log.info("── Logistic Regression results (5-fold stratified CV) ──────────────")
-    log.info("  n_train=%d  misclassified=%d (%.1f%%)",
-             len(df_clean), int((y == 0).sum()), 100.0 * (y == 0).mean())
+    log.info("  n=%d  misclassified=%d (%.1f%%)  baseline_rate=%.3f",
+             len(df_clean), int(y_misc.sum()), 100.0 * baseline, baseline)
     log.info("  AUROC:    %.4f ± %.4f", auroc.mean(), auroc.std())
     log.info("  Accuracy: %.4f ± %.4f", acc.mean(),   acc.std())
+    log.info("  PR-AUC (avg precision, positive=misclassified):  %.4f", pr_auc)
+    log.info("  Lift@k (ranked by P(misclassified), OOF scores):")
+    log.info("    %6s  %10s  %10s  %6s", "k", "precision@k", "baseline", "lift")
+    for k in k_values:
+        top_k     = sorted_idx[:k]
+        prec_at_k = y_misc[top_k].mean()
+        lift      = prec_at_k / baseline if baseline > 0 else float("nan")
+        log.info("    %6d  %10.3f  %10.3f  %6.2f×", k, prec_at_k, baseline, lift)
     log.info("  Coefficients (|coef| descending):")
     for _, row in coef_df.iterrows():
         log.info("    %-42s  %+.4f", row["feature"], row["coefficient"])
     log.info("────────────────────────────────────────────────────────────────────")
 
-    return auroc, acc, coef_df
+    return auroc, acc, pr_auc, coef_df
 
 
 # ── interaction analysis ───────────────────────────────────────────────────────
