@@ -396,7 +396,7 @@ def _analyse_interactions(df: pd.DataFrame):
 
 # ── main orchestration ─────────────────────────────────────────────────────────
 
-def run(cfg, checkpoint_path, device, save_dir, skip_influence):
+def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -443,8 +443,10 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence):
     pred = pred.cpu()
 
     # ── penultimate embeddings (single forward pass, all nodes) ───────────────
-    log.info("Computing penultimate GCN embeddings …")
-    if hasattr(model, "get_intermediate"):
+    if skip_embeddings:
+        embeddings = None
+    elif hasattr(model, "get_intermediate"):
+        log.info("Computing penultimate GCN embeddings …")
         embeddings = model.get_intermediate(data.x, data.edge_index, layer=k_hops).cpu()
     else:
         log.warning("Model has no get_intermediate() — falling back to output logits for embeddings")
@@ -506,6 +508,8 @@ def main():
                         help="Directory to save the CSV table.")
     parser.add_argument("--no-influence", action="store_true",
                         help="Skip Jacobian-L1 influence computation (much faster).")
+    parser.add_argument("--no-embeddings", action="store_true",
+                        help="Skip penultimate embedding similarity computation.")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -546,7 +550,7 @@ def main():
                 f"{cfg.get('results_dir', './results')}/."
             )
 
-    run(cfg, checkpoint_path, device, args.save_dir, args.no_influence)
+    run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings)
 
 
 if __name__ == "__main__":
