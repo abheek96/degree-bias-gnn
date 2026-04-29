@@ -234,6 +234,10 @@ def _run_logistic_regression(df: pd.DataFrame):
     from sklearn.preprocessing import StandardScaler
 
     available = [c for c in _FEATURE_COLS if c in df.columns]
+    # Exclude columns that are entirely NaN (e.g. influence cols under --no-influence)
+    available = [c for c in available if df[c].notna().any()]
+    if skipped := set(_FEATURE_COLS) - set(available):
+        log.info("Skipping all-NaN feature columns: %s", sorted(skipped))
     df_clean  = df[available + ["correct"]].dropna()
     n_dropped = len(df) - len(df_clean)
     if n_dropped:
