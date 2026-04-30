@@ -581,4 +581,45 @@ Saves `output/node_feature_table/{Dataset}_{Model}_node_features_seed{seed}.csv`
 
 ---
 
+## Degree, Normalisation, and Structural Position
+
+### Does high degree protect a node from misclassification?
+
+Not in general — it depends on neighbourhood purity.  GCN's symmetric normalisation scales each
+message (i→j) by 1/√(deg_i · deg_j), and this scaling applies equally to same-class and wrong-class
+signals.  The normalisation reduces the magnitude of each individual message but does not
+preferentially amplify the correct class.
+
+For a high-degree node with low purity (many wrong-class neighbours), the model accumulates a large
+number of wrong-class messages.  Each is down-weighted, but collectively they can produce a confident,
+wrong-class aggregate — potentially worse than a low-degree node in the same purity regime, where
+the focal node's own features retain comparatively more weight.
+
+The population-level positive correlation between degree and accuracy (observed in the LR coefficient)
+is a structural confound: in Cora and PubMed, high-degree nodes happen to sit in denser, more
+homophilic regions.  Once purity_2hop and same_train_ratio are controlled, degree drops near zero.
+**The protective mechanism is neighbourhood class composition, not degree itself.**
+
+### Do low-degree nodes necessarily have worse structural features?
+
+No.  The 1-hop ring is narrow (for a degree-1 node, purity_1hop ∈ {0, 1} — perfectly homophilic
+or perfectly heterophilic depending on a single neighbour), but the 2-hop neighbourhood can expand
+dramatically.  If a degree-1 node's single neighbour is a hub (e.g., degree 30), its 2-hop
+neighbourhood includes ~30 additional nodes — comparable to many intermediate-degree nodes.
+`purity_2hop` and `same_train_ratio_2hop` for such a node may be no worse than for a higher-degree
+node in a sparser region.
+
+**Low-degree nodes genuinely suffer when:**
+1. Their single direct neighbour is wrong-class — one strong, un-averaged wrong-class signal with
+   no other neighbours to dilute it.
+2. They are graph-peripheral — far from all training nodes, so even multi-hop propagation cannot
+   deliver supervision signal (`min_dist_to_train` and `avg_spl_to_train` are high).
+
+Both are structural position problems, not degree problems.  A low-degree node well-placed in a
+homophilic, training-node-adjacent region can be classified as reliably as a high-degree node in the
+same region.  The degree-bias effect applies most cleanly to the intersection of low degree,
+peripherality, and low local homophily — a correlation, not a causal chain.
+
+---
+
 *Last updated: 2026-04-29*
