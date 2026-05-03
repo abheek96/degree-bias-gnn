@@ -608,8 +608,10 @@ def main():
                         help="Skip Jacobian-L1 influence computation (much faster).")
     parser.add_argument("--no-embeddings", action="store_true",
                         help="Skip penultimate embedding similarity computation.")
-    parser.add_argument("--degree-only", action="store_true",
-                        help="Run LR with degree as the sole feature (baseline).")
+    parser.add_argument("--features", default=None,
+                        help="Comma-separated list of features to use in the LR "
+                             "(e.g. 'degree' or 'purity_1hop,purity_2hop'). "
+                             "Defaults to all available features.")
     parser.add_argument("--univariate-auroc", action="store_true",
                         help="Report univariate AUROC for every feature (no LR assumptions).")
 
@@ -652,7 +654,7 @@ def main():
                 f"{cfg.get('results_dir', './results')}/."
             )
 
-    feature_cols = ["degree"] if args.degree_only else None
+    feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
         feature_cols=feature_cols, univariate_auroc=args.univariate_auroc)
 
