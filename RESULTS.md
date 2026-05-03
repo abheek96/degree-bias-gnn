@@ -1,6 +1,6 @@
 # Quantitative Results — Predicting GCN Misclassification from Node Features
 
-> Last updated: 2026-05-01
+> Last updated: 2026-05-03
 
 ---
 
@@ -148,6 +148,50 @@ negative Δ is entirely a population effect — the with-embedding subset (208 n
 a harder subproblem than the full test set (659 nodes, 29.3% misc); structural features alone are
 already so discriminating on the full set (AUROC 0.949) that restricting to the ambiguous subset
 and adding embedding features cannot match that ceiling.
+
+### 4.4 Ablation baselines — Cora public (no embeddings, n=915)
+
+Two minimal-feature baselines establish the contribution of richer features.
+
+**Degree-only LR** (`--features degree`): uses degree as the sole predictor.
+**Purity-only LR** (`--features purity_1hop,purity_2hop`): uses the two neighbourhood purity
+fractions as the sole predictors.
+
+| Features | AUROC | PR-AUC | Lift@50 |
+|---|---|---|---|
+| Degree only (1 feature) | 0.566 ± 0.035 | 0.245 | 1.38× |
+| Purity only (2 features) | 0.813 ± 0.030 | 0.629 | **4.43×** |
+| Full structural + influence (16 features) | **0.913** ± 0.014 | **0.756** | 4.53× |
+
+**Univariate AUROC** (feature used directly as ranking score, no model) confirms degree's weakness
+is not a linearity artefact of logistic regression:
+
+| Feature | Univariate AUROC |
+|---|---|
+| `purity_2hop` | 0.808 |
+| `purity_1hop` | 0.800 |
+| `min_dist_to_same_class_train` | 0.757 |
+| `same_train_ratio_2hop` | 0.705 |
+| … | … |
+| `degree` | 0.565 |
+| `avg_spl_to_train` | 0.512 |
+
+**Interpretation:**
+
+- Degree is near-random as a predictor (univariate AUROC 0.565, LR AUROC 0.566), confirming it
+  carries almost no useful information about which individual nodes the GCN will fail on, despite
+  its well-known aggregate correlation with accuracy by degree group.
+- Two purity features alone recover **98% of the full model's Lift@50** (4.43× vs 4.53×).
+  The nodes the model is most confident will be misclassified are identified almost as well by
+  neighbourhood class composition alone as by the full 16-feature set.
+- The full feature set adds +0.10 AUROC and +0.13 PR-AUC over purity-only, improving the ranking
+  of the ambiguous middle — nodes with intermediate purity where SPL, training-node density, and
+  influence fraction features resolve uncertainty.
+- This yields a clean three-tier structure: **degree → near-random (0.57); purity → identifies
+  the obvious cases (0.81, Lift@50 4.43×); full structural + influence → resolves the ambiguous
+  middle (0.91).**
+
+Results above are for Cora public (no embeddings); baselines for other conditions are pending.
 
 ---
 
