@@ -313,6 +313,38 @@ def _build_rows(
     return rows
 
 
+# ── univariate AUROC ──────────────────────────────────────────────────────────
+
+def _univariate_auroc(df: pd.DataFrame):
+    """Log the univariate AUROC for every feature, using it directly as a ranking score.
+
+    AUROC is flipped when < 0.5 (anticorrelated features still carry signal).
+    This avoids the monotonicity assumption of logistic regression.
+    """
+    from sklearn.metrics import roc_auc_score
+
+    results = []
+    for col in _FEATURE_COLS:
+        if col not in df.columns:
+            continue
+        sub = df[[col, "correct"]].dropna()
+        if len(sub) < 10 or sub[col].nunique() < 2:
+            continue
+        y_m    = (sub["correct"] == 0).values.astype(int)
+        scores = sub[col].values.astype(float)
+        auroc  = roc_auc_score(y_m, scores)
+        auroc  = max(auroc, 1.0 - auroc)
+        results.append((col, auroc, len(sub)))
+
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    log.info("── Univariate AUROC (feature used directly as ranking score) ───────")
+    log.info("  %6s  %-42s  %s", "n", "feature", "AUROC")
+    for col, auroc, n in results:
+        log.info("  %6d  %-42s  %.4f", n, col, auroc)
+    log.info("────────────────────────────────────────────────────────────────────")
+
+
 # ── logistic regression ────────────────────────────────────────────────────────
 
 def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
@@ -456,7 +488,8 @@ def _analyse_interactions(df: pd.DataFrame):
 
 # ── main orchestration ─────────────────────────────────────────────────────────
 
-def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False, feature_cols=None):
+def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False,
+        feature_cols=None, univariate_auroc=False):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -545,6 +578,10 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         df.to_csv(path, index=False)
         log.info("Saved → %s", path)
 
+    # ── univariate AUROC ───────────────────────────────────────────────────────
+    if univariate_auroc:
+        _univariate_auroc(df)
+
     # ── logistic regression ────────────────────────────────────────────────────
     _run_logistic_regression(df, feature_cols=feature_cols)
 
@@ -572,6 +609,8 @@ def main():
                         help="Skip penultimate embedding similarity computation.")
     parser.add_argument("--degree-only", action="store_true",
                         help="Run LR with degree as the sole feature (baseline).")
+    parser.add_argument("--univariate-auroc", action="store_true",
+                        help="Report univariate AUROC for every feature (no LR assumptions).")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -614,7 +653,7 @@ def main():
 
     feature_cols = ["degree"] if args.degree_only else None
     run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
-        feature_cols=feature_cols)
+        feature_cols=feature_cols, univariate_auroc=args.univariate_auroc)
 
 
 if __name__ == "__main__":
