@@ -315,7 +315,7 @@ def _build_rows(
 
 # ── logistic regression ────────────────────────────────────────────────────────
 
-def _run_logistic_regression(df: pd.DataFrame):
+def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
     """5-fold stratified CV logistic regression; logs AUROC, PR-AUC, lift@k, and coefficients."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import average_precision_score
@@ -323,7 +323,8 @@ def _run_logistic_regression(df: pd.DataFrame):
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
 
-    available = [c for c in _FEATURE_COLS if c in df.columns]
+    cols      = feature_cols if feature_cols is not None else _FEATURE_COLS
+    available = [c for c in cols if c in df.columns]
     # Exclude columns that are entirely NaN (e.g. influence cols under --no-influence)
     available = [c for c in available if df[c].notna().any()]
     if skipped := set(_FEATURE_COLS) - set(available):
@@ -455,7 +456,7 @@ def _analyse_interactions(df: pd.DataFrame):
 
 # ── main orchestration ─────────────────────────────────────────────────────────
 
-def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False):
+def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False, feature_cols=None):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -545,7 +546,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         log.info("Saved → %s", path)
 
     # ── logistic regression ────────────────────────────────────────────────────
-    _run_logistic_regression(df)
+    _run_logistic_regression(df, feature_cols=feature_cols)
 
     # ── interaction test: high cosine sim × low purity ─────────────────────────
     _analyse_interactions(df)
@@ -569,6 +570,8 @@ def main():
                         help="Skip Jacobian-L1 influence computation (much faster).")
     parser.add_argument("--no-embeddings", action="store_true",
                         help="Skip penultimate embedding similarity computation.")
+    parser.add_argument("--degree-only", action="store_true",
+                        help="Run LR with degree as the sole feature (baseline).")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -609,7 +612,9 @@ def main():
                 f"{cfg.get('results_dir', './results')}/."
             )
 
-    run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings)
+    feature_cols = ["degree"] if args.degree_only else None
+    run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
+        feature_cols=feature_cols)
 
 
 if __name__ == "__main__":

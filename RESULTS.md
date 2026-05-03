@@ -1,6 +1,6 @@
 # Quantitative Results — Predicting GCN Misclassification from Node Features
 
-> Last updated: 2026-04-29
+> Last updated: 2026-05-01
 
 ---
 
@@ -111,11 +111,11 @@ Embedding features excluded (all NaN columns dropped automatically).  The LR fit
 
 | Dataset | Split | n | misc% | AUROC | PR-AUC | Lift@50 | Top predictor |
 |---|---|---|---|---|---|---|---|
-| Cora | public | 915 | 20.3% | **0.911** ± 0.021 | 0.741 | 4.23× | `same_train_ratio_2hop` |
-| Cora | random | 915 | 20.9% | **0.911** ± 0.039 | — | — | `purity_2hop` |
-| CiteSeer | random | 659 | 29.3% | **0.943** ± 0.018 | 0.881 | 3.28× | `min_dist_to_same_class_train` |
-| PubMed | random | 1000 | 21.2% | 0.861 ± 0.021 | 0.606 | 3.68× | `purity_2hop` |
-| PubMed | public | 1000 | 23.4% | 0.799 ± 0.037 | 0.581 | 3.50× | `purity_2hop` |
+| Cora | public | 915 | 20.3% | **0.913** ± 0.014 | 0.756 | 4.53× | `same_train_infl_frac_1hop` |
+| Cora | random | 915 | 20.9% | **0.922** ± 0.032 | 0.749 | 4.02× | `diff_train_infl_frac_1hop` |
+| CiteSeer | random | 659 | 29.3% | **0.949** ± 0.010 | 0.881 | 3.35× | `min_dist_to_same_class_train` |
+| PubMed | random | 1000 | 21.2% | 0.859 ± 0.020 | 0.597 | 3.49× | `purity_2hop` |
+| PubMed | public | 1000 | 23.4% | 0.810 ± 0.038 | 0.591 | 3.50× | `degree` |
 
 ### 4.2 With embedding features — mixed-neighbourhood subset
 
@@ -125,25 +125,28 @@ elevated misclassification rates relative to the full test set.
 
 | Dataset | Split | n | misc% | AUROC | PR-AUC | Lift@50 | Top predictor |
 |---|---|---|---|---|---|---|---|
-| Cora | random | 301 | 38.9% | **0.916** ± 0.038 | 0.866 | 2.37× | `emb_purity_delta` |
-| CiteSeer | random | 208 | 39.9% | 0.878 ± 0.028 | 0.827 | 2.05× | `min_dist_to_same_class_train` |
-| PubMed | random | 247 | 26.7% | 0.892 ± 0.018 | 0.741 | 2.92× | `avg_spl_to_same_class_train` |
-| PubMed | public | 214 | 26.2% | 0.866 ± 0.063 | 0.715 | 2.60× | `emb_sim_same_1hop` |
+| Cora | public | 296 | 32.1% | 0.873 ± 0.043 | 0.780 | 2.55× | `same_train_infl_frac_1hop` |
+| Cora | random | 301 | 38.9% | **0.928** ± 0.035 | 0.898 | 2.52× | `diff_train_infl_frac_1hop` |
+| CiteSeer | random | 208 | 39.9% | 0.883 ± 0.038 | 0.827 | 2.11× | `total_infl_diff_2hop` |
+| CiteSeer | public | 207 | 36.7% | 0.889 ± 0.056 | 0.826 | 2.34× | `min_dist_to_same_class_train` |
+| PubMed | random | 247 | 26.7% | 0.890 ± 0.022 | 0.727 | 2.84× | `avg_spl_to_same_class_train` |
+| PubMed | public | 214 | 26.2% | 0.859 ± 0.055 | 0.697 | 2.37× | `emb_sim_same_1hop` |
 
 ### 4.3 Embedding feature impact (paired comparison)
 
 | Dataset | Split | AUROC (no emb, n=full) | PR-AUC (no emb) | AUROC (with emb, n=mixed) | PR-AUC (with emb) | Δ AUROC |
 |---|---|---|---|---|---|---|
-| PubMed | public | 0.799 (n=1000) | 0.581 | 0.866 (n=214) | 0.715 | **+0.067** |
-| PubMed | random | 0.861 (n=1000) | 0.606 | 0.892 (n=247) | 0.741 | **+0.031** |
-| Cora | random | 0.911 (n=915) | — | 0.916 (n=301) | 0.866 | +0.005 |
-| CiteSeer | random | 0.943 (n=659) | 0.881 | 0.878 (n=208) | 0.827 | −0.065 |
+| PubMed | public | 0.810 (n=1000) | 0.591 | 0.859 (n=214) | 0.697 | **+0.049** |
+| PubMed | random | 0.859 (n=1000) | 0.597 | 0.890 (n=247) | 0.727 | **+0.031** |
+| Cora | random | 0.922 (n=915) | 0.749 | 0.928 (n=301) | 0.898 | +0.006 |
+| Cora | public | 0.913 (n=915) | 0.756 | 0.873 (n=296) | 0.780 | −0.040 |
+| CiteSeer | random | 0.949 (n=659) | 0.881 | 0.878 (n=208) | 0.827 | −0.071 |
 
 Note: the populations differ between the two conditions (full test set vs mixed-neighbourhood subset),
 so the Δ AUROC comparison is indicative rather than strictly controlled.  For CiteSeer the apparent
 negative Δ is entirely a population effect — the with-embedding subset (208 nodes, 39.9% misc) is
 a harder subproblem than the full test set (659 nodes, 29.3% misc); structural features alone are
-already so discriminating on the full set (AUROC 0.943) that restricting to the ambiguous subset
+already so discriminating on the full set (AUROC 0.949) that restricting to the ambiguous subset
 and adding embedding features cannot match that ceiling.
 
 ---
@@ -155,7 +158,7 @@ and adding embedding features cannot match that ceiling.
 AUROC 0.80–0.94 from a linear classifier on structural/model-derived features establishes that
 misclassification is not random — it is systematic and captured by neighbourhood-level quantities.
 The result holds across three datasets (Cora, CiteSeer, PubMed) and multiple split regimes.
-CiteSeer without embeddings achieves the highest AUROC of all conditions (0.943), despite having
+CiteSeer without embeddings achieves the highest AUROC of all conditions (0.949), despite having
 the highest baseline misclassification rate (29.6%).
 
 ### 5.2 Predictability varies with graph size and homophily
@@ -170,7 +173,7 @@ CiteSeer occupies a distinct position: its lower graph homophily (~74% vs ~81% f
 means the 2-hop ring is more class-heterogeneous (purity_2hop median = 0.789 vs ≈1.0 for Cora),
 making the purity signal stronger and more discriminating.  Its higher baseline misclassification
 rate (29.6% vs ~21%) reflects this lower homophily, yet structural features alone achieve the
-highest AUROC of all conditions (0.943 without embeddings) — counterintuitively, lower homophily
+highest AUROC of all conditions (0.949 without embeddings) — counterintuitively, lower homophily
 makes failure more structurally predictable, not less.
 
 ### 5.3 Predictability is robust to training split within Cora (0.911 on both splits)
@@ -178,16 +181,26 @@ makes failure more structurally predictable, not less.
 The identical AUROC on Cora public and Cora random splits confirms the finding is not an artefact
 of which specific nodes are labelled — it reflects a stable structural property of the graph.
 
-### 5.4 purity_2hop is the most consistent structural predictor
+### 5.4 purity_2hop is a consistent structural predictor; degree dominates in thin-signal conditions
 
-`purity_2hop` is the top or near-top predictor across all four no-embedding runs.  Higher fraction of
-same-class nodes in the cumulative 2-hop neighbourhood → more likely correct.  This is the clearest
-and most stable finding: the extended neighbourhood class composition is the single strongest
-structural determinant of GCN success.
+`purity_2hop` is the top or near-top predictor in the no-embedding runs, ranking 2nd on Cora
+public/random and PubMed public, and 1st on PubMed random and CiteSeer random.  Higher fraction of
+same-class nodes in the cumulative 2-hop neighbourhood → more likely correct.  It is the most
+stable structural signal across datasets.
 
-On Cora public, `same_train_ratio_2hop` takes the top position (+1.06) — a variant of the same
-concept, specific to training nodes.  On the public split, the 20 fixed training nodes per class
-create more structured variation in 2-hop training composition than a random placement would.
+With the influence fraction features added, `purity_2hop` is displaced to rank 2 by more
+informative predictors in several conditions:
+
+- **Cora public** (no emb): `same_train_infl_frac_1hop` (+1.267, rank 1) — an influence-weighted
+  variant of the same concept; the Jacobian budget share is more discriminating than the raw composition.
+- **Cora random** (no emb): `diff_train_infl_frac_1hop` (−1.918, rank 1) — wrong-class training
+  influence dominates.
+- **PubMed public** (no emb): `degree` (+1.294, rank 1) — with training signal too thin to make
+  fractions discriminating, degree emerges as the dominant proxy for structural advantage.
+  `purity_2hop` still ranks 2nd (+0.789), confirming it remains an important predictor even when
+  not top-ranked.
+- **CiteSeer random** (no emb): `min_dist_to_same_class_train` (−1.362, rank 1) — distance is the
+  binding constraint under lower homophily and sparse training signal.
 
 ### 5.5 Proximity to same-class training signal is consistently critical
 
@@ -211,13 +224,27 @@ neighbourhood, pulling its representation toward the wrong class.  This is consi
 `mean_cosine_sim_1hop` and `purity` having opposite effects: cosine similarity amplifies the
 purity signal (see §6).
 
-### 5.7 Degree is a weak and inconsistent predictor once structure is controlled
+### 5.7 Degree rises from weak proxy to dominant predictor in thin-signal conditions
 
-`degree` ranks 14th of 18 on Cora random (coef +0.09), 7th on PubMed random (+0.39), and near-zero
-within the mixed-neighbourhood subset (−0.01 to −0.34).  The positive coefficients in full-set
-runs reflect the general trend (higher degree → higher accuracy), but once neighbourhood composition
-is controlled degree carries little additional predictive power.  **Degree was a proxy for structural
-advantage, not the cause of it.**
+`degree` is weak when structural features are highly informative (rank 14 on Cora random, coef
++0.09; near-zero within the mixed-neighbourhood subset, −0.01 to −0.34).  It becomes moderately
+prominent when those features provide less signal (rank 7 on PubMed random, +0.39; rank 3 on Cora
+public no-embedding, +0.786).  The extreme case is **PubMed public without embeddings** with the
+new influence features: `degree` (+1.294) is the **top predictor of all 24 features**, outranking
+`purity_2hop` (+0.789) and `min_dist_to_same_class_train` (−0.628).
+
+The mechanism reflects a hierarchy of signal quality.  When influence fractions are discriminating
+(Cora, where training nodes are dense and nearby), they absorb degree's proxy role — degree then
+becomes residual.  When fractions are weak (PubMed, 20 training nodes per class across ~19K nodes),
+the Jacobian budget competition is too diffuse to discriminate: degree falls back as the dominant
+quantity-of-connections signal, since more neighbours statistically means more chance of reaching a
+training node.  This is the same quantity-of-connections effect noted in §5.10, but amplified when
+no influence-based feature can capture training-signal quality.
+
+**Degree was a proxy for structural advantage, not the cause of it** — but when better proxies are
+unavailable (thin training signal, PubMed regime), it is the best available one.  The positive
+coefficient in the full-set runs is not spurious; it is a population-level confound that carries
+real predictive content whenever the signal-quality features cannot compete.
 
 ### 5.8 Embedding-space purity is the dominant predictor for hard nodes
 
@@ -327,17 +354,20 @@ consequences:
    so this count carries more signal.
 
 **Without embeddings (full test set, n=659), the structural signal is extraordinarily strong.**
-AUROC reaches 0.943 — the highest of all conditions across all datasets — with PR-AUC 0.881 and
-Lift@50 = 3.28× (96% precision in the top-50 flagged nodes).  The top four predictors are all
-structural: `min_dist_to_same_class_train` (−1.36), `purity_2hop` (+1.28),
-`same_train_ratio_1hop` (+1.20), `same_train_ratio_2hop` (+1.18).  Their near-equal magnitudes
-suggest the LR is finding a combined "neighbourhood quality" axis rather than a single dominant
-feature — all four capture the same underlying quantity (access to same-class signal) from
-different angles.
+AUROC reaches 0.949 — the highest of all conditions across all datasets — with PR-AUC 0.881 and
+Lift@50 = 3.35× (96% precision in the top-50 flagged nodes).  With the influence fraction features
+included, the top predictors are: `min_dist_to_same_class_train` (−1.362), `purity_2hop` (+1.041),
+`same_train_infl_frac_2hop` (+0.939, rank 4), `diff_train_infl_frac_2hop` (−0.858, rank 5),
+`total_infl_diff_2hop` (−0.758, rank 7), and `same_train_infl_frac_1hop` (+0.701, rank 8).
+Unlike the public split (where influence fractions are near-zero), both 1-hop and 2-hop influence
+fractions carry real weight in the random split on the full test set — the more dispersed random
+training labels weaken the distance gradient and allow the Jacobian-weighted composition to become
+informative.  The structural features `min_dist_to_same_class_train` and `purity_2hop` still anchor
+the prediction, but the influence fractions add independent signal above them.
 
-**`purity_1hop` has a negative coefficient (−0.24) without embeddings**, seemingly contradicting
-its expected direction.  This is a collinearity artifact: `purity_2hop` (+1.28) and
-`same_train_ratio_1hop` (+1.20) are already capturing the 1-hop same-class signal.
+**`purity_1hop` has a negative coefficient without embeddings**, seemingly contradicting
+its expected direction.  This is a collinearity artifact: `purity_2hop` (+1.041) and
+`same_train_ratio_1hop` are already capturing the 1-hop same-class signal.
 `purity_1hop` then represents the residual — nodes with unexpectedly high 1-hop purity given
 their 2-hop composition and training ratios — which may actually correlate with edge cases where
 the 1-hop ring is clean but the wider neighbourhood is not, leaving the node structurally
@@ -354,6 +384,211 @@ opposite to its usually negative direction.  This is a collinearity artifact wit
 `min_dist_to_same_class_train` (−1.36 / −1.24), which dominates the same-class proximity signal.
 The conditional effect of average SPL given minimum distance can flip sign.  Interpret these two
 SPL features jointly rather than independently.
+
+### 5.13 Influence fraction outperforms raw influence count as a predictor
+
+`same_train_infl_frac_1hop` is the top predictor in both the Cora public with-embeddings run
+(n=296, coef +0.965) and the without-embeddings full-set run (n=915, coef +1.267) — the fraction
+of total Jacobian-L1 influence attributable to same-class training nodes at hop 1 outranks every
+structural, embedding, and raw influence feature in both population sizes.  This is a strictly more
+informative quantity than either `n_same_train_1hop` (count) or `same_train_ratio_1hop` (fraction
+of ring), because it incorporates the *relative Jacobian weight* each training node carries given
+the full neighbourhood's degree structure.
+
+**Why the fraction matters more than the count:**  A node can have several same-class training
+neighbours yet still be misclassified if those neighbours are high-degree hubs (each contributing
+low per-edge influence due to degree normalisation) while one low-degree diff-class training
+neighbour contributes a disproportionately large share of the influence budget.
+`same_train_infl_frac_1hop` captures this imbalance directly; raw counts and ratios do not.
+
+**Adding the new features improves all three metrics on Cora public (no embeddings):**
+AUROC 0.911→0.913, PR-AUC 0.741→0.756, Lift@50 4.23×→4.53×.  The top-50 flagged nodes are now
+misclassified at 92% vs the 20.3% baseline — the influence fraction features tighten the ranking.
+
+**The sign reversals for related features are a collinearity consequence**, not contradictions:
+- `same_train_ratio_1hop` (−0.301 / −0.515) and `total_infl_same_1hop` (−0.526 / −0.504) flip
+  negative in both runs while `same_train_infl_frac_1hop` is strongly positive — all three measure
+  same-class training presence at hop 1 from different angles.  Once the LR uses the fraction to
+  capture the influence-balance signal, the ratio and raw total represent residuals that can
+  correlate with failure in edge cases (a node with many high-degree same-class training neighbours,
+  all contributing diluted influence, while sitting in a heterophilic wider neighbourhood).
+- `n_diff_train_1hop` is near-zero or slightly positive in both runs — when same-class influence
+  fraction is controlled, having diff-class training neighbours indicates structural centrality
+  (proximity to labelled nodes generally), a mild success signal.
+
+**`diff_train_infl_frac_1hop` (−0.581 / −0.622) and `diff_train_infl_frac_2hop` (−0.277 / −0.257)**
+have the expected negative direction in both runs — nodes where diff-class training nodes command
+a large share of the total Jacobian budget at either hop are systematically misclassified.
+
+**`degree` rises to 3rd place (+0.786) in the no-embedding full-set run**, up from near-bottom in
+earlier runs without influence features.  Once `same_train_infl_frac_1hop` absorbs the
+quality-of-signal dimension (which class dominates the influence budget), degree captures a residual
+quantity-of-connections effect: more neighbours → larger total influence budget → more likely
+correct, holding the fraction constant.
+
+**`mean_cosine_sim_1hop` collapses to near-zero (+0.0005) in the no-embedding run** — completely
+absorbed by the influence fraction features.  When the Jacobian-weighted balance of same vs
+diff-class training signal is in the model, raw feature similarity adds nothing.
+
+**At hop 2**, same-class influence is near-zero or small in Cora public — 2-hop same-class
+influence carries negligible additional predictive power once hop-1 balance is controlled.  The
+2-hop diff-class features (`total_infl_diff_2hop` −0.230/−0.610, `diff_train_infl_frac_2hop`
+−0.277/−0.257) retain meaningful signal, suggesting 2-hop diff-class pressure contributes to
+failure even when the hop-1 influence balance is relatively favourable.  In Cora random, however,
+`same_train_infl_frac_2hop` (+0.573) is the 9th strongest predictor — 2-hop same-class training
+influence also carries protective signal in the random split, where the fixed public training nodes
+are replaced by a more dispersed labelling.
+
+**Asymmetry between same-class and diff-class influence fractions (Cora random with embeddings):**
+`diff_train_infl_frac_1hop` (−2.233) is the dominant predictor by a large margin — roughly 4×
+the magnitude of `same_train_infl_frac_1hop` (+0.521).  This asymmetry means that wrong-class
+training signal contaminating the influence budget is far more detrimental than the equivalent
+amount of same-class training signal is protective.  The GCN's decision boundary is more sensitive
+to being pulled by an incorrect label than to being reinforced by a correct one — consistent with
+the model being trained to minimise loss, making errors on the wrong-class signal immediately
+destructive rather than merely failing to benefit.
+
+This run also achieves perfect precision in the top-30 flagged nodes (Lift@30 = 2.57×,
+precision@30 = 100%) — every one of the 30 nodes most likely to be misclassified actually is.
+
+**`degree` flips to negative (−0.434) in the Cora random mixed-neighbourhood subset**, in contrast
+to its usually positive or near-zero coefficient.  In the mixed-neighbourhood population (nodes
+with both same-class and diff-class 1-hop neighbours), higher degree means proportionally more
+cross-class connections — once inside this structurally contested subset, more edges increase the
+likelihood that diff-class training nodes command a large share of the influence budget.  Degree is
+protective in the full population (more connections → more training signal on average) but becomes
+a liability within the mixed-neighbourhood subset (more connections → more wrong-class exposure).
+
+**Sign anomalies in the Cora random run** follow the same collinearity pattern as Cora public,
+but with additional reversals driven by the dominance of `diff_train_infl_frac_1hop`:
+- `n_diff_train_1hop` (+0.375) and `diff_train_ratio_1hop` (+0.286) flip positive — once the
+  fraction captures the influence imbalance, count and ratio of diff-class training neighbours
+  indicate structural centrality rather than failure risk.
+- `total_infl_diff_1hop` (+0.252) and `total_infl_same_1hop` (−0.579) both have counterintuitive
+  signs — the fraction features absorb the failure signal; the raw totals become residuals.
+- `min_dist_to_train` (−0.579) is negative alongside `min_dist_to_same_class_train` (−0.711) —
+  collinearity between the two distance features; being close to any training node is captured
+  partially by both.
+
+**`diff_train_infl_frac_1hop` is the top predictor in both the with-embedding (−2.233) and
+no-embedding (−1.918) runs for Cora random**, confirming it is the most stable and discriminating
+single feature in this condition regardless of whether embedding features are available.
+
+**`same_train_infl_frac_2hop` (+1.034) ranks above `same_train_infl_frac_1hop` (+0.923) on the
+full test set (no embeddings)**, the reverse of what is seen in the mixed-neighbourhood subset.
+On the full test set, more than half of nodes have purity_1hop = 1.0 — their 1-hop ring is
+entirely same-class, so `same_train_infl_frac_1hop` is uniformly high and less discriminating.
+The 2-hop fraction captures more variation across the full population: nodes that have good
+1-hop composition but poor 2-hop same-class training signal are still at risk.  In the
+mixed-neighbourhood subset (which excludes nodes with pure 1-hop rings), the 1-hop fraction
+becomes the more informative quantity because 1-hop composition already varies substantially.
+
+**`total_infl_diff_1hop` (−0.905) and `total_infl_diff_2hop` (−0.724)** both rank strongly on
+the full test set even alongside `diff_train_infl_frac_1hop` — the raw magnitude of diff-class
+influence at both hops adds information beyond the fraction alone, suggesting that absolute
+exposure to wrong-class signal matters independently of its relative share of the budget.
+
+**`mean_cosine_sim_1hop` retains a meaningful negative coefficient (−0.277) without embeddings**
+on the full test set, unlike in the mixed-neighbourhood with-embedding run where it collapsed to
+near-zero.  Without the embedding features to absorb the raw-feature signal, cosine similarity
+still carries residual predictive power.
+
+**Influence fraction features are weak for CiteSeer** — in stark contrast to Cora.  In the
+CiteSeer public with-embeddings run, `diff_train_infl_frac_1hop` (−0.139),
+`same_train_infl_frac_1hop` (+0.120), `same_train_infl_frac_2hop` (−0.155), and
+`diff_train_infl_frac_2hop` (+0.123) are all near-zero and rank in the bottom third of predictors.
+The dominant predictors are instead `min_dist_to_same_class_train` (−1.661),
+`min_dist_to_train` (+0.974, collinearity-flipped), and `total_infl_diff_2hop` (−0.911).
+
+The likely reason: CiteSeer's lower homophily and larger graph (3327 nodes, 120 training nodes
+total) make training signal sparse and unevenly distributed.  For many nodes the absolute
+*distance* to the nearest same-class training node is the binding constraint — whether a
+same-class or diff-class training node wins the influence competition matters less when the
+competition is weak to begin with (both parties contributing small fractions of a thin total
+budget).  In Cora's denser and more homophilic graph, training nodes are closer and their
+relative influence fractions carry more discriminating information.  This explains why
+`total_infl_diff_2hop` (−0.911) — an absolute magnitude, not a fraction — ranks 3rd for
+CiteSeer: the raw 2-hop diff-class exposure matters more than its share of the budget.
+
+**CiteSeer random vs public split — influence features matter more in the random split.**
+In the public split, `min_dist_to_same_class_train` (−1.661) dominates and influence fraction
+features are near-zero (all rank in the bottom third).  In the random split, `total_infl_diff_2hop`
+(−1.230) and `min_dist_to_same_class_train` (−1.178) are nearly tied at the top, and
+`same_train_infl_frac_2hop` (+0.751) ranks 3rd — the 2-hop influence features carry real weight.
+The mechanism: the public split places 20 fixed training nodes per class in structured graph
+positions, creating strong distance-based gradients that dominate prediction.  The random split
+disperses training nodes more evenly, weakening the distance signal and allowing the
+influence-weighted composition at 2-hop to become more informative.
+
+`same_train_infl_frac_1hop` is literally 0.000 for CiteSeer random **in the with-embeddings
+mixed-neighbourhood subset** — the 1-hop version of the fraction is entirely uninformative for
+structurally contested nodes in that restricted population.  The 2-hop fraction carries all the
+signal because same-class training nodes rarely appear at hop 1 for these ambiguous nodes; their
+influence enters primarily through hop-2 paths.  On the **full test set without embeddings**,
+however, `same_train_infl_frac_1hop` (+0.701) ranks 8th — the 1-hop fraction is informative once
+the analysis is not restricted to the mixed-neighbourhood subset, confirming that the 0.000
+coefficient is a population effect rather than a property of the feature itself.
+
+**PubMed public with embeddings: influence fraction features are weak and show sign reversals.**
+The dominant predictors are `emb_sim_same_1hop` (+1.270), `n_same_train_2hop` (+0.700),
+`min_dist_to_same_class_train` (−0.691), `emb_purity_delta` (+0.671), and `degree` (+0.619).
+Influence fraction features rank uniformly low and several flip sign: `total_infl_same_2hop`
+(−0.464), `same_train_infl_frac_2hop` (−0.274), and `diff_train_infl_frac_2hop` (+0.260) all
+have counterintuitive directions.  The mechanism is the same collinearity artifact seen in other
+runs: the embedding features absorb the signal, leaving influence features to represent residuals
+that can correlate with success in edge cases.  Compared to the previous PubMed public
+with-embeddings run (old feature set), adding the influence features slightly reduced AUROC
+(0.866 → 0.859) and PR-AUC (0.715 → 0.697) — they added noise without adding signal in this
+condition.  This is consistent with PubMed's thin training signal: with only 20 training nodes per
+class spread across ~19K nodes, the Jacobian budget competition is too diffuse for fraction-based
+features to discriminate well; absolute proximity (distance, embedding similarity) dominates.
+
+**PubMed random with embeddings: SPL features dominate; influence fractions are weak throughout.**
+`avg_spl_to_same_class_train` (−1.779, rank 1) and `avg_spl_to_train` (+1.394, rank 2, collinearity
+flip) together capture the same-class proximity signal: being far from same-class training nodes is
+the binding constraint, and being close to training nodes of any class is not helpful unless they
+are the right class.  Embedding features (`emb_purity_delta` +0.552, `emb_sim_same_1hop` +0.482)
+contribute at ranks 4 and 7, confirming that the model's learned resolution of structural ambiguity
+matters for this subset.  `total_infl_diff_1hop` (−0.520, rank 6) is the only influence feature
+with a meaningful and correctly-signed coefficient; all influence fraction features rank below 14
+and several have unexpected signs (`total_infl_same_2hop` −0.364, `same_train_infl_frac_2hop`
+−0.144).  `min_dist_to_same_class_train` (+0.162, rank 16) flips positive — collinearity with
+`avg_spl_to_same_class_train` which already dominates that signal.  The result mirrors PubMed
+public: thin training signal makes fraction-based features unreliable, and adding them slightly
+reduced AUROC (0.892 → 0.890) and PR-AUC (0.741 → 0.727).
+
+**PubMed random without embeddings: purity_2hop anchors; influence fractions add noise.**
+`purity_2hop` (+0.818, rank 1) retains the top position, consistent with the old feature set.
+The SPL pair `avg_spl_to_train` (+0.786) and `avg_spl_to_same_class_train` (−0.663) occupies
+ranks 2–3 with collinearity-flipped sign on the all-class distance.  `total_infl_diff_1hop`
+(−0.442, rank 9) and `total_infl_diff_2hop` (−0.383, rank 11) are correctly negative and carry
+moderate weight — raw diff-class influence magnitude retains signal even when fractions do not.
+However, influence fraction features are again weak or sign-reversed: `diff_train_infl_frac_2hop`
+(+0.315, rank 13) is wrong-signed, `same_train_infl_frac_2hop` (−0.083) and
+`total_infl_same_2hop` (−0.087) are also wrong-signed, and all fraction features rank below 13.
+AUROC, PR-AUC, and Lift@50 all decreased marginally versus the old feature set (0.861→0.859,
+0.606→0.597, 3.68×→3.49×), confirming that the influence fractions hurt slightly rather than
+helping.  The PubMed thin-signal regime consistently prevents fraction-based features from being
+useful: both splits and both embedding conditions show the same pattern.
+
+**PubMed public without embeddings: influence fractions are weak or sign-reversed; degree dominates.**
+AUROC improved modestly from 0.799 (old features) to 0.810, but the new influence features did not
+drive the improvement — `degree` (+1.294, rank 1) and `purity_2hop` (+0.789, rank 2) remain the
+anchors.  The sign-reversal pattern for same-class influence features mirrors the with-embeddings
+run: `total_infl_same_2hop` (−0.490), `same_train_infl_frac_2hop` (−0.461), and
+`total_infl_same_1hop` (−0.368) all flip negative, while `total_infl_diff_2hop` (−0.393) and
+`diff_train_infl_frac_1hop` (−0.327) are correctly negative.  Once degree absorbs the
+quantity-of-connections signal and `purity_2hop` captures neighbourhood composition, the same-class
+influence totals become residuals correlated with high-degree nodes in heterogeneous zones — the
+sign flips because high 2-hop same-class influence can accompany high 2-hop diff-class influence
+in large PubMed neighbourhoods where training signal is mixed.  This is the clearest case across
+all conditions where influence fractions fail to add value: the training signal is too thin and the
+neighbourhood-size variance too large for Jacobian budget shares to discriminate correctness.
+
+**CiteSeer public purity_1hop interaction test: cosine_sim adds nothing** (49.6% vs 49.4% in the
+low-purity group — essentially 0pp gap).  This is the cleanest demonstration across all datasets
+that purity alone can be sufficient: once a CiteSeer node has any cross-class 1-hop neighbour,
+its raw feature similarity to those neighbours is irrelevant to predicting failure.
 
 ---
 
@@ -374,19 +609,23 @@ homophilic 1-hop neighbourhood.  "Low purity" here means any node with at least 
 | Cora | public | **43.2%** | 7.1% | 37.6% | 9.1% | 55.6 | 0.000 |
 | Cora | random | **46.6%** | 8.5% | 40.5% | 5.5% | 77.7 | 0.000 |
 | CiteSeer | random | **53.7%** | 9.7% | 52.7% | 9.3% | 46.3 | 0.000 |
+| CiteSeer | public | **49.6%** | 12.4% | 49.4% | 7.2% | 38.2 | 0.000 |
 | PubMed | random | **41.2%** | 14.2% | 30.6% | 9.9% | 51.9 | 0.000 |
 | PubMed | public | **37.0%** | 17.4% | 37.2% | 13.8% | 22.2 | 0.000 |
 
 ### 6.2 Results (using purity_2hop)
 
-purity_2hop median varies: 1.000 for Cora, ~0.789 for CiteSeer (lower graph homophily makes the
-2-hop ring more class-heterogeneous).  See §6.3 for implications.
+purity_2hop median varies by dataset and split: 0.843 for Cora public, 0.854 for Cora random,
+0.789 for CiteSeer random, 0.800 for CiteSeer public, 0.834 for PubMed random, 0.859 for PubMed
+public.  All are sub-1.0 — the median split is structurally informative in every case, with the
+high-purity half having a genuinely clean 2-hop ring.  See §6.4 for implications.
 
 | Dataset | Split | high_sim + low_pur | high_sim + high_pur | low_sim + low_pur | low_sim + high_pur | χ² | p |
 |---|---|---|---|---|---|---|---|
 | Cora | public | **34.6%** | 5.6% | 33.7% | 7.7% | 32.8 | 0.000 |
 | Cora | random | **39.2%** | 5.2% | 35.7% | 3.5% | 60.0 | 0.000 |
 | CiteSeer | random | **55.3%** | 1.8% | **56.5%** | 5.0% | 65.9 | 0.000 |
+| CiteSeer | public | **56.4%** | 3.3% | 52.4% | 2.5% | 77.8 | 0.000 |
 | PubMed | random | **41.4%** | 8.0% | 32.6% | 2.9% | 75.3 | 0.000 |
 | PubMed | public | 34.5% | 14.7% | **37.8%** | 6.4% | 22.1 | 0.000 |
 
@@ -421,16 +660,18 @@ failure rate.
 
 | | low purity_2hop | high purity_2hop |
 |---|---|---|
-| high cosine_sim | 55.3% | 1.8% |
-| low cosine_sim | 56.5% | 5.0% |
+| high cosine_sim | 56.4% | 3.3% |
+| low cosine_sim | 52.4% | 2.5% |
 
 The cosine_sim rows are nearly identical within each purity column.  Purity_2hop alone determines
-the outcome: high 2-hop purity → almost never fails; low 2-hop purity → fails more than half the
-time regardless of feature similarity.  This is because CiteSeer's purity_2hop median of 0.789
-creates a genuinely meaningful structural split — the high-purity half has a clean 2-hop ring,
-the low-purity half has a substantially mixed one.  On Cora (purity_2hop median ≈ 1.0), the
-split is less discriminating, so cosine_sim picks up the residual variance and the interaction
-reappears.
+the outcome: high 2-hop purity → almost never fails (2.5–3.3%); low 2-hop purity → fails more
+than half the time regardless of feature similarity.  This is because CiteSeer's purity_2hop
+median of 0.800 creates a genuinely meaningful structural split — the high-purity half has a
+clean 2-hop ring, the low-purity half has a substantially mixed one.  For CiteSeer public purity_1hop, the cosine_sim interaction is completely absent: 49.6% vs 49.4%
+within the low-purity group — once a CiteSeer node has any cross-class 1-hop neighbour, feature
+similarity is irrelevant to predicting failure.  On Cora (purity_2hop median 0.843–0.854), the
+split is less extreme, so cosine_sim picks up residual variance and the interaction reappears
+(39.2% vs 35.7%).
 
 **Cora / PubMed: cosine_sim amplifies the purity effect.**
 
@@ -481,13 +722,16 @@ concentrates failures at 2–4× the overall rate.
    - Proximity to same-class training nodes (`min_dist_to_same_class_train`, `avg_spl_to_same_class_train`)
    - Presence of diff-class training nodes in the 1-hop ring (`diff_train_ratio_1hop`)
 
-4. **Degree is a weak predictor once neighbourhood composition is controlled** — it is a proxy for
-   structural advantage, not a causal driver.  High degree is not uniformly protective: in low-purity
-   neighbourhoods it accumulates many wrong-class signals, which can produce a confidently wrong
-   aggregate.  Similarly, low-degree nodes are not uniformly disadvantaged: their 2-hop neighbourhood
-   can expand significantly through high-degree 1-hop neighbours, compensating for the narrow 1-hop
-   ring.  The genuine risk factors for low-degree nodes are peripheral graph position (far from
-   training signal) and a single wrong-class direct neighbour, both of which are captured by SPL
+4. **Degree is a proxy for structural advantage, not a causal driver** — its importance is
+   inversely proportional to the availability of better signal-quality features.  In dense,
+   homophilic graphs with nearby training nodes (Cora), influence fraction features absorb degree's
+   proxy role and it drops to rank 14.  In large, thin-signal graphs (PubMed public, 20 training
+   nodes across ~19K nodes), no fraction-based feature can discriminate reliably and degree rises
+   to rank 1 (+1.294) as the best available quantity-of-connections proxy.  High degree is not
+   uniformly protective: in low-purity neighbourhoods it accumulates many wrong-class signals,
+   producing a confidently wrong aggregate.  Low-degree nodes are not uniformly disadvantaged:
+   their 2-hop neighbourhood can expand through high-degree 1-hop neighbours, and the genuine
+   risk factors (peripheral position, single wrong-class direct neighbour) are captured by SPL
    and purity features rather than degree itself.
 
 5. **Among structurally ambiguous nodes** (mixed 1-hop neighbourhoods, 26–39% misclassification),
