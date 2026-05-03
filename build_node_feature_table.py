@@ -358,9 +358,10 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
     cols      = feature_cols if feature_cols is not None else _FEATURE_COLS
     available = [c for c in cols if c in df.columns]
     # Exclude columns that are entirely NaN (e.g. influence cols under --no-influence)
-    available = [c for c in available if df[c].notna().any()]
-    if skipped := set(_FEATURE_COLS) - set(available):
-        log.info("Skipping all-NaN feature columns: %s", sorted(skipped))
+    skipped_nan = [c for c in available if not df[c].notna().any()]
+    available   = [c for c in available if df[c].notna().any()]
+    if skipped_nan:
+        log.info("Skipping all-NaN feature columns: %s", sorted(skipped_nan))
     df_clean  = df[available + ["correct"]].dropna()
     n_dropped = len(df) - len(df_clean)
     if n_dropped:
