@@ -426,7 +426,74 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
         log.info("    %-42s  %+.4f", row["feature"], row["coefficient"])
     log.info("────────────────────────────────────────────────────────────────────")
 
-    return auroc, acc, pr_auc, coef_df
+    return auroc, acc, pr_auc, coef_df, p_misc, y_misc
+
+
+# ── ROC / PR curve plot ────────────────────────────────────────────────────────
+
+def _plot_roc_pr(curves, baseline_rate, dataset, model_name, save_dir, show):
+    """Plot side-by-side ROC and PR curves for multiple feature sets.
+
+    curves: dict mapping label → (p_misc, y_misc)
+    """
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import (
+        average_precision_score,
+        precision_recall_curve,
+        roc_auc_score,
+        roc_curve,
+    )
+
+    _COLORS = {
+        "Degree only":   "#9E9E9E",
+        "Purity only":   "#F57C00",
+        "Full features": "#1565C0",
+    }
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    for label, (p_misc, y_misc) in curves.items():
+        color = _COLORS.get(label, "black")
+        auroc  = roc_auc_score(y_misc, p_misc)
+        pr_auc = average_precision_score(y_misc, p_misc)
+
+        fpr, tpr, _   = roc_curve(y_misc, p_misc)
+        prec, rec, _  = precision_recall_curve(y_misc, p_misc)
+
+        axes[0].plot(fpr, tpr, color=color, lw=1.8,
+                     label=f"{label}  (AUROC {auroc:.3f})")
+        axes[1].plot(rec, prec, color=color, lw=1.8,
+                     label=f"{label}  (PR-AUC {pr_auc:.3f})")
+
+    axes[0].plot([0, 1], [0, 1], "k--", lw=0.8, label="Random (0.500)")
+    axes[0].set_xlabel("False Positive Rate")
+    axes[0].set_ylabel("True Positive Rate")
+    axes[0].set_title("ROC curve")
+    axes[0].legend(loc="lower right", fontsize=8)
+    axes[0].set_xlim(0, 1); axes[0].set_ylim(0, 1)
+
+    axes[1].axhline(baseline_rate, color="k", ls="--", lw=0.8,
+                    label=f"Random ({baseline_rate:.3f})")
+    axes[1].set_xlabel("Recall")
+    axes[1].set_ylabel("Precision")
+    axes[1].set_title("Precision-Recall curve")
+    axes[1].legend(loc="upper right", fontsize=8)
+    axes[1].set_xlim(0, 1); axes[1].set_ylim(0, 1)
+
+    fig.suptitle(f"{dataset} · {model_name} — baseline comparison", fontsize=10)
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "roc_pr_curves")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, f"{dataset}_{model_name}_roc_pr.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 # ── interaction analysis ───────────────────────────────────────────────────────
@@ -490,7 +557,7 @@ def _analyse_interactions(df: pd.DataFrame):
 # ── main orchestration ─────────────────────────────────────────────────────────
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False,
-        feature_cols=None, univariate_auroc=False):
+        feature_cols=None, univariate_auroc=False, plot_roc=False, show=False):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -584,7 +651,23 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         _univariate_auroc(df)
 
     # ── logistic regression ────────────────────────────────────────────────────
-    _run_logistic_regression(df, feature_cols=feature_cols)
+    _, _, _, _, p_misc, y_misc = _run_logistic_regression(df, feature_cols=feature_cols)
+
+    # ── ROC / PR baseline comparison plot ─────────────────────────────────────
+    if plot_roc:
+        log.info("Running baseline suite for ROC/PR plot …")
+        curves = {}
+        for label, cols in [
+            ("Degree only",   ["degree"]),
+            ("Purity only",   ["purity_1hop", "purity_2hop"]),
+            ("Full features", None),
+        ]:
+            _, _, _, _, pm, ym = _run_logistic_regression(df, feature_cols=cols)
+            curves[label] = (pm, ym)
+        baseline_rate = y_misc.mean()
+        _plot_roc_pr(curves, baseline_rate,
+                     cfg["dataset"]["name"], cfg["model"]["name"],
+                     save_dir, show)
 
     # ── interaction test: high cosine sim × low purity ─────────────────────────
     _analyse_interactions(df)
@@ -614,6 +697,10 @@ def main():
                              "Defaults to all available features.")
     parser.add_argument("--univariate-auroc", action="store_true",
                         help="Report univariate AUROC for every feature (no LR assumptions).")
+    parser.add_argument("--plot-roc", action="store_true",
+                        help="Plot ROC and PR curves for degree-only, purity-only, and full LR.")
+    parser.add_argument("--show", action="store_true",
+                        help="Display plots interactively (requires a display).")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -656,7 +743,8 @@ def main():
 
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
-        feature_cols=feature_cols, univariate_auroc=args.univariate_auroc)
+        feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
+        plot_roc=args.plot_roc, show=args.show)
 
 
 if __name__ == "__main__":
