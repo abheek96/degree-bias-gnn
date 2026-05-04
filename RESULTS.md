@@ -1,6 +1,6 @@
 # Quantitative Results — Predicting GCN Misclassification from Node Features
 
-> Last updated: 2026-05-03
+> Last updated: 2026-05-04
 
 ---
 
@@ -191,7 +191,40 @@ is not a linearity artefact of logistic regression:
   the obvious cases (0.81, Lift@50 4.43×); full structural + influence → resolves the ambiguous
   middle (0.91).**
 
-Results above are for Cora public (no embeddings); baselines for other conditions are pending.
+### 4.5 Ablation baselines — Cora random vs public split comparison
+
+Running the same three baselines on the random split (n=915, baseline rate 20.9%) and comparing
+against the public split results above:
+
+| Features | Public AUROC | Public PR-AUC | Random AUROC | Random PR-AUC |
+|---|---|---|---|---|
+| Degree only | 0.561 | 0.245 | **0.457** | 0.211 |
+| Purity only | 0.810 | 0.629 | 0.841 | 0.622 |
+| Full features | 0.913 | 0.756 | **0.920** | 0.749 |
+
+**Degree drops below 0.5 AUROC on the random split (0.457).** The ROC curve dips visibly below
+the diagonal — degree is slightly anticorrelated with misclassification, meaning high-degree nodes
+are marginally more likely to be correctly classified.  In the public split, fixed training-node
+positions create weak degree-correlated structure (AUROC 0.561); in the random split, training
+nodes are scattered uniformly, breaking even that residual signal.  This confirms that degree's
+public-split predictive value was an artefact of training-node placement, not an intrinsic
+relationship between degree and GCN failure.
+
+**Purity is robust to split type.** AUROC improves slightly (0.810 → 0.841) while PR-AUC is
+nearly identical (0.629 → 0.622).  Neighbourhood class composition predicts failure regardless of
+how training nodes are assigned — purity is a property of the graph's label structure, not of the
+split.
+
+**Full features improves AUROC (0.913 → 0.920) but PR-AUC is slightly lower (0.756 → 0.749).**
+Higher overall discrimination coexists with marginally weaker minority-class detection at medium
+recall.  The random split's influence fraction features (`diff_train_infl_frac_1hop` dominates at
+coef −1.918) add strong signal that lifts AUROC, but the slightly higher baseline rate (0.209 vs
+0.203) makes precision harder to maintain across the full recall range.
+
+**The gap between purity-only and full features is consistent across both splits.**  In both cases,
+the two curves start at near-identical precision (~1.0) at low recall, then full features maintains
+substantially higher precision from recall ≈ 0.1 onward.  The richer features resolve the
+ambiguous middle; the obvious failures (low-purity nodes) are identified by purity alone.
 
 ---
 
