@@ -460,6 +460,13 @@ def _plot_roc_pr(curves, baseline_rate, dataset, model_name, save_dir, show):
         fpr, tpr, _   = roc_curve(y_misc, p_misc)
         prec, rec, _  = precision_recall_curve(y_misc, p_misc)
 
+        if label == "Purity only":
+            print(f"\n[{label}] PR curve — first 5 points (rec, prec):")
+            for i in range(min(5, len(rec))):
+                print(f"  [{i}]  rec={rec[i]:.4f}  prec={prec[i]:.4f}")
+            print(f"  Last : rec={rec[-1]:.4f}  prec={prec[-1]:.4f}")
+            print(f"  Total points (incl. sklearn anchor): {len(rec)}")
+
         axes[0].plot(fpr, tpr, color=color, lw=1.8,
                      label=f"{label}  (AUROC {auroc:.3f})")
         axes[1].plot(rec, prec, color=color, lw=1.8,
