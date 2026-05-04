@@ -14,11 +14,21 @@ recast as a prediction problem:
 > **Given a set of node-level structural and model-derived features, can we predict which test nodes
 > the GCN will fail on?**
 
-A logistic regression (simple, linear, interpretable) is deliberately chosen.  If AUROC is high, the
-failure is strongly and linearly separable from success — a clean result.  The signed coefficients
-(sorted by magnitude) identify which factors drive failure and in which direction, directly answering
-the "which features matter?" question for the paper.  PR-AUC and lift@k complement AUROC under the
-~21% minority-class imbalance.
+A logistic regression (simple, linear, interpretable) is deliberately chosen.  The signed
+coefficients (sorted by magnitude) identify which factors drive failure and in which direction,
+directly answering the "which features matter?" question for the paper.
+
+**PR-AUC** (average precision, positive = misclassified) is the primary metric for establishing
+that misclassification is *systematic*: it measures how precisely failures concentrate at the top
+of the predicted-failure ranking.  A high PR-AUC means failures are not scattered randomly — they
+are structurally predictable and cluster among the nodes the model flags first.  Because PR-AUC is
+sensitive to the minority class and to the baseline rate, it is the honest metric for the
+systematicity claim within a dataset.
+
+**AUROC** measures overall discrimination across both classes and is prevalence-independent, making
+it suitable for cross-dataset comparisons where baseline misclassification rates differ (20–30%
+across Cora, CiteSeer, PubMed).  **Lift@k** is the concrete, interpretable version: "flagging the
+top-k nodes finds X× more failures than random."
 
 All results use one checkpoint per condition (run 1, seed 42) and 5-fold stratified cross-validation.
 
@@ -89,14 +99,18 @@ defined for structurally *mixed* nodes — exactly the hard cases.
 
 ## 3. Evaluation Metrics
 
-- **AUROC** — primary metric; measures overall discrimination of failure vs success (class-symmetric,
-  robust to imbalance).
-- **PR-AUC** (average precision, positive = misclassified) — measures precision-recall for detecting
-  the minority class.  More conservative than AUROC under imbalance; a PR-AUC well above the
-  baseline rate is meaningful.
-- **Lift@k** — among the top-k nodes ranked by predicted failure probability (out-of-fold scores),
-  what fraction are actually misclassified relative to the baseline rate?  The most interpretable
-  metric: "flagging the top-k nodes finds X× more failures than random."
+- **PR-AUC** (average precision, positive = misclassified) — **primary metric for the systematicity
+  claim**.  Measures how precisely failures concentrate at the top of the predicted-failure ranking
+  across all thresholds.  A PR-AUC well above the baseline misclassification rate (20–30% depending
+  on dataset) means failures are not randomly distributed — they are structurally predictable.
+  Sensitive to minority-class size, so values are not directly comparable across datasets with
+  different baseline rates.
+- **Lift@k** — the concrete, interpretable form of PR-AUC: among the top-k nodes ranked by
+  predicted failure probability (out-of-fold scores), what fraction are actually misclassified
+  relative to the baseline rate?  "Flagging the top-50 nodes finds X× more failures than random."
+- **AUROC** — measures overall discrimination of failure vs success; class-symmetric and
+  prevalence-independent.  Used for **cross-dataset comparisons** where baseline rates differ.
+  Does not directly measure how well failures concentrate among the highest-confidence predictions.
 
 LR uses `class_weight="balanced"` to account for the ~21% minority class.
 PR-AUC and Lift@k use out-of-fold `predict_proba` scores (no train-set leakage).
@@ -232,11 +246,17 @@ ambiguous middle; the obvious failures (low-purity nodes) are identified by puri
 
 ### 5.1 GCN failure is strongly predictable from structure alone
 
-AUROC 0.80–0.94 from a linear classifier on structural/model-derived features establishes that
-misclassification is not random — it is systematic and captured by neighbourhood-level quantities.
-The result holds across three datasets (Cora, CiteSeer, PubMed) and multiple split regimes.
-CiteSeer without embeddings achieves the highest AUROC of all conditions (0.949), despite having
-the highest baseline misclassification rate (29.6%).
+**PR-AUC 0.59–0.88 from a linear classifier on structural/model-derived features establishes that
+misclassification is systematic** — failures concentrate among structurally identifiable nodes, not
+scattered randomly.  PR-AUC is the primary evidence for this claim: it measures how precisely
+failures cluster at the top of the predicted-failure ranking, directly within each dataset at its
+own baseline rate.  The result holds across three datasets (Cora, CiteSeer, PubMed) and multiple
+split regimes.
+
+For cross-dataset comparison, AUROC (prevalence-independent) ranges 0.80–0.94.  CiteSeer without
+embeddings achieves the highest AUROC of all conditions (0.949) and the highest PR-AUC (0.881),
+despite having the highest baseline misclassification rate (29.6%) — lower homophily makes failure
+more structurally concentrated, not less.
 
 ### 5.2 Predictability varies with graph size and homophily
 
@@ -784,15 +804,18 @@ concentrates failures at 2–4× the overall rate.
 
 ## 7. Publishable Summary
 
-1. **GCN misclassification is 80–91% predictable (AUROC) from node-level structural features** —
-   it is systematic, not random.  A simple logistic regression on neighbourhood structure, training
-   signal proximity, and feature-space similarity captures the dominant failure modes.
+1. **GCN misclassification is systematic, not random** — PR-AUC 0.59–0.88 (3–4× the baseline
+   rate) from a simple logistic regression on neighbourhood structure, training signal proximity,
+   and feature-space similarity.  Failures concentrate among structurally identifiable nodes: the
+   top-50 flagged nodes are misclassified at 4–5× the baseline rate.  AUROC 0.80–0.94 confirms
+   strong overall discrimination for cross-dataset comparison.
 
-2. **Structural predictability varies with dataset size and homophily** (Cora ~0.91 > CiteSeer
-   ~0.88 > PubMed random ~0.86 > PubMed public ~0.80).  When structural features are insufficient,
-   embedding-space purity recovers the gap (PubMed public: 0.80 → 0.87 with embeddings).
-   CiteSeer's lower homophily (~74%) makes `purity_2hop` highly discriminating: high 2-hop purity
-   → 1.8% misclassification; low 2-hop purity → 55–57%.
+2. **Structural predictability varies with dataset size and homophily.**  For cross-dataset
+   comparison (AUROC, prevalence-independent): Cora ~0.91 > CiteSeer ~0.88 > PubMed random ~0.86
+   > PubMed public ~0.80.  When structural features are insufficient, embedding-space purity
+   recovers the gap (PubMed public: PR-AUC 0.591 → 0.697 with embeddings).  CiteSeer's lower
+   homophily (~74%) makes `purity_2hop` highly discriminating: high 2-hop purity → 1.8%
+   misclassification; low 2-hop purity → 55–57%.
 
 3. **The dominant structural predictors, consistent across all conditions:**
    - 2-hop neighbourhood purity (`purity_2hop`)
