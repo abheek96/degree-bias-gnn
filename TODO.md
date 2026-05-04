@@ -277,4 +277,19 @@ The goal of this project is to establish whether degree-bias exists as a structu
 
 ---
 
-*Last updated: 2026-04-16*
+## 17. Fix embedding feature analysis methodology (EPV and self-selection)
+
+**Question:** The current with-embeddings LR (RESULTS_EMBEDDINGS.md §2) fits on n~207–296 nodes with ~15 features, giving events-per-variable (EPV) of 4–6 — below the threshold for stable coefficient estimates.  The mixed-neighbourhood subset is also self-selected (nodes with ≥1 same-class AND ≥1 diff-class 1-hop neighbour), not a random sample.  What is the appropriate methodology for confirming the embedding similarity claim?
+
+**Motivation:** The claim that embedding-space purity predicts misclassification for structurally ambiguous nodes is scientifically important but currently supported by underpowered LR experiments.  Coefficient signs and rankings in RESULTS_EMBEDDINGS.md should be treated as preliminary.
+
+**Approach (in priority order):**
+1. **Univariate AUROC of `emb_purity_delta` alone** — already supported by `--univariate-auroc`.  Single feature, no EPV concern, assumption-free.  Run for all conditions and report alongside the full-feature AUROC.
+2. **Median-split analysis** — split mixed-neighbourhood nodes by `emb_purity_delta` above/below median, compare misclassification rates directly.  Same structure as the χ² interaction test in RESULTS.md §6.  No model needed.
+3. **Embedding-only LR** (`--features emb_sim_same_1hop,emb_sim_diff_1hop,emb_purity_delta`) — 3 features, EPV rises to ~19–32.  Much more defensible.  Run for all conditions.
+
+Move validated results from RESULTS_EMBEDDINGS.md to RESULTS.md once methodology is confirmed.
+
+---
+
+*Last updated: 2026-05-04*
