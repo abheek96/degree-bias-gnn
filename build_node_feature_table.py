@@ -527,6 +527,44 @@ def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, 
         plt.close(fig)
 
 
+def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, show):
+    """Bar chart of mean |SHAP| per feature, sorted descending."""
+    import shap
+    import matplotlib.pyplot as plt
+
+    n_features = len(feature_names)
+    fig_h = max(5.0, n_features * 0.38 + 1.5)
+
+    shap.summary_plot(
+        shap_values,
+        feature_names=feature_names,
+        plot_type="bar",
+        show=False,
+        plot_size=(8, fig_h),
+    )
+    fig = plt.gcf()
+    fig.axes[0].set_xlabel("mean |SHAP value|  (mean absolute impact on log-odds of misclassification)")
+    fig.suptitle(
+        f"{dataset} · {model_name} — SHAP global feature importance (mean |SHAP|)\n"
+        "OOF across 5 folds",
+        fontsize=9,
+        y=1.01,
+    )
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "shap")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_bar.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 # ── ROC / PR curve plot ────────────────────────────────────────────────────────
 
 def _plot_roc_pr(curves, baseline_rate, dataset, model_name, save_dir, show):
@@ -781,6 +819,11 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         shap_values, X_raw, feat_names = _compute_shap_values(df, feature_cols=feature_cols)
         _plot_shap_beeswarm(
             shap_values, X_raw, feat_names,
+            cfg["dataset"]["name"], cfg["model"]["name"],
+            save_dir, show,
+        )
+        _plot_shap_bar(
+            shap_values, feat_names,
             cfg["dataset"]["name"], cfg["model"]["name"],
             save_dir, show,
         )
