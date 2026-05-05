@@ -429,6 +429,104 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
     return auroc, acc, pr_auc, coef_df, p_misc, y_misc
 
 
+# ── SHAP values ───────────────────────────────────────────────────────────────
+
+def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
+    """Compute OOF SHAP values via LinearExplainer across 5 CV folds.
+
+    Returns shap_values (positive = increases P(misclassified)), raw X, and feature names.
+    The LinearExplainer is exact for logistic regression; values are in log-odds space.
+    """
+    import shap
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import StratifiedKFold
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    cols      = feature_cols if feature_cols is not None else _FEATURE_COLS
+    available = [c for c in cols if c in df.columns]
+    available = [c for c in available if df[c].notna().any()]
+    df_clean  = df[available + ["correct"]].dropna()
+
+    X = df_clean[available].values.astype(float)
+    y = df_clean["correct"].values          # 1=correct, 0=misclassified
+
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("lr",     LogisticRegression(max_iter=2000, class_weight="balanced", random_state=42)),
+    ])
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    shap_vals = np.zeros((len(y), len(available)))
+
+    for fold_idx, (train_idx, test_idx) in enumerate(cv.split(X, y)):
+        X_tr, X_te = X[train_idx], X[test_idx]
+        y_tr       = y[train_idx]
+
+        pipe.fit(X_tr, y_tr)
+        scaler   = pipe.named_steps["scaler"]
+        lr_model = pipe.named_steps["lr"]
+
+        X_tr_sc = scaler.transform(X_tr)
+        X_te_sc = scaler.transform(X_te)
+
+        # masker uses training distribution as E[X] background
+        explainer = shap.LinearExplainer(
+            lr_model,
+            masker=shap.maskers.Independent(X_tr_sc),
+        )
+        # sv shape: [n_test, n_features] for positive class (y=1=correct)
+        sv = explainer.shap_values(X_te_sc)
+        shap_vals[test_idx] = sv
+        log.info("  SHAP fold %d/%d done", fold_idx + 1, cv.n_splits)
+
+    # Negate: SHAP for misclassification (positive SHAP → higher P(misclassified))
+    return -shap_vals, X, available
+
+
+def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, save_dir, show):
+    """Beeswarm summary plot of per-instance SHAP values for misclassification prediction.
+
+    Color = raw (unscaled) feature value.  x-axis = SHAP value in log-odds space.
+    Features sorted by mean |SHAP| descending.
+    """
+    import shap
+    import matplotlib.pyplot as plt
+
+    n_features = len(feature_names)
+    fig_h = max(5.0, n_features * 0.38 + 1.5)
+
+    shap.summary_plot(
+        shap_values,
+        X_raw,
+        feature_names=feature_names,
+        plot_type="dot",
+        show=False,
+        plot_size=(10, fig_h),
+    )
+    fig = plt.gcf()
+    fig.axes[0].set_xlabel("SHAP value  (impact on log-odds of misclassification)")
+    fig.suptitle(
+        f"{dataset} · {model_name} — SHAP feature importance\n"
+        "(positive = increases P(misclassified), OOF across 5 folds)",
+        fontsize=9,
+        y=1.01,
+    )
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "shap")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_beeswarm.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 # ── ROC / PR curve plot ────────────────────────────────────────────────────────
 
 def _plot_roc_pr(curves, baseline_rate, dataset, model_name, save_dir, show):
@@ -564,7 +662,8 @@ def _analyse_interactions(df: pd.DataFrame):
 # ── main orchestration ─────────────────────────────────────────────────────────
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False,
-        feature_cols=None, univariate_auroc=False, plot_roc=False, show=False):
+        feature_cols=None, univariate_auroc=False, plot_roc=False, show=False,
+        compute_shap=False):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -676,6 +775,16 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                      cfg["dataset"]["name"], cfg["model"]["name"],
                      save_dir, show)
 
+    # ── SHAP beeswarm ──────────────────────────────────────────────────────────
+    if compute_shap:
+        log.info("Computing SHAP values (5-fold OOF, LinearExplainer) …")
+        shap_values, X_raw, feat_names = _compute_shap_values(df, feature_cols=feature_cols)
+        _plot_shap_beeswarm(
+            shap_values, X_raw, feat_names,
+            cfg["dataset"]["name"], cfg["model"]["name"],
+            save_dir, show,
+        )
+
     # ── interaction test: high cosine sim × low purity ─────────────────────────
     _analyse_interactions(df)
 
@@ -708,6 +817,8 @@ def main():
                         help="Plot ROC and PR curves for degree-only, purity-only, and full LR.")
     parser.add_argument("--show", action="store_true",
                         help="Display plots interactively (requires a display).")
+    parser.add_argument("--shap", action="store_true",
+                        help="Compute OOF SHAP values and save a beeswarm summary plot.")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -751,7 +862,7 @@ def main():
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
         feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
-        plot_roc=args.plot_roc, show=args.show)
+        plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap)
 
 
 if __name__ == "__main__":
