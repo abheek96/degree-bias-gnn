@@ -434,7 +434,9 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
 def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
     """Compute OOF SHAP values via LinearExplainer across 5 CV folds.
 
-    Returns shap_values (positive = increases P(misclassified)), raw X, and feature names.
+    Returns shap_values (positive = increases P(misclassified)), raw X,
+    feature names, per-instance base values, and graph node indices aligned
+    to the rows of shap_values / X.
     The LinearExplainer is exact for logistic regression; values are in log-odds space.
     """
     import shap
@@ -446,10 +448,15 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
     cols      = feature_cols if feature_cols is not None else _FEATURE_COLS
     available = [c for c in cols if c in df.columns]
     available = [c for c in available if df[c].notna().any()]
-    df_clean  = df[available + ["correct"]].dropna()
 
-    X = df_clean[available].values.astype(float)
-    y = df_clean["correct"].values          # 1=correct, 0=misclassified
+    keep = available + ["correct"]
+    if "node_idx" in df.columns:
+        keep = ["node_idx"] + keep
+    df_clean = df[keep].dropna(subset=available + ["correct"])
+
+    X          = df_clean[available].values.astype(float)
+    y          = df_clean["correct"].values          # 1=correct, 0=misclassified
+    node_idxs  = df_clean["node_idx"].values.astype(int) if "node_idx" in df_clean.columns else np.arange(len(y))
 
     pipe = Pipeline([
         ("scaler", StandardScaler()),
@@ -457,7 +464,8 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
     ])
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-    shap_vals = np.zeros((len(y), len(available)))
+    shap_vals   = np.zeros((len(y), len(available)))
+    base_vals   = np.zeros(len(y))
 
     for fold_idx, (train_idx, test_idx) in enumerate(cv.split(X, y)):
         X_tr, X_te = X[train_idx], X[test_idx]
@@ -478,10 +486,11 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
         # sv shape: [n_test, n_features] for positive class (y=1=correct)
         sv = explainer.shap_values(X_te_sc)
         shap_vals[test_idx] = sv
+        base_vals[test_idx] = explainer.expected_value
         log.info("  SHAP fold %d/%d done", fold_idx + 1, cv.n_splits)
 
     # Negate: SHAP for misclassification (positive SHAP → higher P(misclassified))
-    return -shap_vals, X, available
+    return -shap_vals, X, available, -base_vals, node_idxs
 
 
 def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, save_dir, show):
@@ -563,6 +572,79 @@ def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, sh
         plt.show()
     else:
         plt.close(fig)
+
+
+def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
+                         feature_names, target_node_idxs, df,
+                         dataset, model_name, save_dir, show):
+    """Waterfall plot of SHAP values for specific graph node indices.
+
+    Each requested node gets its own figure showing per-feature contributions
+    from the base value to the final log-odds prediction.
+
+    Parameters
+    ----------
+    shap_values      : np.ndarray [n, n_features]  (positive = increases P(misclassified))
+    X_raw            : np.ndarray [n, n_features]   raw (unscaled) feature values
+    base_values      : np.ndarray [n]               per-instance expected log-odds
+    node_idxs        : np.ndarray [n]               graph node index for each row
+    feature_names    : list[str]
+    target_node_idxs : list[int]                    graph node indices to plot
+    df               : pd.DataFrame                 full feature table (for metadata)
+    dataset, model_name : str
+    save_dir, show   : str/None, bool
+    """
+    import shap
+    import matplotlib.pyplot as plt
+
+    node_to_row = {int(nid): i for i, nid in enumerate(node_idxs)}
+
+    for node_idx in target_node_idxs:
+        if node_idx not in node_to_row:
+            log.warning("Node %d not found in SHAP rows (not a test node or dropped due to NaN) — skipping", node_idx)
+            continue
+
+        row = node_to_row[node_idx]
+        exp = shap.Explanation(
+            values      = shap_values[row],
+            base_values = base_values[row],
+            data        = X_raw[row],
+            feature_names = feature_names,
+        )
+
+        # Pull metadata for the title from the feature table
+        meta_row = df[df["node_idx"] == node_idx]
+        if not meta_row.empty:
+            deg     = int(meta_row["degree"].iloc[0])
+            pur     = meta_row["purity_1hop"].iloc[0]
+            correct = int(meta_row["correct"].iloc[0])
+            status  = "correct" if correct else "misclassified"
+            subtitle = f"degree={deg}  purity_1hop={pur:.2f}  {status}"
+        else:
+            subtitle = ""
+
+        plt.figure(figsize=(9, max(4.0, len(feature_names) * 0.38 + 1.5)))
+        shap.plots.waterfall(exp, show=False)
+        fig = plt.gcf()
+        fig.axes[0].set_title(
+            f"{dataset} · {model_name} — node {node_idx}\n"
+            f"{subtitle}\n"
+            "(positive SHAP = increases P(misclassified))",
+            fontsize=9,
+        )
+        fig.tight_layout()
+
+        if save_dir:
+            sub  = os.path.join(save_dir, "shap")
+            os.makedirs(sub, exist_ok=True)
+            path = os.path.join(sub, f"{dataset}_{model_name}_shap_waterfall_node{node_idx}.png")
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            log.info("Saved → %s", path)
+
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
 
 
 # ── ROC / PR curve plot ────────────────────────────────────────────────────────
@@ -701,7 +783,7 @@ def _analyse_interactions(df: pd.DataFrame):
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False,
         feature_cols=None, univariate_auroc=False, plot_roc=False, show=False,
-        compute_shap=False):
+        compute_shap=False, shap_nodes=None):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -813,20 +895,29 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                      cfg["dataset"]["name"], cfg["model"]["name"],
                      save_dir, show)
 
-    # ── SHAP beeswarm ──────────────────────────────────────────────────────────
-    if compute_shap:
+    # ── SHAP beeswarm / waterfall ──────────────────────────────────────────────
+    if compute_shap or shap_nodes:
         log.info("Computing SHAP values (5-fold OOF, LinearExplainer) …")
-        shap_values, X_raw, feat_names = _compute_shap_values(df, feature_cols=feature_cols)
-        _plot_shap_beeswarm(
-            shap_values, X_raw, feat_names,
-            cfg["dataset"]["name"], cfg["model"]["name"],
-            save_dir, show,
-        )
-        _plot_shap_bar(
-            shap_values, feat_names,
-            cfg["dataset"]["name"], cfg["model"]["name"],
-            save_dir, show,
-        )
+        shap_values, X_raw, feat_names, base_values, shap_node_idxs = \
+            _compute_shap_values(df, feature_cols=feature_cols)
+        if compute_shap:
+            _plot_shap_beeswarm(
+                shap_values, X_raw, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+            )
+            _plot_shap_bar(
+                shap_values, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+            )
+        if shap_nodes:
+            _plot_shap_waterfall(
+                shap_values, X_raw, base_values, shap_node_idxs,
+                feat_names, shap_nodes, df,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+            )
 
     # ── interaction test: high cosine sim × low purity ─────────────────────────
     _analyse_interactions(df)
@@ -862,6 +953,9 @@ def main():
                         help="Display plots interactively (requires a display).")
     parser.add_argument("--shap", action="store_true",
                         help="Compute OOF SHAP values and save a beeswarm summary plot.")
+    parser.add_argument("--shap-nodes", default=None,
+                        help="Comma-separated graph node indices for per-node SHAP waterfall plots "
+                             "(e.g. '1362,42'). Implies SHAP computation.")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -903,9 +997,11 @@ def main():
             )
 
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
+    shap_nodes   = [int(n.strip()) for n in args.shap_nodes.split(",")] if args.shap_nodes else None
     run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
         feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
-        plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap)
+        plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap,
+        shap_nodes=shap_nodes)
 
 
 if __name__ == "__main__":
