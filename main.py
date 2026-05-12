@@ -346,6 +346,7 @@ def main():
             cfg,
             save_dir=exec_dir if plot_cfg.get("save", True) else None,
             show=plot_cfg.get("show", False),
+            overall_acc=float(test_mean),
         )
 
     if plot_cfg.get("neighborhood_cardinality", False) and cardinality_by_k:
@@ -401,6 +402,7 @@ def main():
         plot_acc_vs_degree(
             deg_acc_results, cfg,
             save_dir=save_dir, show=plot_cfg.get("show", False),
+            overall_acc=float(test_mean),
         )
         plot_acc_vs_degree_by_layers(
             results_by_label, cfg, save_dir=save_dir, show=plot_cfg.get("show", False),

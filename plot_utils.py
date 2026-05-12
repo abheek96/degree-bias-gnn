@@ -216,7 +216,7 @@ def _count_bars(ax_main, pos, counts):
 
 # ── public entry points ────────────────────────────────────────────────────────
 
-def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
+def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False, overall_acc=None):
     """Plot test-node accuracy vs. node degree.
 
     Single run  — scatter (bubble size ∝ node count) with WLS trend and Δ subplot.
@@ -229,6 +229,11 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
     cfg : dict
     save_dir : str or None
     show : bool
+    overall_acc : float or None
+        Overall mean test accuracy to draw as a reference line.  When provided
+        this value is used directly (matches the logged metric); when None the
+        function falls back to computing a degree-weighted estimate from the
+        per-degree counts.
     """
     n_runs      = len(run_results)
     all_degrees, deg_data = _collect(run_results)
@@ -239,28 +244,32 @@ def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False):
 
     if n_runs == 1:
         _plot_single(all_degrees, pos, deg_data, subtitle, prefix,
-                     save_dir, show, run_idx=0)
+                     save_dir, show, run_idx=0, overall_acc=overall_acc)
     else:
-        _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show)
+        _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show,
+                          overall_acc=overall_acc)
         base_seed = cfg.get("seed", 42)
         for r in range(n_runs):
             seed = base_seed + r
             _plot_single(all_degrees, pos, deg_data, subtitle, prefix,
-                         save_dir, show, run_idx=r, seed=seed)
+                         save_dir, show, run_idx=r, seed=seed, overall_acc=overall_acc)
 
 
 # ── single run: scatter + OLS trend + Δ subplot ────────────────────────────────
 
 def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show,
-                 run_idx=0, seed=None):
+                 run_idx=0, seed=None, overall_acc=None):
     counts   = [len(deg_data[d][run_idx]) for d in all_degrees]
     mean_acc = [
         float(deg_data[d][run_idx].mean()) if counts[i] > 0 else np.nan
         for i, d in enumerate(all_degrees)
     ]
     n_test  = sum(counts)
-    overall = (sum(a * c for a, c in zip(mean_acc, counts) if not np.isnan(a))
-               / n_test)
+    if overall_acc is not None:
+        overall = overall_acc
+    else:
+        overall = (sum(a * c for a, c in zip(mean_acc, counts) if not np.isnan(a))
+                   / n_test)
 
     max_count   = max(counts) or 1
     bubble_size = [max(30, 700 * c / max_count) for c in counts]
@@ -304,7 +313,8 @@ def _plot_single(all_degrees, pos, deg_data, subtitle, prefix, save_dir, show,
 
 # ── multiple runs: seed-to-seed variability per degree ─────────────────────────
 
-def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show):
+def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save_dir, show,
+                      overall_acc=None):
     counts = [len(deg_data[d][0]) for d in all_degrees]
     n_test = sum(counts)
 
@@ -313,9 +323,12 @@ def _plot_across_runs(all_degrees, pos, deg_data, n_runs, subtitle, prefix, save
         means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
         per_run_means.append(means if means else [np.nan])
 
-    median_accs = [float(np.median(m)) for m in per_run_means]
-    overall     = (sum(a * c for a, c in zip(median_accs, counts) if not np.isnan(a))
-                   / n_test)
+    if overall_acc is not None:
+        overall = overall_acc
+    else:
+        median_accs = [float(np.median(m)) for m in per_run_means]
+        overall     = (sum(a * c for a, c in zip(median_accs, counts) if not np.isnan(a))
+                       / n_test)
 
     fig, ax_main = plt.subplots(
         figsize=(_fig_w(len(all_degrees)), 5),
@@ -1507,6 +1520,18 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     for patch in bp["boxes"]:
         patch.set_facecolor("#e67e22")
         patch.set_alpha(0.80)
+
+    # Strip plot so extreme values (0% / 100%) are visible even when the
+    # whisker collapses to zero length (e.g. degree=1 where Q1=0 exactly).
+    rng = np.random.default_rng(0)
+    for xi, vals in zip(pos, box_data):
+        clean = vals[~np.isnan(vals)]
+        if len(clean) == 0:
+            continue
+        jitter = rng.uniform(-0.18, 0.18, size=len(clean))
+        ax.scatter(xi + jitter, clean,
+                   s=6, color="#7d3c00", alpha=0.35,
+                   edgecolors="none", zorder=4)
 
     # Overall mean purity (weighted by node count)
     valid_pairs = [(m, c) for m, c in zip(mean_purs, counts) if not np.isnan(m)]
