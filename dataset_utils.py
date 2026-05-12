@@ -22,10 +22,12 @@ def load_or_create_split(dataset_cfg, split: str, seed: int,
     """
     from dataset import load_dataset
 
-    cc_tag = "CC" if dataset_cfg.get("use_cc", False) else "noCC"
-    name   = dataset_cfg["name"]
-    fname  = f"{name}_{split}_{cc_tag}_seed{seed}.pt"
-    path   = os.path.join(cache_dir, fname)
+    cc_tag   = "CC" if dataset_cfg.get("use_cc", False) else "noCC"
+    fix_test = dataset_cfg.get("fix_test_to_public", False)
+    ft_tag   = "_fixtest" if (fix_test and split == "random") else ""
+    name     = dataset_cfg["name"]
+    fname    = f"{name}_{split}{ft_tag}_{cc_tag}_seed{seed}.pt"
+    path     = os.path.join(cache_dir, fname)
 
     if os.path.exists(path):
         log.info("Loading cached split: %s", path)
@@ -123,6 +125,38 @@ def apply_split(data, split, dataset_cfg):
     num_classes = int(data.y.max().item()) + 1
     num_train_per_class = dataset_cfg.get("num_train_per_class", 20)
     num_val = dataset_cfg.get("num_val", 500)
+
+    fix_test = dataset_cfg.get("fix_test_to_public", False)
+
+    if (fix_test
+            and hasattr(data, "test_mask")
+            and data.test_mask is not None
+            and data.test_mask.dim() == 1):
+        # Reuse the public split's test nodes; randomise only train and val.
+        test_mask = data.test_mask.clone()
+        log.info("fix_test_to_public: keeping %d public test nodes",
+                 test_mask.sum().item())
+
+        train_mask = torch.zeros(num_nodes, dtype=torch.bool)
+        val_mask   = torch.zeros(num_nodes, dtype=torch.bool)
+
+        for c in range(num_classes):
+            idx  = ((data.y == c) & ~test_mask).nonzero(as_tuple=False).view(-1)
+            perm = torch.randperm(idx.size(0))[:num_train_per_class]
+            train_mask[idx[perm]] = True
+
+        remaining = (~train_mask & ~test_mask).nonzero(as_tuple=False).view(-1)
+        remaining = remaining[torch.randperm(remaining.size(0))]
+        val_mask[remaining[:num_val]] = True
+
+        data = data.clone()
+        data.train_mask = train_mask
+        data.val_mask   = val_mask
+        data.test_mask  = test_mask
+
+        log.info("Random split (fix_test_to_public): %d train  %d val  %d test",
+                 train_mask.sum().item(), val_mask.sum().item(), test_mask.sum().item())
+        return data
 
     # Match num_test to the public split when available.
     #

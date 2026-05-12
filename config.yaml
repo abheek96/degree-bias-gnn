@@ -12,6 +12,7 @@ dataset:
   num_train_per_class: 20
   num_val: 500
   num_test: 1000
+  fix_test_to_public: false   # random split only: keep public-split test nodes, randomise train/val
 
 model:
   name: GCN
