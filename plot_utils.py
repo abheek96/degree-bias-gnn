@@ -1017,86 +1017,30 @@ def plot_spl_combined_vs_degree(
 
     fig_w = _fig_w(n_deg)
 
-    # ── Figure 1: base ────────────────────────────────────────────────────────
-    fig1, (ax_top1, ax_bot1) = plt.subplots(
-        2, 1, figsize=(fig_w, 7), sharex=True,
-        gridspec_kw={"height_ratios": [3, 1]},
-    )
-    _draw_boxplots(ax_top1)
-    ax_top1.set_title(f"Avg. SPL to Training Nodes vs. Degree\n{subtitle}", fontsize=11)
-    ax_top1.legend(handles=spl_handles, fontsize=9, loc="upper left", framealpha=0.9)
-    plt.setp(ax_top1.get_xticklabels(), visible=True)
-
-    ax_bot1.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
-    ax_bot1.set_ylabel("# test nodes", fontsize=9, color="grey")
-    ax_bot1.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_bot1.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-    _x_axis(ax_bot1)
-
-    fig1.tight_layout()
-    _save(fig1, _subdir(save_dir, "spl_vs_degree"),
-          f"{prefix}_spl_combined_vs_degree.png", show)
-
-    # ── Figure 2: two-panel — SPL + accuracy + labelling ratio / Δ purity ──────
-    has_acc    = deg_acc_results is not None
-    has_purity = (purity_by_k is not None and len(purity_by_k) >= 2)
-    has_lr     = has_labeled_neighbor is not None
-    if not (has_acc or has_purity or has_lr):
+    # ── Figure: SPL boxplots + accuracy overlay ───────────────────────────────
+    if deg_acc_results is None:
         return
 
-    # ── pre-compute Δ purity (test nodes only) ────────────────────────────────
-    dp_means = None
-    k_lo = k_hi = None
-    if has_purity:
-        k_keys     = sorted(purity_by_k.keys())
-        k_lo, k_hi = k_keys[0], k_keys[-1]
-        delta_all  = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
-        dp_means   = np.array([
-            float(delta_all[deg == d][~torch.isnan(delta_all[deg == d])].mean())
-            if (deg == d).any() else float("nan")
-            for d in unique_degrees
-        ])
+    _, deg_data = _collect(deg_acc_results)
+    n_runs = len(deg_acc_results)
+    _med, _q1, _q3 = [], [], []
+    for d in unique_degrees:
+        means = [float(deg_data[d][r].mean()) for r in range(n_runs)
+                 if len(deg_data[d][r]) > 0]
+        if not means:
+            _med.append(np.nan); _q1.append(np.nan); _q3.append(np.nan)
+        else:
+            _med.append(float(np.median(means)))
+            _q1.append(float(np.percentile(means, 25)))
+            _q3.append(float(np.percentile(means, 75)))
+    acc_median = np.array(_med)
+    acc_q1     = np.array(_q1)
+    acc_q3     = np.array(_q3)
 
-    # ── pre-compute accuracy ───────────────────────────────────────────────────
-    acc_median = acc_q1 = acc_q3 = n_runs = None
-    if has_acc:
-        _, deg_data = _collect(deg_acc_results)
-        n_runs = len(deg_acc_results)
-        _med, _q1, _q3 = [], [], []
-        for d in unique_degrees:
-            means = [float(deg_data[d][r].mean()) for r in range(n_runs)
-                     if len(deg_data[d][r]) > 0]
-            if not means:
-                _med.append(np.nan); _q1.append(np.nan); _q3.append(np.nan)
-            else:
-                _med.append(float(np.median(means)))
-                _q1.append(float(np.percentile(means, 25)))
-                _q3.append(float(np.percentile(means, 75)))
-        acc_median = np.array(_med)
-        acc_q1     = np.array(_q1)
-        acc_q3     = np.array(_q3)
-
-    # ── pre-compute labelling ratio ───────────────────────────────────────────
-    ratio_vals = None
-    if has_lr:
-        hlr = has_labeled_neighbor.cpu()
-        ratio_vals = np.array([
-            float(hlr[deg == d].float().mean()) if (deg == d).any() else float("nan")
-            for d in unique_degrees
-        ])
-
-    # ── layout ────────────────────────────────────────────────────────────────
-    n_panels = 2 if dp_means is not None else 1
-    height_ratios = [3, 1.4] if n_panels == 2 else [1]
-    fig2, axes2 = plt.subplots(
-        n_panels, 1, figsize=(fig_w, 7 if n_panels == 2 else 5),
-        sharex=True, gridspec_kw={"height_ratios": height_ratios},
-    )
-    ax_top2 = axes2[0] if n_panels == 2 else axes2
-    ax_bot2 = axes2[1] if n_panels == 2 else None
+    fig2, ax_top2 = plt.subplots(figsize=(fig_w, 5))
 
     ax_top2.set_title(
-        f"Avg. SPL  +  Accuracy & Labelling Ratio vs. Degree\n{subtitle}", fontsize=11)
+        f"Avg. SPL  +  Accuracy vs. Degree\n{subtitle}", fontsize=11)
 
     # All-train SPL boxplots (centred, wider)
     bpa2 = ax_top2.boxplot(bp_all, positions=pos, widths=0.55, **_BP_KWARGS)
@@ -1107,50 +1051,30 @@ def plot_spl_combined_vs_degree(
     ax_top2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_top2.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
 
-    # Right twin axis — accuracy + labelling ratio (both 0–1 range)
+    # Right twin axis — accuracy
     ax_ov2 = ax_top2.twinx()
     ax_ov2.set_ylim(-0.05, 1.10)
-    ax_ov2.set_ylabel("Accuracy  /  Labelling ratio", fontsize=10)
-    ax_ov2.tick_params(axis="y", labelsize=8)
-    ax_ov2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:.0%}"))
+    ax_ov2.set_ylabel("Accuracy", fontsize=10, color=_SPL_ACC_COLOR)
+    ax_ov2.tick_params(axis="y", labelsize=8, colors=_SPL_ACC_COLOR)
+    ax_ov2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_ov2.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
+                markersize=4, zorder=5)
+    ax_ov2.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
+                        alpha=0.15, zorder=4)
 
-    ov2_handles = [mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
-                                  label="Avg. SPL to any train node")]
+    ov2_handles = [
+        mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
+                       label="Avg. SPL to any train node"),
+        plt.Line2D([0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
+    ]
+    ax_top2.legend(handles=ov2_handles, fontsize=9,
+                   loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                   ncol=2, framealpha=0.9, borderaxespad=0)
 
-    if acc_median is not None:
-        ax_ov2.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
-                    markersize=4, zorder=5)
-        ax_ov2.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
-                            alpha=0.15, zorder=4)
-        ov2_handles.append(plt.Line2D(
-            [0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
-            label=f"Accuracy  (median ± IQR, {n_runs} runs)"))
-
-    _LR_COLOR = "#E65100"
-    if ratio_vals is not None:
-        ax_ov2.plot(pos, ratio_vals, color=_LR_COLOR, lw=1.6, marker="^",
-                    markersize=4, ls="--", zorder=5)
-        ov2_handles.append(plt.Line2D(
-            [0], [0], color=_LR_COLOR, lw=2, marker="^", markersize=4, ls="--",
-            label="Labelling ratio"))
-
-    ax_top2.legend(handles=ov2_handles, fontsize=9, loc="upper left", framealpha=0.9)
-
-    # Bottom panel — Δ purity
-    if ax_bot2 is not None and dp_means is not None:
-        ax_bot2.plot(pos, dp_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
-                     markersize=4, zorder=5)
-        ax_bot2.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2)
-        ax_bot2.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=9,
-                           color=_SPL_PUR_COLOR)
-        ax_bot2.tick_params(axis="y", labelsize=8, colors=_SPL_PUR_COLOR)
-        ax_bot2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-        _x_axis(ax_bot2)
-    else:
-        # single-panel: x-axis labels on the only panel
-        _x_axis(ax_top2)
-
+    _x_axis(ax_top2)
     fig2.tight_layout()
+    fig2.subplots_adjust(bottom=0.18)
     _save(fig2, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_combined_with_overlays_vs_degree.png", show)
 
