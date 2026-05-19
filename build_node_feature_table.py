@@ -76,13 +76,11 @@ from analyse_hop_influence import (
 )
 from dataset_utils import load_or_create_split
 from influence import influence_distribution, k_hop_subsets_exact
-from plot_utils import plot_train_deg_vs_influence
 from utils import (
     compute_distances_to_train,
     get_avg_spl_to_same_class_train,
     get_avg_spl_to_train,
     get_node_purity,
-    get_2hop_training_node_degrees,
 )
 
 log = logging.getLogger(__name__)
@@ -785,7 +783,7 @@ def _analyse_interactions(df: pd.DataFrame):
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False,
         feature_cols=None, univariate_auroc=False, plot_roc=False, show=False,
-        compute_shap=False, shap_nodes=None, train_deg_influence=False):
+        compute_shap=False, shap_nodes=None):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     # Load on CPU first so structural-feature functions (which require CPU tensors)
     # can use the same object without a device conflict.  PyG Data.to() / .cpu()
@@ -818,12 +816,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
     log.info("Computing average SPL to training nodes …")
     avg_spl      = get_avg_spl_to_train(data)
     avg_spl_same = get_avg_spl_to_same_class_train(data)
-
-    if train_deg_influence:
-        log.info("Computing 2-hop training neighbor degrees …")
-        train_deg_lists = get_2hop_training_node_degrees(data)
-    else:
-        train_deg_lists = None
 
     # ── move data to device before model loading / influence computation ───────
     data = data.to(device)
@@ -930,26 +922,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
     # ── interaction test: high cosine sim × low purity ─────────────────────────
     _analyse_interactions(df)
 
-    # ── 2-hop training neighbor degree vs. total training influence ────────────
-    if train_deg_influence and train_deg_lists is not None:
-        inf_cols = ["total_infl_same_1hop", "total_infl_diff_1hop",
-                    "total_infl_same_2hop", "total_infl_diff_2hop"]
-        if all(c in df.columns for c in inf_cols):
-            influence_vals = df[inf_cols].sum(axis=1).values.astype(float)
-        else:
-            log.warning(
-                "--train-deg-influence: influence columns missing — "
-                "re-run without --no-influence to include them"
-            )
-            influence_vals = None
-        test_deg_tensor = torch.tensor(
-            df["degree"].values, dtype=torch.long
-        )
-        plot_train_deg_vs_influence(
-            train_deg_lists, influence_vals, test_deg_tensor,
-            cfg, save_dir, show,
-        )
-
     return df
 
 
@@ -984,10 +956,6 @@ def main():
     parser.add_argument("--shap-nodes", default=None,
                         help="Comma-separated graph node indices for per-node SHAP waterfall plots "
                              "(e.g. '1362,42'). Implies SHAP computation.")
-    parser.add_argument("--train-deg-influence", action="store_true",
-                        help="Plot 2-hop training neighbor degree distribution vs. "
-                             "total training influence per test node. "
-                             "Requires influence columns (do not use --no-influence).")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -1033,7 +1001,7 @@ def main():
     run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
         feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
         plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap,
-        shap_nodes=shap_nodes, train_deg_influence=args.train_deg_influence)
+        shap_nodes=shap_nodes)
 
 
 if __name__ == "__main__":

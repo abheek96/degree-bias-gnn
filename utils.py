@@ -586,32 +586,6 @@ def get_training_neighbor_degree_stats(data, k: int = 2) -> dict:
     }
 
 
-def get_2hop_training_node_degrees(data) -> list:
-    """For each test node, return degrees of all training nodes in its 2-hop receptive field.
-
-    Returns a list of length num_test_nodes; each element is a 1-D np.array of
-    training-node degrees (empty array if no training nodes in the 2-hop field).
-    Aligned to test_mask order.
-    """
-    from torch_geometric.utils import k_hop_subgraph
-    from torch_geometric.utils import degree as pyg_degree
-
-    N          = data.num_nodes
-    train_mask = data.train_mask.cpu()
-    deg        = pyg_degree(data.edge_index[1].cpu(), N).numpy()
-    test_nodes = data.test_mask.nonzero(as_tuple=True)[0].tolist()
-
-    result = []
-    for node in test_nodes:
-        nbs, _, _, _ = k_hop_subgraph(
-            node_idx=int(node), num_hops=2,
-            edge_index=data.edge_index, num_nodes=N,
-        )
-        train_nbs = [n for n in nbs.cpu().tolist() if n != node and train_mask[n]]
-        result.append(np.array([deg[n] for n in train_nbs], dtype=float))
-    return result
-
-
 def get_node_purity(data, k: int = 1, node_mask=None) -> torch.Tensor:
     """Neighborhood purity for selected nodes at receptive field radius k.
 
