@@ -90,12 +90,6 @@ def main():
             plot_purity_vs_degree(
                 m["test_deg"], purity_test, cfg, k,
                 has_labeled_neighbor=m["has_labeled_neighbor"] if k == 1 else None,
-                has_same_class_train=(m["has_same_class_train"]      if k == 1
-                                      else m.get("has_same_class_train_2hop") if k == 2
-                                      else None),
-                has_diff_class_train=(m["has_diff_class_train"]      if k == 1
-                                      else m.get("has_diff_class_train_2hop") if k == 2
-                                      else None),
                 deg_acc_results=m["deg_acc_results"],
                 save_dir=save_dir, show=show,
             )
