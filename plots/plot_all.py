@@ -28,6 +28,7 @@ from plot_utils import (
     plot_labelling_ratio_vs_degree,
     plot_max_same_train_deg_vs_degree,
     plot_neighborhood_cardinality_vs_degree,
+    plot_purity_boxplots_vs_degree,
     plot_purity_delta_by_degree,
     plot_purity_vs_degree,
     plot_spl_combined_vs_degree,
@@ -101,6 +102,11 @@ def main():
         if len(purity_by_k) > 1:
             plot_purity_delta_by_degree(
                 m["test_deg"], purity_by_k, cfg,
+                save_dir=save_dir, show=show,
+            )
+        if len(purity_by_k) >= 2 and 1 in purity_by_k and 2 in purity_by_k:
+            plot_purity_boxplots_vs_degree(
+                m["test_deg"], purity_by_k, m["deg_acc_results"], cfg,
                 save_dir=save_dir, show=show,
             )
 
