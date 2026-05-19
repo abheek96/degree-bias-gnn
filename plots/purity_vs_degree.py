@@ -22,9 +22,12 @@ def main():
             purity_test,
             m["cfg"],
             k,
-            has_labeled_neighbor=m["has_labeled_neighbor"] if k == 1 else None,
-            has_same_class_train=m["has_same_class_train"] if k == 1 else None,
-            has_diff_class_train=m["has_diff_class_train"] if k == 1 else None,
+            has_same_class_train=(m["has_same_class_train"]      if k == 1
+                                   else m.get("has_same_class_train_2hop") if k == 2
+                                   else None),
+            has_diff_class_train=(m["has_diff_class_train"]      if k == 1
+                                   else m.get("has_diff_class_train_2hop") if k == 2
+                                   else None),
             save_dir=args.results_dir,
             show=args.show,
         )

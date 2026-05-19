@@ -25,7 +25,7 @@ from dataset_utils import apply_split, load_or_create_split
 from logger import setup_logger
 from plot_utils import get_accuracy_deg, get_accuracy_class, plot_acc_vs_degree, plot_combined_vs_degree, plot_acc_vs_degree_by_layers, plot_acc_trend_by_degree, plot_purity_vs_degree, plot_purity_delta_by_degree, plot_purity_boxplots_vs_degree, plot_acc_and_labelling_ratio_vs_degree, plot_spl_vs_degree, plot_spl_combined_vs_degree, plot_influence_analysis, plot_influence_per_neighbor, plot_influence_disparity_vs_degree, plot_feature_similarity_delta_vs_degree, plot_node_similarity_analysis, plot_train_neighbor_degree_stats, plot_max_same_train_deg_vs_degree, plot_1hop_train_deg_vs_accuracy, plot_neighborhood_cardinality_vs_degree, plot_class_accuracy_and_degree, plot_train_degree_distribution
 from influence import compute_influence_analysis, compute_influence_disparity_all
-from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_class_labelling_ratio, get_khop_labelling_ratio, get_max_same_class_train_neighbor_degree, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta, compute_node_similarity_analysis
+from utils import compute_distances_to_train, get_distance_deg, get_node_purity, get_labelling_ratio, get_class_labelling_ratio, get_khop_class_labelling_ratio, get_khop_labelling_ratio, get_max_same_class_train_neighbor_degree, get_avg_spl_to_train, get_avg_spl_to_same_class_train, get_training_neighbor_degree_stats, get_khop_cardinality, get_feature_similarity_delta, compute_node_similarity_analysis
 from train import train
 from test import evaluate
 from models.gcn import inspect_node_aggregation
@@ -254,6 +254,15 @@ def main():
         for k in range(1, purity_k_max + 1)
     } if _need_purity else {}
 
+    # 2-hop same/diff-class labelling ratios for the k=2 purity overlay
+    if _need_purity and purity_k_max >= 2:
+        _same_2hop, _diff_2hop = get_khop_class_labelling_ratio(data, k=2)
+        has_same_class_train_2hop = _same_2hop[data.test_mask.cpu()]
+        has_diff_class_train_2hop = _diff_2hop[data.test_mask.cpu()]
+    else:
+        has_same_class_train_2hop = None
+        has_diff_class_train_2hop = None
+
     # k_hops = num_layers - 1 because the final layer is nn.Linear (no message passing)
     k_hops = cfg["model"]["num_layers"] - 1
 
@@ -354,6 +363,8 @@ def main():
             "has_khop_labeled_neighbor":  has_khop_labeled_neighbor,
             "has_same_class_train":       has_same_class_train,
             "has_diff_class_train":       has_diff_class_train,
+            "has_same_class_train_2hop":  has_same_class_train_2hop,
+            "has_diff_class_train_2hop":  has_diff_class_train_2hop,
             "train_nb_deg_stats":         train_nb_deg_stats,
             "train_1hop_deg_stats":       train_1hop_deg_stats,
             "max_same_train_deg":         max_same_train_deg,
@@ -467,9 +478,12 @@ def main():
         for k, purity_test in purity_by_k.items():
             plot_purity_vs_degree(
                 test_deg, purity_test, cfg, k,
-                has_labeled_neighbor=has_labeled_neighbor   if k == 1 else None,
-                has_same_class_train=has_same_class_train   if k == 1 else None,
-                has_diff_class_train=has_diff_class_train   if k == 1 else None,
+                has_same_class_train=(has_same_class_train      if k == 1
+                                      else has_same_class_train_2hop if k == 2
+                                      else None),
+                has_diff_class_train=(has_diff_class_train      if k == 1
+                                      else has_diff_class_train_2hop if k == 2
+                                      else None),
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
