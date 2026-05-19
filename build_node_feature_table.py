@@ -935,9 +935,17 @@ def main():
                 f"{cfg.get('results_dir', './results')}/."
             )
 
+    # Derive save_dir from the checkpoint's exec directory when not explicitly set.
+    # checkpoint lives at  <exec_dir>/checkpoints/<fname>.pt
+    # so exec_dir = two levels up.
+    save_dir = args.save_dir
+    if save_dir is None and checkpoint_path is not None:
+        save_dir = os.path.dirname(os.path.dirname(checkpoint_path))
+        log.info("save_dir inferred from checkpoint: %s", save_dir)
+
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     shap_nodes   = [int(n.strip()) for n in args.shap_nodes.split(",")] if args.shap_nodes else None
-    run(cfg, checkpoint_path, device, args.save_dir, args.no_influence, args.no_embeddings,
+    run(cfg, checkpoint_path, device, save_dir, args.no_influence, args.no_embeddings,
         feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
         plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap,
         shap_nodes=shap_nodes)
