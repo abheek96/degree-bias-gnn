@@ -634,7 +634,9 @@ def plot_neighborhood_cardinality_vs_degree(
                    label=f"Accuracy (median ± IQR, {n_runs} runs)"),
     ]
     ax_card.legend(handles=handles_card + handles_acc,
-                   loc="upper left", fontsize=8, framealpha=0.88)
+                   loc="upper center", bbox_to_anchor=(0.5, -0.20),
+                   ncol=len(k_values) + 1, fontsize=8, framealpha=0.88,
+                   borderaxespad=0)
 
     prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
@@ -645,6 +647,7 @@ def plot_neighborhood_cardinality_vs_degree(
 
     _degree_axis(ax_card, pos, all_degrees)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     _save(fig, _subdir(save_dir, "neighborhood_cardinality"),
           f"{prefix}_neighborhood_cardinality_vs_degree.png", show)
 
@@ -1656,7 +1659,6 @@ def plot_purity_boxplots_vs_degree(
                    label=f"Accuracy (median, {n_runs} runs)"),
         mpatches.Patch(facecolor=_ACC_COLOR, alpha=0.15, label="Accuracy IQR"),
     ]
-    ax_top.legend(handles=legend_handles, loc="upper left", fontsize=8, framealpha=0.88)
     ax_top.set_title(
         f"Neighborhood Purity (1-hop vs 2-hop) & Accuracy vs. Node Degree\n{subtitle}",
         fontsize=11,
@@ -1669,7 +1671,12 @@ def plot_purity_boxplots_vs_degree(
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
     _degree_axis(ax_bot, pos, unique_degrees)
 
+    ax_bot.legend(handles=legend_handles,
+                  loc="upper center", bbox_to_anchor=(0.5, -0.42),
+                  ncol=4, fontsize=8, framealpha=0.88, borderaxespad=0)
+
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.14)
     _save(fig, _subdir(save_dir, "purity_vs_degree"),
           f"{prefix}_purity_boxplots_vs_degree.png", show)
 
