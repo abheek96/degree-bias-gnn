@@ -484,6 +484,7 @@ def main():
                 has_diff_class_train=(has_diff_class_train      if k == 1
                                       else has_diff_class_train_2hop if k == 2
                                       else None),
+                deg_acc_results=deg_acc_results,
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )

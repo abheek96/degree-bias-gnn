@@ -96,6 +96,7 @@ def main():
                 has_diff_class_train=(m["has_diff_class_train"]      if k == 1
                                       else m.get("has_diff_class_train_2hop") if k == 2
                                       else None),
+                deg_acc_results=m["deg_acc_results"],
                 save_dir=save_dir, show=show,
             )
         if len(purity_by_k) > 1:

@@ -1254,6 +1254,7 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
                           has_labeled_neighbor=None,
                           has_same_class_train=None, has_diff_class_train=None,
+                          deg_acc_results=None,
                           save_dir=None, show=False):
     """Purity boxplots per degree group with same/diff-class training-neighbor overlays.
 
@@ -1279,6 +1280,7 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
                            test node has ≥1 same-class training node within k hops.
     has_diff_class_train : optional BoolTensor [num_test_nodes] — True when a
                            test node has ≥1 diff-class training node within k hops.
+    deg_acc_results      : list[dict] — per-run output of get_accuracy_deg, or None.
     save_dir             : str or None
     show                 : bool
     """
@@ -1287,6 +1289,7 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     _MEAN_COLOR   = "#37474F"   # dark slate — overall mean line
     _SAME_COLOR   = "#00897B"   # teal — same-class ratio
     _DIFF_COLOR   = "#EF6C00"   # orange — diff-class ratio
+    _ACC_LINE_COLOR = "#388E3C" # dark green — accuracy
 
     deg    = test_deg.cpu()
     purity = purity_test.cpu().numpy()
@@ -1362,10 +1365,22 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
                        label=f"Overall mean purity ({overall:.1%})")
         )
 
-    has_overlays = hsc is not None or hdc is not None
+    # ── accuracy per degree group ─────────────────────────────────────────────
+    acc_vals = None
+    n_runs   = 0
+    if deg_acc_results is not None:
+        _, deg_data = _collect(deg_acc_results)
+        n_runs = len(deg_acc_results)
+        acc_vals = []
+        for d in unique_degrees:
+            run_means = [float(a.mean()) for a in deg_data.get(d, []) if len(a) > 0]
+            acc_vals.append(float(np.median(run_means)) if run_means else float("nan"))
+        acc_vals = np.array(acc_vals)
+
+    has_overlays = hsc is not None or hdc is not None or acc_vals is not None
     if has_overlays:
         ax_lr = ax_top.twinx()
-        ax_lr.set_ylabel("Fraction of nodes with train neighbor", fontsize=9)
+        ax_lr.set_ylabel("Fraction / Accuracy", fontsize=9)
         ax_lr.tick_params(axis="y", labelsize=8)
         ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
         ax_lr.set_ylim(-0.05, 1.15)
@@ -1384,6 +1399,13 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
                 [0], [0], color=_DIFF_COLOR, lw=2, ls="--", marker="^", markersize=4,
                 label=f"Has diff-class train nb ({hop_label})",
             ))
+        if acc_vals is not None:
+            ax_lr.plot(pos, acc_vals, color=_ACC_LINE_COLOR, lw=2.0,
+                       ls=":", marker="s", markersize=4, zorder=7)
+            legend_handles.append(plt.Line2D(
+                [0], [0], color=_ACC_LINE_COLOR, lw=2, ls=":", marker="s", markersize=4,
+                label=f"Accuracy (median, {n_runs} runs)",
+            ))
 
     # ── bottom panel: count bars ──────────────────────────────────────────────
     ax_bot.bar(pos, counts, color="lightgrey", edgecolor="#9E9E9E",
@@ -1395,7 +1417,7 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
 
     ax_bot.legend(handles=legend_handles,
                   loc="upper center", bbox_to_anchor=(0.5, -0.42),
-                  ncol=2, fontsize=8, framealpha=0.88, borderaxespad=0)
+                  ncol=3, fontsize=8, framealpha=0.88, borderaxespad=0)
 
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.14)
