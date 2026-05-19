@@ -1539,7 +1539,7 @@ def plot_purity_boxplots_vs_degree(
     offset = 0.18
     _C1 = "#2196F3"   # blue  — k=1
     _C2 = "#FF5722"   # orange — k=2
-    _ACC_C = "#6A1B9A"   # deep purple — accuracy overlay (high contrast against blue/orange purity palette)
+    _ACC_C = "#5D4037"   # brown — accuracy overlay (distinct from blue/orange purity palette)
 
     bpos1 = [p - offset for p in pos]
     bpos2 = [p + offset for p in pos]
@@ -1590,10 +1590,9 @@ def plot_purity_boxplots_vs_degree(
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
     _degree_axis(ax_bot, pos, unique_degrees)
 
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=0.12)
+    fig.tight_layout(rect=[0, 0.10, 1, 1])
     fig.legend(handles=legend_handles,
-               loc="lower center", bbox_to_anchor=(0.5, 0.01),
+               loc="lower center", bbox_to_anchor=(0.5, 0.02),
                ncol=4, fontsize=8, framealpha=0.88, borderaxespad=0)
     _save(fig, _subdir(save_dir, "purity_vs_degree"),
           f"{prefix}_purity_boxplots_vs_degree.png", show)
