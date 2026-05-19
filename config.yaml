@@ -3,10 +3,10 @@ num_runs: 10
 device: 'cuda'
 
 results_dir: ./results
-split: 'random'        # random, public, or custom
+split: 'public'        # random, public, or custom
 
 dataset:
-  name: PubMed
+  name: Cora
   root: ./data
   use_cc: true
   num_train_per_class: 20
