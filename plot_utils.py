@@ -2386,6 +2386,136 @@ def plot_train_neighbor_degree_stats(
           f"{prefix}_train_neighbor_degree_k{k}.png", show)
 
 
+# ── 2-hop training neighbor degree distribution vs. total training influence ───
+
+def plot_train_deg_vs_influence(train_deg_lists, influence_vals, test_deg,
+                                cfg, save_dir=None, show=False):
+    """Two-panel plot: 2-hop training neighbor degree distribution (top) and
+    total Jacobian-L1 training influence per test node (bottom), grouped by
+    test-node degree.
+
+    Top panel  — for each test-node-degree group, pool the degrees of every
+                 training node that appears in any test node's 2-hop receptive
+                 field.  Shows whether test nodes of a given degree tend to
+                 have high- or low-degree training neighbors.
+
+    Bottom panel — for each test-node-degree group, show the distribution of
+                   total training influence (sum of Jacobian-L1 from all
+                   training nodes in the 2-hop field).
+
+    Both panels use boxplots + jittered strip overlay.
+
+    Parameters
+    ----------
+    train_deg_lists : list[np.ndarray]
+        Per test node (test_mask order): degrees of all training nodes in the
+        2-hop receptive field.  Empty array if no training nodes present.
+    influence_vals  : np.ndarray or None
+        Per test node (test_mask order): total Jacobian-L1 training influence.
+        NaN or None skips the bottom panel.
+    test_deg        : 1-D LongTensor  [num_test_nodes]
+    cfg             : dict
+    save_dir        : str or None
+    show            : bool
+    """
+    deg_np         = test_deg.cpu().numpy()
+    unique_degrees = sorted(np.unique(deg_np).tolist())
+    pos            = list(range(len(unique_degrees)))
+    n_deg          = len(unique_degrees)
+    n_test         = len(deg_np)
+    prefix         = _fname_prefix(cfg)
+    subtitle       = _subtitle(cfg, n_test, n_deg)
+
+    has_influence = (influence_vals is not None
+                     and not np.all(np.isnan(influence_vals.astype(float))))
+    n_panels = 2 if has_influence else 1
+    fig, axes = plt.subplots(n_panels, 1,
+                             figsize=(_fig_w(n_deg), 4.5 * n_panels),
+                             sharex=True)
+    if n_panels == 1:
+        axes = [axes]
+    ax_top = axes[0]
+    ax_bot = axes[1] if has_influence else None
+
+    # ── top panel: pooled training neighbor degrees ───────────────────────────
+    group_train_degs = {d: [] for d in unique_degrees}
+    for i, d in enumerate(deg_np.tolist()):
+        group_train_degs[d].extend(train_deg_lists[i].tolist())
+
+    box_data_top = [
+        np.array(group_train_degs[d]) if group_train_degs[d] else np.array([np.nan])
+        for d in unique_degrees
+    ]
+    counts_top = [len(group_train_degs[d]) for d in unique_degrees]
+
+    bp_top = ax_top.boxplot(box_data_top, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp_top["boxes"]:
+        patch.set_facecolor("#5b9bd5")
+        patch.set_alpha(0.72)
+
+    rng = np.random.default_rng(0)
+    for xi, vals in zip(pos, box_data_top):
+        clean = vals[~np.isnan(vals)]
+        if len(clean) == 0:
+            continue
+        jitter = rng.uniform(-0.18, 0.18, size=len(clean))
+        ax_top.scatter(xi + jitter, clean,
+                       s=6, color="#1a5276", alpha=0.30,
+                       edgecolors="none", zorder=4)
+
+    ax_top.set_ylabel("Degree of 2-hop training neighbors", fontsize=11)
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(
+        f"2-hop Training Neighbor Degree vs. Total Training Influence\n{subtitle}",
+        fontsize=11,
+    )
+
+    # node-count annotation bar (reuse _count_bars if available)
+    _count_bars(ax_top, pos, [
+        len([v for v in group_train_degs[d] if not np.isnan(v)])
+        for d in unique_degrees
+    ])
+
+    # ── bottom panel: total training influence ────────────────────────────────
+    if ax_bot is not None:
+        group_inf = {d: [] for d in unique_degrees}
+        for i, d in enumerate(deg_np.tolist()):
+            v = float(influence_vals[i])
+            if not np.isnan(v):
+                group_inf[d].append(v)
+
+        box_data_bot = [
+            np.array(group_inf[d]) if group_inf[d] else np.array([np.nan])
+            for d in unique_degrees
+        ]
+        counts_bot = [len(group_inf[d]) for d in unique_degrees]
+
+        bp_bot = ax_bot.boxplot(box_data_bot, positions=pos, widths=0.55, **_BP_KWARGS)
+        for patch in bp_bot["boxes"]:
+            patch.set_facecolor("#e67e22")
+            patch.set_alpha(0.80)
+
+        for xi, vals in zip(pos, box_data_bot):
+            clean = vals[~np.isnan(vals)]
+            if len(clean) == 0:
+                continue
+            jitter = rng.uniform(-0.18, 0.18, size=len(clean))
+            ax_bot.scatter(xi + jitter, clean,
+                           s=6, color="#7d3c00", alpha=0.35,
+                           edgecolors="none", zorder=4)
+
+        ax_bot.set_ylabel("Total training influence (Jacobian-L1)", fontsize=11)
+        ax_bot.set_xlabel("Test-node degree", fontsize=11)
+        ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+        _count_bars(ax_bot, pos, counts_bot)
+
+    _degree_axis(ax_top if ax_bot is None else ax_bot, pos, unique_degrees)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "train_deg_influence"),
+          f"{prefix}_train_deg_vs_influence.png", show)
+
+
 # ── max same-class training-neighbor degree vs test-node degree ───────────────
 
 def plot_max_same_train_deg_vs_degree(max_same_train_deg, test_deg, cfg,
