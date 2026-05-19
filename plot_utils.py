@@ -449,7 +449,9 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     acc_median = np.array(acc_median)
     acc_q1     = np.array(acc_q1)
     acc_q3     = np.array(acc_q3)
-    overall    = float(np.nanmean(acc_median))
+    deg_counts = np.array([len(deg_data[d][0]) for d in all_degrees], dtype=float)
+    valid      = ~np.isnan(acc_median)
+    overall    = float((acc_median[valid] * deg_counts[valid]).sum() / deg_counts[valid].sum())
 
     # ── Distance signals — graph-fixed, computed once ─────────────────────────
     def _dist_stats(key):
@@ -1537,7 +1539,7 @@ def plot_purity_boxplots_vs_degree(
     offset = 0.18
     _C1 = "#2196F3"   # blue  — k=1
     _C2 = "#FF5722"   # orange — k=2
-    _ACC_C = "#D32F2F"   # red — accuracy overlay (distinct from purity palette)
+    _ACC_C = "#6A1B9A"   # deep purple — accuracy overlay (high contrast against blue/orange purity palette)
 
     bpos1 = [p - offset for p in pos]
     bpos2 = [p + offset for p in pos]
@@ -1588,12 +1590,11 @@ def plot_purity_boxplots_vs_degree(
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
     _degree_axis(ax_bot, pos, unique_degrees)
 
-    ax_bot.legend(handles=legend_handles,
-                  loc="upper center", bbox_to_anchor=(0.5, -0.42),
-                  ncol=4, fontsize=8, framealpha=0.88, borderaxespad=0)
-
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.14)
+    fig.subplots_adjust(bottom=0.12)
+    fig.legend(handles=legend_handles,
+               loc="lower center", bbox_to_anchor=(0.5, 0.01),
+               ncol=4, fontsize=8, framealpha=0.88, borderaxespad=0)
     _save(fig, _subdir(save_dir, "purity_vs_degree"),
           f"{prefix}_purity_boxplots_vs_degree.png", show)
 
