@@ -1086,10 +1086,12 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
                                            has_khop_labeled_neighbor=None,
                                            k_hops: int = 1,
                                            save_dir=None, show=False):
-    """Accuracy and labelling ratio (1-hop and optional k-hop) vs. degree.
+    """One plot per hop: labelling ratio (left axis) + accuracy overlay (right axis).
 
-    Top panel  — accuracy (blue, left axis) + labelling ratio lines (right axis).
-    Bottom panel — count of test nodes per degree (grey bars).
+    Generates one file for 1-hop and, when ``has_khop_labeled_neighbor`` is
+    provided, a second file for k-hop.  Each figure has a top panel with the
+    labelling ratio line and the accuracy median, and a bottom panel with node
+    count bars.
 
     Parameters
     ----------
@@ -1098,106 +1100,94 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
     has_labeled_neighbor      : 1-D BoolTensor [num_test_nodes] — 1-hop presence.
     cfg                       : dict
     has_khop_labeled_neighbor : 1-D BoolTensor [num_test_nodes] or None — k-hop presence.
-    k_hops                    : int — receptive field radius (for axis label only).
+    k_hops                    : int — receptive field radius used for k-hop.
     save_dir                  : str or None
     show                      : bool
     """
-    # ── accuracy side ──────────────────────────────────────────────────────────
-    _, deg_data   = _collect(run_results)
-    acc_degrees   = sorted(deg_data.keys())
+    _LR_COLOR  = "#e67e22"
+    _LACC_COLOR = "#3498db"
 
-    acc_by_deg = {}
+    # ── shared pre-computation ─────────────────────────────────────────────────
+    _, deg_data = _collect(run_results)
+    acc_degrees = sorted(deg_data.keys())
+    acc_by_deg  = {}
     for d in acc_degrees:
         run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
         acc_by_deg[d] = float(np.median(run_means)) if run_means else float("nan")
 
-    # ── labelling ratio side ───────────────────────────────────────────────────
     deg        = test_deg.cpu()
-    has_1hop   = has_labeled_neighbor.cpu()
-    has_khop   = has_khop_labeled_neighbor.cpu() if has_khop_labeled_neighbor is not None else None
     all_unique = sorted(deg.unique().tolist())
-
-    ratios_1hop, counts_list = _compute_labelling_ratio_by_degree(has_1hop, deg, all_unique)
-    ratio_1hop_by_deg = dict(zip(all_unique, ratios_1hop))
-    counts_by_deg     = dict(zip(all_unique, counts_list))
-    ratio_khop_by_deg = {}
-    if has_khop is not None:
-        ratios_khop, _ = _compute_labelling_ratio_by_degree(has_khop, deg, all_unique)
-        ratio_khop_by_deg = dict(zip(all_unique, ratios_khop))
-
-    # ── common degree axis ─────────────────────────────────────────────────────
     all_degrees = sorted(set(acc_degrees) | set(all_unique))
     pos         = list(range(len(all_degrees)))
 
-    acc_vals        = [acc_by_deg.get(d,       float("nan")) for d in all_degrees]
-    ratio_1hop_vals = [ratio_1hop_by_deg.get(d, float("nan")) for d in all_degrees]
-    ratio_khop_vals = [ratio_khop_by_deg.get(d, float("nan")) for d in all_degrees] \
-                      if has_khop is not None else None
-    counts          = [counts_by_deg.get(d, 0)                for d in all_degrees]
+    acc_vals = [acc_by_deg.get(d, float("nan")) for d in all_degrees]
 
-    prefix   = _fname_prefix(cfg)
     n_runs   = len(run_results)
     n_test   = sum(len(deg_data[d][0]) for d in acc_degrees)
+    prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
 
-    fig, (ax_main, ax_cnt) = plt.subplots(
-        2, 1, figsize=(_fig_w(len(all_degrees)), 6.5),
-        sharex=True, gridspec_kw={"height_ratios": [4, 1]},
-    )
+    def _one_plot(has_tensor, k_label, filename):
+        ratios, counts_list = _compute_labelling_ratio_by_degree(
+            has_tensor.cpu(), deg, all_unique)
+        ratio_by_deg = dict(zip(all_unique, ratios))
+        counts_by_deg = dict(zip(all_unique, counts_list))
+        ratio_vals = [ratio_by_deg.get(d, float("nan")) for d in all_degrees]
+        counts     = [counts_by_deg.get(d, 0)           for d in all_degrees]
 
-    # ── top panel: accuracy + labelling ratios ─────────────────────────────────
-    _ACC_COLOR   = "#3498db"
-    _LR1_COLOR   = "#e67e22"
-    _LRK_COLOR   = "#27ae60"
+        fig, (ax_top, ax_cnt) = plt.subplots(
+            2, 1, figsize=(_fig_w(len(all_degrees)), 6.5),
+            sharex=True, gridspec_kw={"height_ratios": [4, 1]},
+        )
 
-    ax_acc = ax_main
-    ax_acc.plot(pos, acc_vals, color=_ACC_COLOR, linewidth=1.8,
-                marker="o", markersize=4, zorder=3)
-    ax_acc.set_ylabel("Accuracy", fontsize=11, color=_ACC_COLOR)
-    ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
-    ax_acc.set_ylim(-0.05, 1.10)
-    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+        ax_top.plot(pos, ratio_vals, color=_LR_COLOR, linewidth=1.8,
+                    marker="s", markersize=4, zorder=3)
+        ax_top.set_ylabel(f"Labelling ratio  ({k_label})", fontsize=11,
+                          color=_LR_COLOR)
+        ax_top.tick_params(axis="y", colors=_LR_COLOR, labelsize=8)
+        ax_top.set_ylim(-0.05, 1.10)
+        ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
-    ax_lr = ax_acc.twinx()
-    ax_lr.plot(pos, ratio_1hop_vals, color=_LR1_COLOR, linewidth=1.8,
-               marker="s", markersize=4, zorder=3, label="1-hop LR")
-    if ratio_khop_vals is not None:
-        ax_lr.plot(pos, ratio_khop_vals, color=_LRK_COLOR, linewidth=1.8,
-                   marker="^", markersize=4, zorder=3, label=f"{k_hops}-hop LR")
-    ax_lr.set_ylabel("Labelling ratio", fontsize=11)
-    ax_lr.tick_params(axis="y", labelsize=8)
-    ax_lr.set_ylim(-0.05, 1.10)
-    ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_acc = ax_top.twinx()
+        ax_acc.plot(pos, acc_vals, color=_LACC_COLOR, linewidth=1.8,
+                    marker="o", markersize=4, zorder=4)
+        ax_acc.set_ylabel("Accuracy", fontsize=11, color=_LACC_COLOR)
+        ax_acc.tick_params(axis="y", colors=_LACC_COLOR, labelsize=8)
+        ax_acc.set_ylim(-0.05, 1.10)
+        ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
-    handles = [
-        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="o", markersize=4,
-                   label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
-        plt.Line2D([0], [0], color=_LR1_COLOR, lw=2, marker="s", markersize=4,
-                   label="Labelling ratio  (1-hop)"),
-    ]
-    if ratio_khop_vals is not None:
-        handles.append(plt.Line2D(
-            [0], [0], color=_LRK_COLOR, lw=2, marker="^", markersize=4,
-            label=f"Labelling ratio  ({k_hops}-hop)",
-        ))
-    ax_acc.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.85)
-    ax_acc.set_title(
-        f"Accuracy & Labelling Ratio vs. Node Degree\n{subtitle}", fontsize=11,
-    )
+        handles = [
+            plt.Line2D([0], [0], color=_LR_COLOR, lw=2, marker="s", markersize=4,
+                       label=f"Labelling ratio  ({k_label})"),
+            plt.Line2D([0], [0], color=_LACC_COLOR, lw=2, marker="o", markersize=4,
+                       label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
+        ]
+        ax_top.legend(handles=handles,
+                      loc="upper center", bbox_to_anchor=(0.5, -0.14),
+                      ncol=2, fontsize=8, framealpha=0.85, borderaxespad=0)
+        ax_top.set_title(
+            f"Labelling Ratio ({k_label}) & Accuracy vs. Node Degree\n{subtitle}",
+            fontsize=11,
+        )
 
-    # ── bottom panel: node counts ──────────────────────────────────────────────
-    ax_cnt.bar(pos, counts, color="lightgrey", edgecolor="grey",
-               linewidth=0.5, width=0.7)
-    ax_cnt.set_ylabel("# test nodes", fontsize=9, color="grey")
-    ax_cnt.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_cnt.set_ylim(0, max(counts) * 1.3 if counts else 1)
-    ax_cnt.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.3)
-    _degree_axis(ax_cnt, pos, all_degrees)
+        ax_cnt.bar(pos, counts, color="lightgrey", edgecolor="grey",
+                   linewidth=0.5, width=0.7)
+        ax_cnt.set_ylabel("# test nodes", fontsize=9, color="grey")
+        ax_cnt.tick_params(axis="y", labelsize=7, colors="grey")
+        ax_cnt.set_ylim(0, max(counts) * 1.3 if counts else 1)
+        ax_cnt.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.3)
+        _degree_axis(ax_cnt, pos, all_degrees)
 
-    fig.tight_layout()
-    _save(fig, _subdir(save_dir, "labelling_ratio"),
-          f"{prefix}_acc_and_labelling_ratio_vs_degree.png", show)
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.14)
+        _save(fig, _subdir(save_dir, "labelling_ratio"), f"{prefix}_{filename}")
+
+    _one_plot(has_labeled_neighbor, "1-hop",
+              "labelling_ratio_1hop_vs_degree.png")
+    if has_khop_labeled_neighbor is not None:
+        _one_plot(has_khop_labeled_neighbor, f"{k_hops}-hop",
+                  f"labelling_ratio_{k_hops}hop_vs_degree.png")
 
 
 # ── labelling ratio vs. degree ────────────────────────────────────────────────

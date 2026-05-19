@@ -6,19 +6,12 @@ Usage
 """
 
 from _load import base_parser, load
-from plot_utils import plot_acc_and_labelling_ratio_vs_degree, plot_labelling_ratio_vs_degree
+from plot_utils import plot_acc_and_labelling_ratio_vs_degree
 
 
 def main():
     args = base_parser("Regenerate labelling-ratio plots").parse_args()
     m = load(args)
-    plot_labelling_ratio_vs_degree(
-        m["all_deg"],
-        m["has_labeled_neighbor"],
-        m["cfg"],
-        save_dir=args.results_dir,
-        show=args.show,
-    )
     plot_acc_and_labelling_ratio_vs_degree(
         m["deg_acc_results"],
         m["test_deg"],

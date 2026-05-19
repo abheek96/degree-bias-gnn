@@ -25,7 +25,6 @@ from plot_utils import (
     plot_acc_vs_degree,
     plot_class_accuracy_and_degree,
     plot_combined_vs_degree,
-    plot_labelling_ratio_vs_degree,
     plot_max_same_train_deg_vs_degree,
     plot_neighborhood_cardinality_vs_degree,
     plot_purity_boxplots_vs_degree,
@@ -79,10 +78,6 @@ def main():
         )
 
     if plot_cfg.get("labelling_ratio", False):
-        plot_labelling_ratio_vs_degree(
-            m["all_deg"], m["has_labeled_neighbor"], cfg,
-            save_dir=save_dir, show=show,
-        )
         plot_acc_and_labelling_ratio_vs_degree(
             m["deg_acc_results"], m["test_deg"], m["has_labeled_neighbor"], cfg,
             has_khop_labeled_neighbor=m["has_khop_labeled_neighbor"],
