@@ -1181,7 +1181,7 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
 
         fig.tight_layout()
         fig.subplots_adjust(bottom=0.14)
-        _save(fig, _subdir(save_dir, "labelling_ratio"), f"{prefix}_{filename}")
+        _save(fig, _subdir(save_dir, "labelling_ratio"), f"{prefix}_{filename}", show)
 
     _one_plot(has_labeled_neighbor, "1-hop",
               "labelling_ratio_1hop_vs_degree.png")
