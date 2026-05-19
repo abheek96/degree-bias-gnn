@@ -39,17 +39,17 @@ plot:
   labelling_ratio: true
   purity_vs_degree: true
   purity_k_max: 2
-  class_accuracy: true
-  train_degree_distribution: true
+  purity_delta: false            # mean purity delta (k_max - k_min) per degree; rarely needed
+  class_accuracy: false          # class-wise degree + accuracy plots; generate once, then disable
+  train_degree_distribution: false  # histogram of training-node degrees; generate once, then disable
   influence_analysis: false
-  influence_degrees: []        # exact degree values to investigate, e.g. [3, 5, 10]
-  # influence_nodes: [1894]            # explicit node indices to investigate, e.g. [1362, 42]
-  similarity_nodes: []          # node indices for per-node layer-wise similarity analysis, e.g. [1858, 1930]
-  inspect_nodes: []             # node indices to inspect aggregation neighborhood, e.g. [42, 1362]
-  feature_similarity: false      # cosine sim to same-class train neighbors: raw vs h^(k), delta per degree
+  influence_degrees: []          # exact degree values to investigate, e.g. [3, 5, 10]
+  similarity_nodes: []           # node indices for per-node layer-wise similarity analysis
+  inspect_nodes: []              # node indices to inspect aggregation neighbourhood
+  feature_similarity: false      # cosine sim to same-class train neighbours: raw vs h^(k), delta per degree
   influence_disparity: false     # disparity for ALL test nodes (expensive: one Jacobian per node)
-  train_neighbor_degree: false  # degree distribution of same vs diff training neighbors
-  train_1hop_deg_accuracy: false  # 1-hop training-neighbor degree boxplots + accuracy overlay
-  max_same_train_deg: false       # boxplots of max same-class training-neighbor degree per degree group
+  train_neighbor_degree: false   # degree distribution of same vs diff training neighbours
+  train_1hop_deg_accuracy: false # 1-hop training-neighbour degree boxplots + accuracy overlay
+  max_same_train_deg: false      # boxplots of max same-class training-neighbour degree per degree group
   save: true
   show: false

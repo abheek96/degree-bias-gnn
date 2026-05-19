@@ -1527,9 +1527,9 @@ def plot_purity_boxplots_vs_degree(
     acc_median = np.array(acc_median)
     acc_q1, acc_q3 = np.array(acc_q1), np.array(acc_q3)
 
-    fig_w = _fig_w(len(unique_degrees))
+    fig_w = max(14, min(len(unique_degrees) * 0.55, 56))
     fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(fig_w, 7),
+        2, 1, figsize=(fig_w, 8),
         sharex=True, gridspec_kw={"height_ratios": [4, 1]},
     )
 
@@ -1537,6 +1537,7 @@ def plot_purity_boxplots_vs_degree(
     offset = 0.18
     _C1 = "#2196F3"   # blue  — k=1
     _C2 = "#FF5722"   # orange — k=2
+    _ACC_C = "#D32F2F"   # red — accuracy overlay (distinct from purity palette)
 
     bpos1 = [p - offset for p in pos]
     bpos2 = [p + offset for p in pos]
@@ -1557,13 +1558,13 @@ def plot_purity_boxplots_vs_degree(
 
     # ── top panel: accuracy twin axis ────────────────────────────────────────
     ax_acc = ax_top.twinx()
-    ax_acc.plot(pos, acc_median, color=_ACC_COLOR, linewidth=1.8,
+    ax_acc.plot(pos, acc_median, color=_ACC_C, linewidth=1.8,
                 marker="s", markersize=4, zorder=4,
                 label=f"Accuracy (median, {n_runs} runs)")
     ax_acc.fill_between(pos, acc_q1, acc_q3,
-                        color=_ACC_COLOR, alpha=0.15, zorder=3)
-    ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
-    ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
+                        color=_ACC_C, alpha=0.15, zorder=3)
+    ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_C)
+    ax_acc.tick_params(axis="y", colors=_ACC_C, labelsize=8)
     ax_acc.set_ylim(-0.05, 1.10)
     ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
@@ -1571,9 +1572,9 @@ def plot_purity_boxplots_vs_degree(
     legend_handles = [
         mpatches.Patch(facecolor=_C1, alpha=0.75, label="Purity (1-hop)"),
         mpatches.Patch(facecolor=_C2, alpha=0.75, label="Purity (2-hop)"),
-        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
+        plt.Line2D([0], [0], color=_ACC_C, lw=2, marker="s", markersize=4,
                    label=f"Accuracy (median, {n_runs} runs)"),
-        mpatches.Patch(facecolor=_ACC_COLOR, alpha=0.15, label="Accuracy IQR"),
+        mpatches.Patch(facecolor=_ACC_C, alpha=0.15, label="Accuracy IQR"),
     ]
     ax_top.set_title(
         f"Neighborhood Purity (1-hop vs 2-hop) & Accuracy vs. Node Degree\n{subtitle}",

@@ -466,7 +466,7 @@ def main():
                 save_dir=save_dir,
                 show=plot_cfg.get("show", False),
             )
-        if len(purity_by_k) > 1:
+        if len(purity_by_k) > 1 and plot_cfg.get("purity_delta", True):
             plot_purity_delta_by_degree(
                 test_deg, purity_by_k, cfg,
                 save_dir=save_dir,
