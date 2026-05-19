@@ -1,6 +1,6 @@
 """
-analyse_1hop_influence_by_degree.py — Aggregate 1-hop Jacobian-L1 influence
-by degree group across all test nodes.
+1hop_influence_by_degree.py — Aggregate 1-hop Jacobian-L1 influence by degree group
+across all test nodes.
 
 For each test node computes:
   - total_same : sum of I_x[n] over all same-class nodes at exactly hop 1
@@ -20,15 +20,18 @@ Model source
 
 Usage
 -----
-    uv run analyse_1hop_influence_by_degree.py --run 1 --save-dir ./output
-    uv run analyse_1hop_influence_by_degree.py \\
+    uv run analysis/1hop_influence_by_degree.py --run 1 --save-dir ./output
+    uv run analysis/1hop_influence_by_degree.py \\
         --checkpoint results/.../checkpoints/run01_seed42.pt --show
 """
 
 import argparse
 import logging
+import os
 import sys
 from collections import defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -38,15 +41,15 @@ import yaml
 
 from torch_geometric.utils import degree as graph_degree
 
-from analyse_hop_influence import (
-    _build_model,
+from checkpoint_utils import (
     _deep_merge,
     _resolve_run_checkpoint,
+    load_cfg,
+    load_data,
     load_from_checkpoint,
-    train_model,
     set_seed,
+    train_model,
 )
-from dataset_utils import load_or_create_split
 from influence import influence_distribution, k_hop_subsets_exact
 from plot_utils import (
     _ACC_COLOR,
@@ -58,8 +61,6 @@ from plot_utils import (
     _subdir,
     get_accuracy_deg,
 )
-
-import os
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +101,6 @@ def _compute_all(model, data, pred, k_hops, device):
         true_lbl = int(y[node_x].item())
 
         I_x         = influence_distribution(model, data, node_x, k_hops)
-        # 1-hop subsets from model receptive field
         hop_subsets = k_hop_subsets_exact(
             node_x, k_hops, data.edge_index, N, I_x.device,
         )
@@ -115,7 +115,6 @@ def _compute_all(model, data, pred, k_hops, device):
         total_same = float(I_x[same_1].sum().item()) if same_1 else 0.0
         total_diff = float(I_x[diff_1].sum().item()) if diff_1 else 0.0
 
-        # labelled (training) fractions of total hop-1 influence
         same_lbl_1   = [n for n in same_1 if n in train_set]
         diff_lbl_1   = [n for n in diff_1 if n in train_set]
         total_1_infl = float(I_x[S_1].sum().item())
@@ -129,7 +128,6 @@ def _compute_all(model, data, pred, k_hops, device):
 
         purity_1 = len(same_1) / len(S_1)
 
-        # 2-hop ring — always computed structurally (BFS, independent of k_hops)
         hop2_subsets = k_hop_subsets_exact(
             node_x, 2, data.edge_index, N, I_x.device,
         )
@@ -158,7 +156,6 @@ def _compute_all(model, data, pred, k_hops, device):
 
 
 def _aggregate_by_degree(records):
-    """Group records by degree."""
     by_deg = defaultdict(lambda: {
         "total_same": [], "total_diff": [],
         "infl_balance": [], "lbl_frac_balance": [],
@@ -192,13 +189,11 @@ def _plot(by_deg, cfg, seed, save_dir, show):
 
     fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
 
-    # ── left y-axis: side-by-side boxplots ────────────────────────────────────
-
     same_data = [by_deg[d]["total_same"] for d in all_degrees]
     diff_data = [by_deg[d]["total_diff"] for d in all_degrees]
 
     bp_kwargs = {**_BP_KWARGS}
-    bp_kwargs["flierprops"] = dict(marker="", markersize=0)  # no fliers
+    bp_kwargs["flierprops"] = dict(marker="", markersize=0)
 
     for data_list, offset, color, label in [
         (same_data, -w / 2, "#1565C0", "Same-class infl. (hop 1)"),
@@ -222,8 +217,6 @@ def _plot(by_deg, cfg, seed, save_dir, show):
 
     ax.set_ylabel("Jacobian-L1 influence (hop 1)", fontsize=11)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-
-    # ── right y-axis: purity (median + IQR) and accuracy ─────────────────────
 
     ax_r = ax.twinx()
 
@@ -262,14 +255,7 @@ def _plot(by_deg, cfg, seed, save_dir, show):
 
 
 def _plot_delta(by_deg, cfg, seed, save_dir, show):
-    """Single-panel plot of per-degree influence and purity deltas.
-
-    Left y-axis  — boxplots of (total_same - total_diff) per degree group.
-    Right y-axis — median ± IQR lines for:
-                     (same_lbl/tot - diff_lbl/tot)  labelled influence balance
-                     purity_delta = purity(hop 2) - purity(hop 1)
-                   and accuracy line.
-    """
+    """Single-panel plot of per-degree purity by hop and accuracy."""
     all_degrees = sorted(by_deg.keys())
     n_deg       = len(all_degrees)
     pos         = np.arange(n_deg, dtype=float)
@@ -317,11 +303,7 @@ def _plot_delta(by_deg, cfg, seed, save_dir, show):
 # ── orchestration ──────────────────────────────────────────────────────────────
 
 def run(cfg, device, checkpoint_path, show, save_dir):
-    cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
-    data = load_or_create_split(
-        cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
-    ).to(device)
-
+    data = load_data(cfg, device)
     k_hops = cfg["model"]["num_layers"] - 1
     log.info("Dataset=%s  model=%s  k_hops=%d",
              cfg["dataset"]["name"], cfg["model"]["name"], k_hops)
@@ -370,15 +352,7 @@ def main():
         stream=sys.stdout,
     )
 
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-
-    model_cfg_path = os.path.join(
-        "configs", f"{cfg['model']['name']}_{cfg['dataset']['name']}.yaml"
-    )
-    if os.path.exists(model_cfg_path):
-        with open(model_cfg_path) as f:
-            cfg = _deep_merge(cfg, yaml.safe_load(f))
+    cfg = load_cfg(args.config)
 
     device = torch.device(
         args.device if args.device

@@ -1,5 +1,5 @@
 """
-build_node_feature_table.py — Build a per-test-node feature table and train a
+node_feature_table.py — Build a per-test-node feature table and train a
 logistic regression classifier to predict GCN misclassification.
 
 Each row is one test node.  Features cover structural graph factors (degree,
@@ -47,9 +47,9 @@ Model source (mutually exclusive)
 
 Usage
 -----
-  uv run build_node_feature_table.py --run 1 --save-dir ./output
-  uv run build_node_feature_table.py --run 1 --save-dir ./output --no-influence
-  uv run build_node_feature_table.py \\
+  uv run analysis/node_feature_table.py --run 1 --save-dir ./output
+  uv run analysis/node_feature_table.py --run 1 --save-dir ./output --no-influence
+  uv run analysis/node_feature_table.py \\
       --checkpoint results/.../checkpoints/run01_seed42.pt --save-dir ./output
 """
 
@@ -59,6 +59,8 @@ import os
 import sys
 from collections import defaultdict
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import pandas as pd
 import torch
@@ -66,10 +68,11 @@ import torch.nn.functional as F
 import yaml
 from torch_geometric.utils import degree as graph_degree
 
-from analyse_hop_influence import (
+from checkpoint_utils import (
     _build_model,       # noqa: F401 — imported for completeness; used via load_from_checkpoint
     _deep_merge,
     _resolve_run_checkpoint,
+    load_cfg,
     load_from_checkpoint,
     set_seed,
     train_model,
@@ -229,7 +232,6 @@ def _build_rows(
             total_infl = float(I_x.sum().item())
             hop_s      = k_hop_subsets_exact(node_x, k_hops, edge_index, N, I_x.device)
 
-            # hop-1 same/diff totals and training-node fractions
             if len(hop_s) > 1:
                 S1_i         = hop_s[1].tolist()
                 same_i       = [n for n in S1_i if int(y[n].item()) == true_lbl]
@@ -250,7 +252,6 @@ def _build_rows(
                 total_same_infl = total_diff_infl = 0.0
                 same_train_frac_1 = diff_train_frac_1 = 0.0
 
-            # hop-2 same/diff totals and training-node fractions (reuse subsets2 from above)
             if len(subsets2) > 2 and len(subsets2[2]) > 0:
                 S2_i         = subsets2[2].tolist()
                 same_i_2     = [n for n in S2_i if int(y[n].item()) == true_lbl]
@@ -316,11 +317,6 @@ def _build_rows(
 # ── univariate AUROC ──────────────────────────────────────────────────────────
 
 def _univariate_auroc(df: pd.DataFrame):
-    """Log the univariate AUROC for every feature, using it directly as a ranking score.
-
-    AUROC is flipped when < 0.5 (anticorrelated features still carry signal).
-    This avoids the monotonicity assumption of logistic regression.
-    """
     from sklearn.metrics import roc_auc_score
 
     results = []
@@ -348,7 +344,6 @@ def _univariate_auroc(df: pd.DataFrame):
 # ── logistic regression ────────────────────────────────────────────────────────
 
 def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
-    """5-fold stratified CV logistic regression; logs AUROC, PR-AUC, lift@k, and coefficients."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import average_precision_score
     from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score
@@ -357,7 +352,6 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
 
     cols      = feature_cols if feature_cols is not None else _FEATURE_COLS
     available = [c for c in cols if c in df.columns]
-    # Exclude columns that are entirely NaN (e.g. influence cols under --no-influence)
     skipped_nan = [c for c in available if not df[c].notna().any()]
     available   = [c for c in available if df[c].notna().any()]
     if skipped_nan:
@@ -368,9 +362,9 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
         log.warning("Dropped %d rows with NaN features before LR fitting", n_dropped)
 
     X = df_clean[available].values.astype(float)
-    y = df_clean["correct"].values          # 1 = correct, 0 = misclassified
-    y_misc = 1 - y                          # 1 = misclassified (positive class for PR/lift)
-    baseline = y_misc.mean()               # fraction misclassified
+    y = df_clean["correct"].values
+    y_misc = 1 - y
+    baseline = y_misc.mean()
 
     pipe = Pipeline([
         ("scaler", StandardScaler()),
@@ -385,13 +379,10 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
     auroc = cross_val_score(pipe, X, y, cv=cv, scoring="roc_auc")
     acc   = cross_val_score(pipe, X, y, cv=cv, scoring="accuracy")
 
-    # Out-of-fold predicted probabilities for PR-AUC and lift (avoids train-set leakage)
-    # proba[:, 0] = P(misclassified) since class 0 = misclassified
     oof_proba   = cross_val_predict(pipe, X, y, cv=cv, method="predict_proba")
-    p_misc      = oof_proba[:, 0]           # probability of being misclassified
+    p_misc      = oof_proba[:, 0]
     pr_auc      = average_precision_score(y_misc, p_misc)
 
-    # Lift@k: among top-k nodes ranked by p_misc, what fraction are actually misclassified?
     n           = len(y_misc)
     sorted_idx  = np.argsort(p_misc)[::-1]
     k_values    = [k for k in (50, 100, 200) if k <= n]
@@ -432,13 +423,6 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
 # ── SHAP values ───────────────────────────────────────────────────────────────
 
 def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
-    """Compute OOF SHAP values via LinearExplainer across 5 CV folds.
-
-    Returns shap_values (positive = increases P(misclassified)), raw X,
-    feature names, per-instance base values, and graph node indices aligned
-    to the rows of shap_values / X.
-    The LinearExplainer is exact for logistic regression; values are in log-odds space.
-    """
     import shap
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import StratifiedKFold
@@ -455,7 +439,7 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
     df_clean = df[keep].dropna(subset=available + ["correct"])
 
     X          = df_clean[available].values.astype(float)
-    y          = df_clean["correct"].values          # 1=correct, 0=misclassified
+    y          = df_clean["correct"].values
     node_idxs  = df_clean["node_idx"].values.astype(int) if "node_idx" in df_clean.columns else np.arange(len(y))
 
     pipe = Pipeline([
@@ -478,27 +462,19 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
         X_tr_sc = scaler.transform(X_tr)
         X_te_sc = scaler.transform(X_te)
 
-        # masker uses training distribution as E[X] background
         explainer = shap.LinearExplainer(
             lr_model,
             masker=shap.maskers.Independent(X_tr_sc),
         )
-        # sv shape: [n_test, n_features] for positive class (y=1=correct)
         sv = explainer.shap_values(X_te_sc)
         shap_vals[test_idx] = sv
         base_vals[test_idx] = explainer.expected_value
         log.info("  SHAP fold %d/%d done", fold_idx + 1, cv.n_splits)
 
-    # Negate: SHAP for misclassification (positive SHAP → higher P(misclassified))
     return -shap_vals, X, available, -base_vals, node_idxs
 
 
 def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, save_dir, show):
-    """Beeswarm summary plot of per-instance SHAP values for misclassification prediction.
-
-    Color = raw (unscaled) feature value.  x-axis = SHAP value in log-odds space.
-    Features sorted by mean |SHAP| descending.
-    """
     import shap
     import matplotlib.pyplot as plt
 
@@ -537,7 +513,6 @@ def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, 
 
 
 def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, show):
-    """Bar chart of mean |SHAP| per feature, sorted descending."""
     import shap
     import matplotlib.pyplot as plt
 
@@ -577,23 +552,6 @@ def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, sh
 def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
                          feature_names, target_node_idxs, df,
                          dataset, model_name, save_dir, show):
-    """Waterfall plot of SHAP values for specific graph node indices.
-
-    Each requested node gets its own figure showing per-feature contributions
-    from the base value to the final log-odds prediction.
-
-    Parameters
-    ----------
-    shap_values      : np.ndarray [n, n_features]  (positive = increases P(misclassified))
-    X_raw            : np.ndarray [n, n_features]   raw (unscaled) feature values
-    base_values      : np.ndarray [n]               per-instance expected log-odds
-    node_idxs        : np.ndarray [n]               graph node index for each row
-    feature_names    : list[str]
-    target_node_idxs : list[int]                    graph node indices to plot
-    df               : pd.DataFrame                 full feature table (for metadata)
-    dataset, model_name : str
-    save_dir, show   : str/None, bool
-    """
     import shap
     import matplotlib.pyplot as plt
 
@@ -612,7 +570,6 @@ def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
             feature_names = feature_names,
         )
 
-        # Pull metadata for the title from the feature table
         meta_row = df[df["node_idx"] == node_idx]
         if not meta_row.empty:
             deg     = int(meta_row["degree"].iloc[0])
@@ -650,10 +607,6 @@ def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
 # ── ROC / PR curve plot ────────────────────────────────────────────────────────
 
 def _plot_roc_pr(curves, baseline_rate, dataset, model_name, save_dir, show):
-    """Plot side-by-side ROC and PR curves for multiple feature sets.
-
-    curves: dict mapping label → (p_misc, y_misc)
-    """
     import matplotlib.pyplot as plt
     from sklearn.metrics import (
         average_precision_score,
@@ -727,10 +680,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         feature_cols=None, univariate_auroc=False, plot_roc=False, show=False,
         compute_shap=False, shap_nodes=None):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
-    # Load on CPU first so structural-feature functions (which require CPU tensors)
-    # can use the same object without a device conflict.  PyG Data.to() / .cpu()
-    # modify in place, so calling data.cpu() after data.to(device) would silently
-    # move the object back and leave the model on CUDA with CPU inputs.
     data = load_or_create_split(
         cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
     )
@@ -747,7 +696,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
     test_idx  = test_mask.nonzero(as_tuple=False).view(-1).tolist()
     train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
 
-    # ── vectorised structural features — run while data is still on CPU ────────
     log.info("Computing neighbourhood purity …")
     purity_1 = get_node_purity(data, k=1, node_mask=test_mask)
     purity_2 = get_node_purity(data, k=2, node_mask=test_mask)
@@ -759,7 +707,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
     avg_spl      = get_avg_spl_to_train(data)
     avg_spl_same = get_avg_spl_to_same_class_train(data)
 
-    # ── move data to device before model loading / influence computation ───────
     data = data.to(device)
 
     if checkpoint_path:
@@ -771,7 +718,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
 
     pred = pred.cpu()
 
-    # ── penultimate embeddings (single forward pass, all nodes) ───────────────
     if skip_embeddings:
         embeddings = None
     elif hasattr(model, "get_intermediate"):
@@ -782,7 +728,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         with torch.no_grad():
             embeddings = model(data.x, data.edge_index).cpu()
 
-    # ── per-node loop ──────────────────────────────────────────────────────────
     log.info("Building per-node feature rows %s…",
              "(skipping Jacobian influence)" if skip_influence else
              "(with Jacobian influence — this may take several minutes)")
@@ -802,7 +747,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
              int((df["correct"] == 0).sum()), len(df),
              100.0 * (df["correct"] == 0).mean())
 
-    # ── save CSV ───────────────────────────────────────────────────────────────
     if save_dir:
         sub   = os.path.join(save_dir, "node_feature_table")
         os.makedirs(sub, exist_ok=True)
@@ -814,14 +758,11 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         df.to_csv(path, index=False)
         log.info("Saved → %s", path)
 
-    # ── univariate AUROC ───────────────────────────────────────────────────────
     if univariate_auroc:
         _univariate_auroc(df)
 
-    # ── logistic regression ────────────────────────────────────────────────────
     _, _, _, _, p_misc, y_misc = _run_logistic_regression(df, feature_cols=feature_cols)
 
-    # ── ROC / PR baseline comparison plot ─────────────────────────────────────
     if plot_roc:
         log.info("Running baseline suite for ROC/PR plot …")
         curves = {}
@@ -837,7 +778,6 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                      cfg["dataset"]["name"], cfg["model"]["name"],
                      save_dir, show)
 
-    # ── SHAP beeswarm / waterfall ──────────────────────────────────────────────
     if compute_shap or shap_nodes:
         log.info("Computing SHAP values (5-fold OOF, LinearExplainer) …")
         shap_values, X_raw, feat_names, base_values, shap_node_idxs = \
@@ -910,15 +850,7 @@ def main():
         stream=sys.stdout,
     )
 
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-
-    model_cfg_path = os.path.join(
-        "configs", f"{cfg['model']['name']}_{cfg['dataset']['name']}.yaml"
-    )
-    if os.path.exists(model_cfg_path):
-        with open(model_cfg_path) as f:
-            cfg = _deep_merge(cfg, yaml.safe_load(f))
+    cfg = load_cfg(args.config)
 
     device = torch.device(
         args.device if args.device
@@ -935,9 +867,6 @@ def main():
                 f"{cfg.get('results_dir', './results')}/."
             )
 
-    # Derive save_dir from the checkpoint's exec directory when not explicitly set.
-    # checkpoint lives at  <exec_dir>/checkpoints/<fname>.pt
-    # so exec_dir = two levels up.
     save_dir = args.save_dir
     if save_dir is None and checkpoint_path is not None:
         save_dir = os.path.dirname(os.path.dirname(checkpoint_path))

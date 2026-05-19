@@ -6,8 +6,13 @@ IMPORTANT: uses the same data pipeline as main.py — CC filtering + random
 split seeded at 42 — so train_mask matches what the influence analysis sees.
 
 Run with:
-    python tests_graph_symmetry.py
+    uv run tests/test_graph_symmetry.py
 """
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import random
 import numpy as np

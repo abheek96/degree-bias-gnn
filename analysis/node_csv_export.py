@@ -13,8 +13,8 @@ across ``num_runs`` independent training runs.
 
 Usage
 -----
-  python export_node_csv.py [--config config.yaml] [--out-dir ./csv_exports]
-                            [--num-runs N] [--model-config path/to/override.yaml]
+  uv run analysis/node_csv_export.py [--config config.yaml] [--out-dir ./csv_exports]
+                                    [--num-runs N] [--model-config path/to/override.yaml]
 """
 
 import argparse
@@ -22,6 +22,9 @@ import copy
 import logging
 import os
 import random
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from collections import defaultdict, deque
 
 import numpy as np

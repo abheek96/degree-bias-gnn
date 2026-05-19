@@ -18,21 +18,26 @@ The project uses `uv` (not `python` directly). All scripts are run with `uv run 
 
 ## Analysis scripts
 
-These are the main entry points for post-hoc analysis — they all load a checkpoint or retrain from scratch:
+All analysis scripts live in `analysis/` and are run from the repo root. See `STRUCTURE.md` for full documentation.
 
 ```bash
 # Build per-test-node feature table + logistic regression
-uv run build_node_feature_table.py --run 1 --no-influence --save-dir ./output
-uv run build_node_feature_table.py --run 1 --save-dir ./output --plot-roc --shap
+uv run analysis/node_feature_table.py --run 1 --no-influence --save-dir ./output
+uv run analysis/node_feature_table.py --run 1 --save-dir ./output --plot-roc --shap
 
 # Per-hop influence breakdown for specific nodes
-uv run analyse_hop_influence.py --node-idx 1362 --run 1
+uv run analysis/hop_influence.py --node-idx 1362 --run 1
 
 # 1-hop influence aggregated by degree group (across all test nodes)
-uv run analyse_1hop_influence_by_degree.py --run 1 --save-dir ./output
+uv run analysis/1hop_influence_by_degree.py --run 1 --save-dir ./output
+
+# Query / analyse / reachability by degree group
+uv run analysis/degree_group.py --degree 5 --mode query
+uv run analysis/degree_group.py --degree 5 --mode influence --run 1
+uv run analysis/degree_group.py --all-degrees --mode reachability --save-dir ./output
 ```
 
-Key flags for `build_node_feature_table.py`:
+Key flags for `analysis/node_feature_table.py`:
 - `--run N` / `--checkpoint PATH` — model source (mutually exclusive)
 - `--no-influence` — skip expensive Jacobian computation (~minutes per run)
 - `--no-embeddings` — skip penultimate-layer embedding features
@@ -70,7 +75,7 @@ load_dataset (dataset.py)
 
 `influence_distribution(model, data, node_x, k_hops)` computes the Jacobian-L1 influence of every node on `node_x` by evaluating `∂h_x^(k) / ∂h_y^(0)` on the k-hop induced subgraph. This is **expensive** (one Jacobian call per test node). `k_hop_subsets_exact` partitions the receptive field into exact hop rings (not cumulative).
 
-### Feature table pipeline (`build_node_feature_table.py`)
+### Feature table pipeline (`analysis/node_feature_table.py`)
 
 Builds a CSV with one row per test node. Feature categories:
 - **Structural**: degree, purity (1/2-hop), SPL to training nodes, training-node counts and ratios per hop
@@ -89,8 +94,11 @@ Never include a Claude model as a co-author or mention Claude in git commit mess
 
 ## Key documentation files
 
-- `RESULTS.md` — main experimental results (PR-AUC is primary metric)
-- `RESULTS_EMBEDDINGS.md` — embedding feature results (preliminary; EPV concern flagged)
-- `TODO.md` — pending methodology fixes and planned analyses
-- `NOTES.md` — conceptual Q&A on metrics and plots
-- `COLUMNS.md` — full feature column definitions
+All research docs are in `docs/`:
+- `docs/RESULTS.md` — main experimental results (PR-AUC is primary metric)
+- `docs/RESULTS_EMBEDDINGS.md` — embedding feature results (preliminary; EPV concern flagged)
+- `docs/TODO.md` — pending methodology fixes and planned analyses
+- `docs/NOTES.md` — conceptual Q&A on metrics and plots
+- `docs/COLUMNS.md` — full feature column definitions
+
+`STRUCTURE.md` (root) — full map of every script, its purpose, why it was created, and its outputs.
