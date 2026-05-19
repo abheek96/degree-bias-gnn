@@ -330,6 +330,37 @@ def main():
     test_mean,  test_std  = np.mean(test_accs),  np.std(test_accs)
     train_mean, train_std = np.mean(train_accs), np.std(train_accs)
 
+    # ── save metrics bundle for post-hoc plot regeneration (TODO #13) ──────────
+    from metrics import save_metrics
+    save_metrics(
+        {
+            "cfg":                        cfg,
+            "test_deg":                   test_deg,
+            "all_deg":                    all_deg,
+            "train_deg":                  train_deg,
+            "test_labels":                test_labels,
+            "train_labels":               train_labels,
+            "deg_acc_results":            deg_acc_results,
+            "class_acc_results":          class_acc_results,
+            "run_labels":                 run_labels,
+            "overall_acc":                float(test_mean),
+            "k_hops":                     k_hops,
+            "purity_by_k":                purity_by_k,
+            "avg_spl":                    avg_spl,
+            "avg_spl_same_class":         avg_spl_same_class,
+            "cardinality_by_k":           cardinality_by_k,
+            "dist_deg_data":              dist_deg_data,
+            "has_labeled_neighbor":       has_labeled_neighbor,
+            "has_khop_labeled_neighbor":  has_khop_labeled_neighbor,
+            "has_same_class_train":       has_same_class_train,
+            "has_diff_class_train":       has_diff_class_train,
+            "train_nb_deg_stats":         train_nb_deg_stats,
+            "train_1hop_deg_stats":       train_1hop_deg_stats,
+            "max_same_train_deg":         max_same_train_deg,
+        },
+        exec_dir,
+    )
+
     setup_logger(log_dir=exec_dir, run_name="summary")
     log.info("Dataset: %s  |  Model: %s  |  Layers: %d  |  Split: %s",
              cfg["dataset"]["name"], cfg["model"]["name"],

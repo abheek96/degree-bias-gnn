@@ -3,3 +3,9 @@ torch-geometric
 pyyaml
 numpy
 tqdm
+pandas
+scikit-learn
+shap
+matplotlib
+pytest
+pytest-cov

@@ -119,6 +119,38 @@ _FEATURE_COLS = [
     "emb_purity_delta",
 ]
 
+# Human-readable labels for SHAP plots. Falls back to the raw column name for
+# any key not listed here.
+_FEATURE_DISPLAY_NAMES: dict[str, str] = {
+    "degree":                       "Degree",
+    "min_dist_to_train":            "Min dist → any train node",
+    "min_dist_to_same_class_train": "Min dist → same-class train node",
+    "avg_spl_to_train":             "Avg SPL → any train node",
+    "avg_spl_to_same_class_train":  "Avg SPL → same-class train node",
+    "purity_1hop":                  "Purity (1-hop)",
+    "purity_2hop":                  "Purity (2-hop)",
+    "n_same_train_1hop":            "# same-class train (1-hop ring)",
+    "n_diff_train_1hop":            "# diff-class train (1-hop ring)",
+    "n_same_train_2hop":            "# same-class train (2-hop ring)",
+    "n_diff_train_2hop":            "# diff-class train (2-hop ring)",
+    "same_train_ratio_1hop":        "Same-class train ratio (1-hop)",
+    "diff_train_ratio_1hop":        "Diff-class train ratio (1-hop)",
+    "same_train_ratio_2hop":        "Same-class train ratio (2-hop)",
+    "diff_train_ratio_2hop":        "Diff-class train ratio (2-hop)",
+    "mean_cosine_sim_1hop":         "Mean cosine sim (raw features, 1-hop)",
+    "total_infl_same_1hop":         "Influence: same-class nodes (1-hop)",
+    "total_infl_diff_1hop":         "Influence: diff-class nodes (1-hop)",
+    "total_infl_same_2hop":         "Influence: same-class nodes (2-hop)",
+    "total_infl_diff_2hop":         "Influence: diff-class nodes (2-hop)",
+    "same_train_infl_frac_1hop":    "Influence frac: same-class train (1-hop)",
+    "diff_train_infl_frac_1hop":    "Influence frac: diff-class train (1-hop)",
+    "same_train_infl_frac_2hop":    "Influence frac: same-class train (2-hop)",
+    "diff_train_infl_frac_2hop":    "Influence frac: diff-class train (2-hop)",
+    "emb_sim_same_1hop":            "Embedding sim: same-class (1-hop)",
+    "emb_sim_diff_1hop":            "Embedding sim: diff-class (1-hop)",
+    "emb_purity_delta":             "Embedding purity delta (same − diff)",
+}
+
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -127,6 +159,137 @@ def _build_adj_list(edge_index_cpu, N: int) -> dict:
     for src, dst in zip(edge_index_cpu[0].tolist(), edge_index_cpu[1].tolist()):
         adj[src].add(dst)
     return adj
+
+
+def _hop_ring_stats(hop_nodes: list, train_set: set, y, true_lbl: int) -> dict:
+    """Count same/diff-class training nodes in a hop ring and compute ratios.
+
+    Parameters
+    ----------
+    hop_nodes : node indices in this exact hop ring
+    train_set : set of training node indices
+    y         : global label tensor
+    true_lbl  : true class of the focal node
+
+    Returns keys: n_same, n_diff, n_total, ratio_same, ratio_diff
+    """
+    n = len(hop_nodes)
+    n_same = sum(1 for v in hop_nodes if v in train_set and int(y[v].item()) == true_lbl)
+    n_diff = sum(1 for v in hop_nodes if v in train_set and int(y[v].item()) != true_lbl)
+    return {
+        "n_same":    n_same,
+        "n_diff":    n_diff,
+        "n_total":   n,
+        "ratio_same": n_same / n if n > 0 else float("nan"),
+        "ratio_diff": n_diff / n if n > 0 else float("nan"),
+    }
+
+
+def _embedding_sim_features(
+    node_x: int, neighbors_1hop: list, embeddings, y, true_lbl: int
+) -> dict:
+    """Penultimate-layer cosine similarity between focal node and 1-hop neighbours.
+
+    Returns keys: emb_sim_same_1hop, emb_sim_diff_1hop, emb_purity_delta
+    All values are NaN when embeddings is None or there are no neighbors.
+    """
+    nan = float("nan")
+    if embeddings is None or not neighbors_1hop:
+        return {"emb_sim_same_1hop": nan, "emb_sim_diff_1hop": nan, "emb_purity_delta": nan}
+
+    focal_emb = F.normalize(embeddings[node_x].unsqueeze(0), dim=1)
+    same_nbrs = [n for n in neighbors_1hop if int(y[n].item()) == true_lbl]
+    diff_nbrs = [n for n in neighbors_1hop if int(y[n].item()) != true_lbl]
+
+    emb_sim_same = float(
+        (focal_emb * F.normalize(embeddings[same_nbrs], dim=1)).sum(dim=1).mean()
+    ) if same_nbrs else nan
+
+    emb_sim_diff = float(
+        (focal_emb * F.normalize(embeddings[diff_nbrs], dim=1)).sum(dim=1).mean()
+    ) if diff_nbrs else nan
+
+    emb_purity_delta = (
+        emb_sim_same - emb_sim_diff
+        if not (np.isnan(emb_sim_same) or np.isnan(emb_sim_diff))
+        else nan
+    )
+    return {
+        "emb_sim_same_1hop":  emb_sim_same,
+        "emb_sim_diff_1hop":  emb_sim_diff,
+        "emb_purity_delta":   emb_purity_delta,
+    }
+
+
+def _influence_features(
+    node_x: int, data, model, k_hops: int, subsets2, y, train_set: set, true_lbl: int
+) -> dict:
+    """Jacobian-L1 influence features for a single node.
+
+    Returns a dict with the eight infl_* columns.  Called only when
+    skip_influence=False; the caller is responsible for passing subsets2
+    (already computed for 2-hop ring counts so they can be reused).
+    """
+    edge_index = data.edge_index
+    N = data.num_nodes
+
+    I_x        = influence_distribution(model, data, node_x, k_hops)
+    total_infl = float(I_x.sum().item())
+    hop_s      = k_hop_subsets_exact(node_x, k_hops, edge_index, N, I_x.device)
+
+    def _infl_sum(nodes):
+        return float(I_x[nodes].sum().item()) if nodes else 0.0
+
+    def _train_frac(nodes):
+        tr = [n for n in nodes if n in train_set]
+        return float(I_x[tr].sum().item()) / total_infl if tr and total_infl > 0 else 0.0
+
+    if len(hop_s) > 1:
+        S1_i  = hop_s[1].tolist()
+        same1 = [n for n in S1_i if int(y[n].item()) == true_lbl]
+        diff1 = [n for n in S1_i if int(y[n].item()) != true_lbl]
+        total_same_infl   = _infl_sum(same1)
+        total_diff_infl   = _infl_sum(diff1)
+        same_train_frac_1 = _train_frac(same1)
+        diff_train_frac_1 = _train_frac(diff1)
+    else:
+        total_same_infl = total_diff_infl = 0.0
+        same_train_frac_1 = diff_train_frac_1 = 0.0
+
+    if len(subsets2) > 2 and len(subsets2[2]) > 0:
+        S2_i  = subsets2[2].tolist()
+        same2 = [n for n in S2_i if int(y[n].item()) == true_lbl]
+        diff2 = [n for n in S2_i if int(y[n].item()) != true_lbl]
+        total_same_infl_2  = _infl_sum(same2)
+        total_diff_infl_2  = _infl_sum(diff2)
+        same_train_frac_2  = _train_frac(same2)
+        diff_train_frac_2  = _train_frac(diff2)
+    else:
+        total_same_infl_2 = total_diff_infl_2 = 0.0
+        same_train_frac_2 = diff_train_frac_2 = 0.0
+
+    return {
+        "total_infl_same_1hop":      total_same_infl,
+        "total_infl_diff_1hop":      total_diff_infl,
+        "total_infl_same_2hop":      total_same_infl_2,
+        "total_infl_diff_2hop":      total_diff_infl_2,
+        "same_train_infl_frac_1hop": same_train_frac_1,
+        "diff_train_infl_frac_1hop": diff_train_frac_1,
+        "same_train_infl_frac_2hop": same_train_frac_2,
+        "diff_train_infl_frac_2hop": diff_train_frac_2,
+    }
+
+
+_NAN_INFL = {
+    "total_infl_same_1hop":      float("nan"),
+    "total_infl_diff_1hop":      float("nan"),
+    "total_infl_same_2hop":      float("nan"),
+    "total_infl_diff_2hop":      float("nan"),
+    "same_train_infl_frac_1hop": float("nan"),
+    "diff_train_infl_frac_1hop": float("nan"),
+    "same_train_infl_frac_2hop": float("nan"),
+    "diff_train_infl_frac_2hop": float("nan"),
+}
 
 
 # ── per-node feature computation ───────────────────────────────────────────────
@@ -160,119 +323,33 @@ def _build_rows(
     for pos, node_x in enumerate(test_idx):
         true_lbl = int(y[node_x].item())
 
-        # ── 1-hop ring counts ────────────────────────────────────────────────
-        S1   = list(adj[node_x])
-        n1   = len(S1)
-        n_same_train_1 = sum(
-            1 for n in S1 if n in train_set and int(y[n].item()) == true_lbl
-        )
-        n_diff_train_1 = sum(
-            1 for n in S1 if n in train_set and int(y[n].item()) != true_lbl
-        )
-        same_r1 = n_same_train_1 / n1 if n1 > 0 else float("nan")
-        diff_r1 = n_diff_train_1 / n1 if n1 > 0 else float("nan")
-
-        # ── 2-hop ring counts ────────────────────────────────────────────────
+        # ── hop ring counts ───────────────────────────────────────────────────
+        S1       = list(adj[node_x])
         subsets2 = k_hop_subsets_exact(node_x, 2, edge_index, N, device)
         S2       = subsets2[2].tolist() if len(subsets2) > 2 else []
-        n2       = len(S2)
-        n_same_train_2 = sum(
-            1 for n in S2 if n in train_set and int(y[n].item()) == true_lbl
-        )
-        n_diff_train_2 = sum(
-            1 for n in S2 if n in train_set and int(y[n].item()) != true_lbl
-        )
-        same_r2 = n_same_train_2 / n2 if n2 > 0 else float("nan")
-        diff_r2 = n_diff_train_2 / n2 if n2 > 0 else float("nan")
 
-        # ── cosine similarity (raw features, 1-hop) ──────────────────────────
+        st1 = _hop_ring_stats(S1, train_set, y, true_lbl)
+        st2 = _hop_ring_stats(S2, train_set, y, true_lbl)
+
+        # ── cosine similarity (raw features, 1-hop) ───────────────────────────
         if S1:
-            focal   = F.normalize(x_feat[node_x].unsqueeze(0), dim=1)  # [1, F]
-            nbr_mat = F.normalize(x_feat[S1], dim=1)                   # [k, F]
+            focal   = F.normalize(x_feat[node_x].unsqueeze(0), dim=1)
+            nbr_mat = F.normalize(x_feat[S1], dim=1)
             cos_sim = float((focal * nbr_mat).sum(dim=1).mean().item())
         else:
             cos_sim = float("nan")
 
-        # ── embedding-space cosine similarity (penultimate GCN layer) ──────────
-        if embeddings is not None and S1:
-            focal_emb  = F.normalize(embeddings[node_x].unsqueeze(0), dim=1)
-            same_nbrs  = [n for n in S1 if int(y[n].item()) == true_lbl]
-            diff_nbrs  = [n for n in S1 if int(y[n].item()) != true_lbl]
-            if same_nbrs:
-                emb_sim_same = float(
-                    (focal_emb * F.normalize(embeddings[same_nbrs], dim=1)).sum(dim=1).mean()
-                )
-            else:
-                emb_sim_same = float("nan")
-            if diff_nbrs:
-                emb_sim_diff = float(
-                    (focal_emb * F.normalize(embeddings[diff_nbrs], dim=1)).sum(dim=1).mean()
-                )
-            else:
-                emb_sim_diff = float("nan")
-            if not (np.isnan(emb_sim_same) or np.isnan(emb_sim_diff)):
-                emb_purity_delta = emb_sim_same - emb_sim_diff
-            else:
-                emb_purity_delta = float("nan")
-        else:
-            emb_sim_same = emb_sim_diff = emb_purity_delta = float("nan")
+        # ── embedding-space similarity ────────────────────────────────────────
+        emb = _embedding_sim_features(node_x, S1, embeddings, y, true_lbl)
 
         # ── Jacobian-L1 influence (expensive) ────────────────────────────────
-        if skip_influence:
-            total_same_infl      = float("nan")
-            total_diff_infl      = float("nan")
-            total_same_infl_2    = float("nan")
-            total_diff_infl_2    = float("nan")
-            same_train_frac_1    = float("nan")
-            diff_train_frac_1    = float("nan")
-            same_train_frac_2    = float("nan")
-            diff_train_frac_2    = float("nan")
-        else:
-            I_x        = influence_distribution(model, data, node_x, k_hops)
-            total_infl = float(I_x.sum().item())
-            hop_s      = k_hop_subsets_exact(node_x, k_hops, edge_index, N, I_x.device)
+        infl = (
+            _influence_features(node_x, data, model, k_hops, subsets2, y, train_set, true_lbl)
+            if not skip_influence
+            else _NAN_INFL
+        )
 
-            if len(hop_s) > 1:
-                S1_i         = hop_s[1].tolist()
-                same_i       = [n for n in S1_i if int(y[n].item()) == true_lbl]
-                diff_i       = [n for n in S1_i if int(y[n].item()) != true_lbl]
-                total_same_infl = float(I_x[same_i].sum().item()) if same_i else 0.0
-                total_diff_infl = float(I_x[diff_i].sum().item()) if diff_i else 0.0
-                same_tr_1    = [n for n in same_i if n in train_set]
-                diff_tr_1    = [n for n in diff_i if n in train_set]
-                same_train_frac_1 = (
-                    float(I_x[same_tr_1].sum().item()) / total_infl
-                    if same_tr_1 and total_infl > 0 else 0.0
-                )
-                diff_train_frac_1 = (
-                    float(I_x[diff_tr_1].sum().item()) / total_infl
-                    if diff_tr_1 and total_infl > 0 else 0.0
-                )
-            else:
-                total_same_infl = total_diff_infl = 0.0
-                same_train_frac_1 = diff_train_frac_1 = 0.0
-
-            if len(subsets2) > 2 and len(subsets2[2]) > 0:
-                S2_i         = subsets2[2].tolist()
-                same_i_2     = [n for n in S2_i if int(y[n].item()) == true_lbl]
-                diff_i_2     = [n for n in S2_i if int(y[n].item()) != true_lbl]
-                total_same_infl_2 = float(I_x[same_i_2].sum().item()) if same_i_2 else 0.0
-                total_diff_infl_2 = float(I_x[diff_i_2].sum().item()) if diff_i_2 else 0.0
-                same_tr_2    = [n for n in same_i_2 if n in train_set]
-                diff_tr_2    = [n for n in diff_i_2 if n in train_set]
-                same_train_frac_2 = (
-                    float(I_x[same_tr_2].sum().item()) / total_infl
-                    if same_tr_2 and total_infl > 0 else 0.0
-                )
-                diff_train_frac_2 = (
-                    float(I_x[diff_tr_2].sum().item()) / total_infl
-                    if diff_tr_2 and total_infl > 0 else 0.0
-                )
-            else:
-                total_same_infl_2 = total_diff_infl_2 = 0.0
-                same_train_frac_2 = diff_train_frac_2 = 0.0
-
-        # ── SPL / distance ───────────────────────────────────────────────────
+        # ── SPL / distance ────────────────────────────────────────────────────
         min_d  = int(dist_any[pos].item())
         min_ds = int(dist_same[pos].item())
 
@@ -285,26 +362,17 @@ def _build_rows(
             "avg_spl_to_same_class_train":  float(avg_spl_same[node_x].item()),
             "purity_1hop":                  float(purity_1[pos].item()),
             "purity_2hop":                  float(purity_2[pos].item()),
-            "n_same_train_1hop":            n_same_train_1,
-            "n_diff_train_1hop":            n_diff_train_1,
-            "n_same_train_2hop":            n_same_train_2,
-            "n_diff_train_2hop":            n_diff_train_2,
-            "same_train_ratio_1hop":        same_r1,
-            "diff_train_ratio_1hop":        diff_r1,
-            "same_train_ratio_2hop":        same_r2,
-            "diff_train_ratio_2hop":        diff_r2,
+            "n_same_train_1hop":            st1["n_same"],
+            "n_diff_train_1hop":            st1["n_diff"],
+            "n_same_train_2hop":            st2["n_same"],
+            "n_diff_train_2hop":            st2["n_diff"],
+            "same_train_ratio_1hop":        st1["ratio_same"],
+            "diff_train_ratio_1hop":        st1["ratio_diff"],
+            "same_train_ratio_2hop":        st2["ratio_same"],
+            "diff_train_ratio_2hop":        st2["ratio_diff"],
             "mean_cosine_sim_1hop":         cos_sim,
-            "total_infl_same_1hop":         total_same_infl,
-            "total_infl_diff_1hop":         total_diff_infl,
-            "total_infl_same_2hop":         total_same_infl_2,
-            "total_infl_diff_2hop":         total_diff_infl_2,
-            "same_train_infl_frac_1hop":    same_train_frac_1,
-            "diff_train_infl_frac_1hop":    diff_train_frac_1,
-            "same_train_infl_frac_2hop":    same_train_frac_2,
-            "diff_train_infl_frac_2hop":    diff_train_frac_2,
-            "emb_sim_same_1hop":            emb_sim_same,
-            "emb_sim_diff_1hop":            emb_sim_diff,
-            "emb_purity_delta":             emb_purity_delta,
+            **infl,
+            **emb,
             "correct":                      int(int(pred[node_x].item()) == true_lbl),
         })
 
@@ -471,7 +539,8 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
         base_vals[test_idx] = explainer.expected_value
         log.info("  SHAP fold %d/%d done", fold_idx + 1, cv.n_splits)
 
-    return -shap_vals, X, available, -base_vals, node_idxs
+    display_names = [_FEATURE_DISPLAY_NAMES.get(c, c) for c in available]
+    return -shap_vals, X, display_names, -base_vals, node_idxs
 
 
 def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, save_dir, show):

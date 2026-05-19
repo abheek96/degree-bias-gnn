@@ -94,26 +94,47 @@ def influence_distribution(model, data, node_x: int, k_hops: int,
     return influence_full
 
 
-def _khop_neighbors(edge_index, node_x: int, k: int, num_nodes: int) -> set:
-    """BFS to collect all nodes within k hops of node_x (node_x excluded)."""
-    src, dst = edge_index.cpu()
-    adj = [[] for _ in range(num_nodes)]
-    for u, v in zip(src.tolist(), dst.tolist()):
-        adj[v].append(u)   # reverse: BFS follows incoming edges, matching source_to_target aggregation
+def _khop_bfs(edge_index, node_x: int, k: int, num_nodes: int,
+              *, return_distances: bool = False):
+    """BFS over incoming edges up to k hops from node_x.
 
+    Follows *incoming* edges (adj[v] = predecessors of v) so the traversal
+    mirrors GCN source-to-target message passing.
+
+    Parameters
+    ----------
+    return_distances : if False (default) return a set of reachable nodes;
+                       if True return a dict {node_idx: hop_distance}.
+                       node_x is excluded from both.
+    """
+    src, dst = edge_index.cpu()
+    adj: list[list[int]] = [[] for _ in range(num_nodes)]
+    for u, v in zip(src.tolist(), dst.tolist()):
+        adj[v].append(u)
+
+    dist: dict[int, int] | None = {} if return_distances else None
     visited  = {node_x}
     frontier = {node_x}
-    for _ in range(k):
-        nxt = set()
+    for hop in range(1, k + 1):
+        nxt: set[int] = set()
         for u in frontier:
             for v in adj[u]:
                 if v not in visited:
                     visited.add(v)
                     nxt.add(v)
+                    if dist is not None:
+                        dist[v] = hop
         frontier = nxt
 
+    if return_distances:
+        return dist
     visited.discard(node_x)
     return visited
+
+
+def _khop_neighbors(edge_index, node_x: int, k: int, num_nodes: int) -> set:
+    """BFS to collect all nodes within k hops of node_x (node_x excluded)."""
+    return _khop_bfs(edge_index, node_x, k, num_nodes)
 
 
 def _khop_distances(edge_index, node_x: int, k: int, num_nodes: int) -> dict:
@@ -123,25 +144,7 @@ def _khop_distances(edge_index, node_x: int, k: int, num_nodes: int) -> dict:
     -------
     dist : dict {node_idx: hop_distance}  (node_x itself excluded)
     """
-    src, dst = edge_index.cpu()
-    adj = [[] for _ in range(num_nodes)]
-    for u, v in zip(src.tolist(), dst.tolist()):
-        adj[v].append(u)   # incoming edges, matching source_to_target aggregation
-
-    dist     = {}
-    visited  = {node_x}
-    frontier = {node_x}
-    for hop in range(1, k + 1):
-        nxt = set()
-        for u in frontier:
-            for v in adj[u]:
-                if v not in visited:
-                    visited.add(v)
-                    nxt.add(v)
-                    dist[v] = hop
-        frontier = nxt
-
-    return dist
+    return _khop_bfs(edge_index, node_x, k, num_nodes, return_distances=True)
 
 
 def k_hop_subsets_rough(node_idx: int, num_hops: int, edge_index: Tensor,

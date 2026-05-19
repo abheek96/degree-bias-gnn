@@ -214,6 +214,29 @@ def _count_bars(ax_main, pos, counts):
     return ax2
 
 
+def _compute_labelling_ratio_by_degree(has_labeled, deg, unique_degrees):
+    """Fraction of nodes with has_labeled==True per degree group.
+
+    Parameters
+    ----------
+    has_labeled     : 1-D BoolTensor
+    deg             : 1-D LongTensor, aligned to has_labeled
+    unique_degrees  : sorted list of degree values to iterate over
+
+    Returns
+    -------
+    ratios : list[float] — fraction per degree group
+    counts : list[int]  — node count per degree group
+    """
+    ratios = []
+    counts = []
+    for d in unique_degrees:
+        mask = (deg == d)
+        counts.append(int(mask.sum()))
+        ratios.append(float(has_labeled[mask].float().mean()))
+    return ratios, counts
+
+
 # ── public entry points ────────────────────────────────────────────────────────
 
 def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False, overall_acc=None):
@@ -1293,15 +1316,13 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
     has_khop   = has_khop_labeled_neighbor.cpu() if has_khop_labeled_neighbor is not None else None
     all_unique = sorted(deg.unique().tolist())
 
-    ratio_1hop_by_deg  = {}
-    ratio_khop_by_deg  = {}
-    counts_by_deg      = {}
-    for d in all_unique:
-        mask = (deg == d)
-        ratio_1hop_by_deg[d] = float(has_1hop[mask].float().mean())
-        if has_khop is not None:
-            ratio_khop_by_deg[d] = float(has_khop[mask].float().mean())
-        counts_by_deg[d] = int(mask.sum())
+    ratios_1hop, counts_list = _compute_labelling_ratio_by_degree(has_1hop, deg, all_unique)
+    ratio_1hop_by_deg = dict(zip(all_unique, ratios_1hop))
+    counts_by_deg     = dict(zip(all_unique, counts_list))
+    ratio_khop_by_deg = {}
+    if has_khop is not None:
+        ratios_khop, _ = _compute_labelling_ratio_by_degree(has_khop, deg, all_unique)
+        ratio_khop_by_deg = dict(zip(all_unique, ratios_khop))
 
     # ── common degree axis ─────────────────────────────────────────────────────
     all_degrees = sorted(set(acc_degrees) | set(all_unique))
@@ -1405,12 +1426,7 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
     n_all  = int(len(deg))
     subtitle = _subtitle(cfg, n_all, len(unique_degrees))
 
-    counts = []
-    ratios = []
-    for d in unique_degrees:
-        mask = (deg == d)
-        counts.append(int(mask.sum()))
-        ratios.append(float(has[mask].float().mean()))
+    ratios, counts = _compute_labelling_ratio_by_degree(has, deg, unique_degrees)
 
     fig, (ax_top, ax_bot) = plt.subplots(
         2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
