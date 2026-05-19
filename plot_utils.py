@@ -1285,8 +1285,8 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     _BOX_COLOR    = "#1565C0"   # deep blue — purity boxes
     _JITTER_COLOR = "#0D47A1"   # darker blue — strip dots
     _MEAN_COLOR   = "#37474F"   # dark slate — overall mean line
-    _SAME_COLOR   = "#2E7D32"   # forest green — same-class ratio
-    _DIFF_COLOR   = "#B71C1C"   # deep red — diff-class ratio
+    _SAME_COLOR   = "#00897B"   # teal — same-class ratio
+    _DIFF_COLOR   = "#EF6C00"   # orange — diff-class ratio
 
     deg    = test_deg.cpu()
     purity = purity_test.cpu().numpy()
@@ -1372,16 +1372,16 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
 
         if hsc is not None:
             ax_lr.plot(pos, same_ratios, color=_SAME_COLOR, lw=2.0,
-                       marker="o", markersize=4, zorder=6)
+                       ls="-", marker="o", markersize=4, zorder=6)
             legend_handles.append(plt.Line2D(
-                [0], [0], color=_SAME_COLOR, lw=2, marker="o", markersize=4,
+                [0], [0], color=_SAME_COLOR, lw=2, ls="-", marker="o", markersize=4,
                 label=f"Has same-class train nb ({hop_label})",
             ))
         if hdc is not None:
             ax_lr.plot(pos, diff_ratios, color=_DIFF_COLOR, lw=2.0,
-                       marker="s", markersize=4, zorder=6)
+                       ls="--", marker="^", markersize=4, zorder=6)
             legend_handles.append(plt.Line2D(
-                [0], [0], color=_DIFF_COLOR, lw=2, marker="s", markersize=4,
+                [0], [0], color=_DIFF_COLOR, lw=2, ls="--", marker="^", markersize=4,
                 label=f"Has diff-class train nb ({hop_label})",
             ))
 
