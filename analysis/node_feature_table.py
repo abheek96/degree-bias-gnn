@@ -47,8 +47,8 @@ Model source (mutually exclusive)
 
 Usage
 -----
-  uv run analysis/node_feature_table.py --run 1 --save-dir ./output
-  uv run analysis/node_feature_table.py --run 1 --save-dir ./output --no-influence
+  uv run analysis/node_feature_table.py --run 1
+  uv run analysis/node_feature_table.py --run 1 --no-influence
   uv run analysis/node_feature_table.py \\
       --checkpoint results/.../checkpoints/run01_seed42.pt --save-dir ./output
 """
@@ -884,7 +884,8 @@ def main():
     parser.add_argument("--device",    default=None,
                         help="Device override, e.g. cuda:0 or cpu.")
     parser.add_argument("--save-dir",  default=None,
-                        help="Directory to save the CSV table.")
+                        help="Directory to save outputs. Ignored when --run is used "
+                             "(outputs always go to the run's exec directory).")
     parser.add_argument("--no-influence", action="store_true",
                         help="Skip Jacobian-L1 influence computation (much faster).")
     parser.add_argument("--no-embeddings", action="store_true",
@@ -936,10 +937,14 @@ def main():
                 f"{cfg.get('results_dir', './results')}/."
             )
 
-    save_dir = args.save_dir
-    if save_dir is None and checkpoint_path is not None:
+    if args.run is not None and checkpoint_path is not None:
         save_dir = os.path.dirname(os.path.dirname(checkpoint_path))
-        log.info("save_dir inferred from checkpoint: %s", save_dir)
+        log.info("save_dir set to run directory: %s", save_dir)
+    else:
+        save_dir = args.save_dir
+        if save_dir is None and checkpoint_path is not None:
+            save_dir = os.path.dirname(os.path.dirname(checkpoint_path))
+            log.info("save_dir inferred from checkpoint: %s", save_dir)
 
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     shap_nodes   = [int(n.strip()) for n in args.shap_nodes.split(",")] if args.shap_nodes else None
