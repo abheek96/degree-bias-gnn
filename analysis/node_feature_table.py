@@ -618,6 +618,80 @@ def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, sh
         plt.close(fig)
 
 
+def _plot_shap_heatmap(shap_values, X_raw, base_values, feature_names,
+                       dataset, model_name, save_dir, show):
+    import shap
+    import matplotlib.pyplot as plt
+
+    exp = shap.Explanation(
+        values        = shap_values,
+        base_values   = base_values,
+        data          = X_raw,
+        feature_names = feature_names,
+    )
+    fig_h = max(6.0, len(feature_names) * 0.38 + 2.0)
+    plt.figure(figsize=(12, fig_h))
+    shap.plots.heatmap(exp, show=False)
+    fig = plt.gcf()
+    fig.suptitle(
+        f"{dataset} · {model_name} — SHAP heatmap (all test nodes)\n"
+        "rows = nodes sorted by predicted P(misclassified); "
+        "positive SHAP = increases P(misclassified)",
+        fontsize=9,
+        y=1.01,
+    )
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "shap")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_heatmap.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def _plot_shap_decision(shap_values, base_values, feature_names,
+                        dataset, model_name, save_dir, show):
+    import shap
+    import matplotlib.pyplot as plt
+
+    n_features = len(feature_names)
+    fig_h = max(5.0, n_features * 0.38 + 1.5)
+    mean_base = float(np.mean(base_values))
+    plt.figure(figsize=(9, fig_h))
+    shap.decision_plot(
+        mean_base,
+        shap_values,
+        feature_names=feature_names,
+        show=False,
+    )
+    fig = plt.gcf()
+    fig.suptitle(
+        f"{dataset} · {model_name} — SHAP decision plot (all test nodes)\n"
+        "each line = one node; positive = increases P(misclassified)",
+        fontsize=9,
+        y=1.01,
+    )
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "shap")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_decision.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
                          feature_names, target_node_idxs, df,
                          dataset, model_name, save_dir, show):
@@ -862,6 +936,16 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                 cfg["dataset"]["name"], cfg["model"]["name"],
                 save_dir, show,
             )
+            _plot_shap_heatmap(
+                shap_values, X_raw, base_values, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+            )
+            _plot_shap_decision(
+                shap_values, base_values, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+            )
         if shap_nodes:
             _plot_shap_waterfall(
                 shap_values, X_raw, base_values, shap_node_idxs,
@@ -901,7 +985,7 @@ def main():
     parser.add_argument("--show", action="store_true",
                         help="Display plots interactively (requires a display).")
     parser.add_argument("--shap", action="store_true",
-                        help="Compute OOF SHAP values and save a beeswarm summary plot.")
+                        help="Compute OOF SHAP values and save beeswarm, bar, heatmap, and decision plots.")
     parser.add_argument("--shap-nodes", default=None,
                         help="Comma-separated graph node indices for per-node SHAP waterfall plots "
                              "(e.g. '1362,42'). Implies SHAP computation.")
