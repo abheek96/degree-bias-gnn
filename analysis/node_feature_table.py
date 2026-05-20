@@ -936,16 +936,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                 cfg["dataset"]["name"], cfg["model"]["name"],
                 save_dir, show,
             )
-            _plot_shap_heatmap(
-                shap_values, X_raw, base_values, feat_names,
-                cfg["dataset"]["name"], cfg["model"]["name"],
-                save_dir, show,
-            )
-            _plot_shap_decision(
-                shap_values, base_values, feat_names,
-                cfg["dataset"]["name"], cfg["model"]["name"],
-                save_dir, show,
-            )
+
         if shap_nodes:
             _plot_shap_waterfall(
                 shap_values, X_raw, base_values, shap_node_idxs,
@@ -985,7 +976,7 @@ def main():
     parser.add_argument("--show", action="store_true",
                         help="Display plots interactively (requires a display).")
     parser.add_argument("--shap", action="store_true",
-                        help="Compute OOF SHAP values and save beeswarm, bar, heatmap, and decision plots.")
+                        help="Compute OOF SHAP values and save a beeswarm summary plot.")
     parser.add_argument("--shap-nodes", default=None,
                         help="Comma-separated graph node indices for per-node SHAP waterfall plots "
                              "(e.g. '1362,42'). Implies SHAP computation.")
