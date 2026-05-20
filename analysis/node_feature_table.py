@@ -34,6 +34,8 @@ Columns
   diff_train_infl_frac_1hop     — fraction of total influence from diff-class training nodes at hop 1
   same_train_infl_frac_2hop     — fraction of total influence from same-class training nodes at hop 2
   diff_train_infl_frac_2hop     — fraction of total influence from diff-class training nodes at hop 2
+  closeness_centrality          — reciprocal of sum of shortest-path distances to all reachable nodes
+  eigenvector_centrality        — principal eigenvector component (NaN if ARPACK fails)
   correct                       — 1 = correctly classified, 0 = misclassified (target)
 
 The influence columns are omitted (set to NaN) when ``--no-influence`` is passed.
@@ -83,6 +85,8 @@ from utils import (
     compute_distances_to_train,
     get_avg_spl_to_same_class_train,
     get_avg_spl_to_train,
+    get_closeness_centrality,
+    get_eigenvector_centrality,
     get_node_purity,
 )
 
@@ -117,6 +121,8 @@ _FEATURE_COLS = [
     "emb_sim_same_1hop",
     "emb_sim_diff_1hop",
     "emb_purity_delta",
+    "closeness_centrality",
+    "eigenvector_centrality",
 ]
 
 # Human-readable labels for SHAP plots. Falls back to the raw column name for
@@ -149,6 +155,8 @@ _FEATURE_DISPLAY_NAMES: dict[str, str] = {
     "emb_sim_same_1hop":            "Embedding sim: same-class (1-hop)",
     "emb_sim_diff_1hop":            "Embedding sim: diff-class (1-hop)",
     "emb_purity_delta":             "Embedding purity delta (same − diff)",
+    "closeness_centrality":         "Closeness centrality",
+    "eigenvector_centrality":       "Eigenvector centrality",
 }
 
 
@@ -310,6 +318,8 @@ def _build_rows(
     dist_same,              # LongTensor  [num_test]  — min SPL to same-class train node
     avg_spl,                # FloatTensor [num_nodes] — avg SPL to all train nodes
     avg_spl_same,           # FloatTensor [num_nodes] — avg SPL to same-class train nodes
+    closeness,              # FloatTensor [num_nodes] — closeness centrality
+    eigenvec,               # FloatTensor [num_nodes] — eigenvector centrality
     embeddings,             # FloatTensor [num_nodes, D] — penultimate GCN embeddings, CPU
     skip_influence: bool,
 ) -> list[dict]:
@@ -373,6 +383,8 @@ def _build_rows(
             "mean_cosine_sim_1hop":         cos_sim,
             **infl,
             **emb,
+            "closeness_centrality":         float(closeness[node_x].item()),
+            "eigenvector_centrality":       float(eigenvec[node_x].item()),
             "correct":                      int(int(pred[node_x].item()) == true_lbl),
         })
 
@@ -850,6 +862,11 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
     avg_spl      = get_avg_spl_to_train(data)
     avg_spl_same = get_avg_spl_to_same_class_train(data)
 
+    log.info("Computing closeness centrality …")
+    closeness = get_closeness_centrality(data).cpu()
+    log.info("Computing eigenvector centrality …")
+    eigenvec  = get_eigenvector_centrality(data).cpu()
+
     data = data.to(device)
 
     if checkpoint_path:
@@ -880,6 +897,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
         purity_1=purity_1, purity_2=purity_2,
         dist_any=dist_any, dist_same=dist_same,
         avg_spl=avg_spl, avg_spl_same=avg_spl_same,
+        closeness=closeness, eigenvec=eigenvec,
         embeddings=embeddings,
         skip_influence=skip_influence,
     )

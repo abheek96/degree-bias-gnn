@@ -165,6 +165,10 @@ _SPL_SC_COLOR  = "#E53935"   # red    — same-class training node
 _SPL_ACC_COLOR = _ACC_COLOR
 _SPL_PUR_COLOR = _PURITY_COLOR
 
+# Centrality plot colours
+_CLOSENESS_COLOR  = "#00796B"   # teal   — closeness centrality
+_EIGENVEC_COLOR   = "#F57C00"   # orange — eigenvector centrality
+
 _BP_KWARGS = dict(
     patch_artist=True,
     medianprops=dict(color="black", linewidth=1.5),
@@ -3331,3 +3335,188 @@ def plot_train_degree_distribution(
     fig.tight_layout()
     _save(fig, _subdir(save_dir, "train_degree_dist"),
           f"{prefix}_train_degree_distribution.png", show)
+
+
+# ── centrality vs. degree ──────────────────────────────────────────────────────
+
+def plot_centrality_vs_degree(test_deg, centrality, cfg, centrality_type,
+                              deg_acc_results=None, save_dir=None, show=False):
+    """Boxplots of node centrality grouped by degree.
+
+    Parameters
+    ----------
+    test_deg       : 1-D LongTensor of degrees for test nodes.
+    centrality     : 1-D FloatTensor of centrality values for test nodes (NaN-safe).
+    cfg            : dict
+    centrality_type: "closeness" or "eigenvector"
+    deg_acc_results: optional list[dict] from get_accuracy_deg() for accuracy overlay.
+    save_dir       : str or None
+    show           : bool
+    """
+    deg  = test_deg.cpu()
+    vals = centrality.cpu().numpy() if hasattr(centrality, "numpy") else np.asarray(centrality, dtype=float)
+
+    unique_degrees = sorted(deg.unique().tolist())
+    pos    = list(range(len(unique_degrees)))
+    prefix = _fname_prefix(cfg)
+    n_test = int(len(deg))
+    subtitle = _subtitle(cfg, n_test, len(unique_degrees))
+
+    if centrality_type == "closeness":
+        color     = _CLOSENESS_COLOR
+        label     = "Closeness centrality"
+        fname_key = "closeness_centrality"
+    else:
+        color     = _EIGENVEC_COLOR
+        label     = "Eigenvector centrality"
+        fname_key = "eigenvector_centrality"
+
+    bp_data = []
+    counts  = []
+    for d in unique_degrees:
+        mask  = (deg == d).numpy()
+        v     = vals[mask]
+        valid = v[~np.isnan(v)]
+        bp_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
+        counts.append(int(mask.sum()))
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    bp = ax_top.boxplot(bp_data, positions=pos, widths=0.55, **_BP_KWARGS)
+    for patch in bp["boxes"]:
+        patch.set_facecolor(color)
+        patch.set_alpha(0.65)
+
+    if deg_acc_results is not None:
+        acc_by_deg = _collect(deg_acc_results)
+        acc_pos, acc_means = [], []
+        for i, d in enumerate(unique_degrees):
+            runs = acc_by_deg.get(d, [])
+            if runs:
+                acc_pos.append(i)
+                acc_means.append(float(np.mean(runs)))
+        if acc_pos:
+            ax_acc = ax_top.twinx()
+            ax_acc.plot(acc_pos, acc_means, color=_ACC_COLOR, linewidth=1.8,
+                        marker="o", markersize=4, zorder=5, label="Accuracy")
+            ax_acc.set_ylabel("Accuracy", fontsize=10, color=_ACC_COLOR)
+            ax_acc.tick_params(axis="y", labelsize=8, colors=_ACC_COLOR)
+            ax_acc.set_ylim(0, 1.15)
+            handles = [
+                plt.Line2D([0], [0], color=color, linewidth=6, alpha=0.65, label=label),
+                plt.Line2D([0], [0], color=_ACC_COLOR, linewidth=1.8,
+                           marker="o", markersize=4, label="Accuracy"),
+            ]
+            ax_top.legend(handles=handles, fontsize=8, loc="upper right")
+
+    ax_top.set_ylabel(label, fontsize=11)
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(f"{label} vs. Degree\n{subtitle}", fontsize=11)
+
+    ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    _degree_axis(ax_bot, pos, unique_degrees)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "centrality_vs_degree"),
+          f"{prefix}_{fname_key}_vs_degree.png", show)
+
+
+# ── centrality vs. accuracy (quantile bins) ────────────────────────────────────
+
+def plot_centrality_vs_accuracy(centrality, correct, cfg, centrality_type,
+                                n_bins=5, save_dir=None, show=False):
+    """Accuracy per equal-frequency quantile bin of node centrality.
+
+    Bins test nodes into ``n_bins`` quantile groups by centrality value and
+    shows the mean accuracy per bin.  A dashed horizontal line marks the
+    overall accuracy baseline.  Bottom panel shows node count per bin.
+
+    Parameters
+    ----------
+    centrality     : array-like of float (NaN-safe), one value per test node.
+    correct        : array-like of int (0/1), aligned to centrality.
+    cfg            : dict
+    centrality_type: "closeness" or "eigenvector"
+    n_bins         : int — number of equal-frequency quantile bins.
+    save_dir       : str or None
+    show           : bool
+    """
+    vals    = np.asarray(centrality, dtype=float)
+    correct = np.asarray(correct, dtype=float)
+
+    valid_mask = ~np.isnan(vals)
+    vals_v     = vals[valid_mask]
+    correct_v  = correct[valid_mask]
+
+    if centrality_type == "closeness":
+        color     = _CLOSENESS_COLOR
+        label     = "Closeness centrality"
+        fname_key = "closeness_centrality"
+    else:
+        color     = _EIGENVEC_COLOR
+        label     = "Eigenvector centrality"
+        fname_key = "eigenvector_centrality"
+
+    prefix   = _fname_prefix(cfg)
+    n_test   = len(vals)
+    subtitle = _subtitle(cfg, n_test, n_bins)
+
+    # Build equal-frequency bins via quantiles
+    quantiles  = np.linspace(0, 1, n_bins + 1)
+    bin_edges  = np.nanquantile(vals_v, quantiles)
+    # Collapse duplicate edges (can happen when many nodes share a value)
+    bin_edges  = np.unique(bin_edges)
+    actual_bins = len(bin_edges) - 1
+
+    bin_idx = np.digitize(vals_v, bin_edges[1:-1])   # 0-based bin index
+
+    bin_acc    = []
+    bin_counts = []
+    bin_labels = []
+    for b in range(actual_bins):
+        mask = bin_idx == b
+        bin_counts.append(int(mask.sum()))
+        bin_acc.append(float(correct_v[mask].mean()) if mask.sum() > 0 else float("nan"))
+        lo, hi = bin_edges[b], bin_edges[b + 1]
+        bin_labels.append(f"[{lo:.3f},\n{hi:.3f})")
+
+    pos            = list(range(actual_bins))
+    overall_acc    = float(correct_v.mean()) if len(correct_v) > 0 else float("nan")
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(max(7, actual_bins * 1.4), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    bar_colors = [color if not np.isnan(a) else "lightgrey" for a in bin_acc]
+    ax_top.bar(pos, [a if not np.isnan(a) else 0 for a in bin_acc],
+               color=bar_colors, alpha=0.75, width=0.65, zorder=3)
+    ax_top.axhline(overall_acc, color="black", linestyle="--", linewidth=1.2,
+                   label=f"Overall accuracy ({overall_acc:.3f})", zorder=4)
+
+    ax_top.set_ylabel("Accuracy", fontsize=11)
+    ax_top.set_ylim(0, 1.15)
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.legend(fontsize=8, loc="upper right")
+    ax_top.set_title(
+        f"Accuracy vs. {label} (quantile bins)\n{subtitle}", fontsize=11,
+    )
+
+    ax_bot.bar(pos, bin_counts, color="lightgrey", alpha=0.7, width=0.65)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.set_xticks(pos)
+    ax_bot.set_xticklabels(bin_labels, fontsize=7, ha="center")
+    ax_bot.set_xlabel(label, fontsize=11)
+    ax_bot.set_xlim(-0.6, actual_bins - 0.4)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    fig.tight_layout()
+    _save(fig, _subdir(save_dir, "centrality_vs_accuracy"),
+          f"{prefix}_{fname_key}_vs_accuracy.png", show)
