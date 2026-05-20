@@ -454,6 +454,45 @@ def get_class_labelling_ratio(data) -> tuple[torch.Tensor, torch.Tensor]:
     return has_same, has_diff
 
 
+def get_khop_class_labelling_ratio(data, k: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """For every node, indicate presence of same/diff-class training nodes within k hops.
+
+    Parameters
+    ----------
+    data : torch_geometric.data.Data  (must have .edge_index, .train_mask, .y)
+    k    : int — receptive-field radius
+
+    Returns
+    -------
+    has_same_within_k : BoolTensor, shape [num_nodes]
+    has_diff_within_k : BoolTensor, shape [num_nodes]
+    """
+    from torch_geometric.utils import to_dense_adj
+
+    N          = data.num_nodes
+    A          = to_dense_adj(data.edge_index, max_num_nodes=N).squeeze(0).cpu()
+    labels     = data.y.cpu()
+    train_mask = data.train_mask.cpu()
+
+    # Cumulative k-hop reachability matrix (binary)
+    reach  = A.clone()
+    A_pow  = A.clone()
+    for _ in range(k - 1):
+        A_pow = (A_pow @ A).clamp(0, 1)
+        reach = (reach + A_pow).clamp(0, 1)
+
+    has_same = torch.zeros(N, dtype=torch.bool)
+    has_diff = torch.zeros(N, dtype=torch.bool)
+    for c in labels.unique():
+        node_mask_c  = labels == c
+        same_train_c = (train_mask & (labels == c)).float()
+        diff_train_c = (train_mask & (labels != c)).float()
+        has_same[node_mask_c] = ((reach @ same_train_c) > 0)[node_mask_c]
+        has_diff[node_mask_c] = ((reach @ diff_train_c) > 0)[node_mask_c]
+
+    return has_same, has_diff
+
+
 def get_khop_labelling_ratio(data, k: int) -> torch.Tensor:
     """For every node, indicate whether it has a training node within k hops.
 

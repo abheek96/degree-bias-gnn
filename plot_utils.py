@@ -214,6 +214,29 @@ def _count_bars(ax_main, pos, counts):
     return ax2
 
 
+def _compute_labelling_ratio_by_degree(has_labeled, deg, unique_degrees):
+    """Fraction of nodes with has_labeled==True per degree group.
+
+    Parameters
+    ----------
+    has_labeled     : 1-D BoolTensor
+    deg             : 1-D LongTensor, aligned to has_labeled
+    unique_degrees  : sorted list of degree values to iterate over
+
+    Returns
+    -------
+    ratios : list[float] — fraction per degree group
+    counts : list[int]  — node count per degree group
+    """
+    ratios = []
+    counts = []
+    for d in unique_degrees:
+        mask = (deg == d)
+        counts.append(int(mask.sum()))
+        ratios.append(float(has_labeled[mask].float().mean()))
+    return ratios, counts
+
+
 # ── public entry points ────────────────────────────────────────────────────────
 
 def plot_acc_vs_degree(run_results, cfg, save_dir=None, show=False, overall_acc=None):
@@ -426,7 +449,9 @@ def plot_combined_vs_degree(run_results, dist_deg_data, cfg,
     acc_median = np.array(acc_median)
     acc_q1     = np.array(acc_q1)
     acc_q3     = np.array(acc_q3)
-    overall    = float(np.nanmean(acc_median))
+    deg_counts = np.array([len(deg_data[d][0]) for d in all_degrees], dtype=float)
+    valid      = ~np.isnan(acc_median)
+    overall    = float((acc_median[valid] * deg_counts[valid]).sum() / deg_counts[valid].sum())
 
     # ── Distance signals — graph-fixed, computed once ─────────────────────────
     def _dist_stats(key):
@@ -515,26 +540,11 @@ def plot_neighborhood_cardinality_vs_degree(
     all_deg=None, purity_by_k=None,
     save_dir=None, show=False,
 ):
-    """Neighbourhood cardinality (k=1, k=2), accuracy, and Δ purity vs. 1-hop degree.
+    """Neighbourhood cardinality (k=1, k=2) and accuracy vs. 1-hop degree.
 
-    Top panel
-        Left y-axis  — mean neighbourhood cardinality ± 1 std for k=1 (blue)
-                       and k=2 (orange), grouped by 1-hop degree.
-        Right y-axis — median classification accuracy ± IQR across runs (green).
-
-    Bottom panel  (when ``purity_by_k`` is provided)
-        Mean Δ purity (purity[k_max] − purity[k_min]) ± 1 std per degree group
-        (purple), with a zero reference line.  Uses test nodes only.
-
-    Anomaly highlights
-        Degree groups where ALL three structural signals align — accuracy below
-        the cross-degree median, k=2 cardinality above average, and Δ purity
-        more negative than average — are flagged with a dashed crimson vertical
-        line spanning both panels, a ★ marker on the accuracy curve, and a
-        degree label at the top of the upper panel.  Up to five anomalies are
-        shown (the worst by accuracy).  Requires ≥ 3 test nodes per group to
-        suppress single-node noise.  When purity data is absent, only the
-        first two criteria are used.
+    Left y-axis  — mean neighbourhood cardinality ± 1 std for k=1 (blue)
+                   and k=2 (orange), grouped by 1-hop degree.
+    Right y-axis — median classification accuracy ± IQR across runs (green).
 
     Parameters
     ----------
@@ -542,8 +552,8 @@ def plot_neighborhood_cardinality_vs_degree(
     cardinality_by_k : dict {k: LongTensor [N_test]}
     deg_acc_results  : list[dict]  — output of get_accuracy_deg per run.
     cfg              : dict
-    all_deg          : LongTensor [N_all], optional
-    purity_by_k      : dict {k: FloatTensor [N_all]}, optional
+    all_deg          : LongTensor [N_all], optional — unused, kept for compat.
+    purity_by_k      : dict, optional — unused, kept for compat.
     save_dir         : str or None
     show             : bool
     """
@@ -582,78 +592,11 @@ def plot_neighborhood_cardinality_vs_degree(
     acc_median = np.array(acc_median)
     acc_q1, acc_q3 = np.array(acc_q1), np.array(acc_q3)
 
-    # ── delta purity stats per degree group (test nodes) ─────────────────────
-    has_purity = (purity_by_k is not None and len(purity_by_k) >= 2)
-    if has_purity:
-        k_ks        = sorted(purity_by_k.keys())
-        k_lo, k_hi  = k_ks[0], k_ks[-1]
-        delta_all   = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
-
-        dp_means = []
-        for d in all_degrees:
-            vals  = delta_all[deg == d]
-            valid = vals[~torch.isnan(vals)]
-            dp_means.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
-        dp_means = np.array(dp_means)
-
-    # ── anomaly detection ─────────────────────────────────────────────────────
-    # Two complementary criteria, both require ≥ 3 test nodes:
-    #
-    # Criterion A — three-signal conjunction:
-    #   1. Accuracy below the cross-degree median
-    #   2. k=2 cardinality above the cross-degree mean
-    #   3. Δ purity more negative than the cross-degree mean  (purity only)
-    #
-    # Criterion B — sharp structural deterioration:
-    #   1. Accuracy below the cross-degree median
-    #   2. Δ purity drops sharply step-to-step (diff < mean − 1 std)  (purity only)
-    #
-    # Anomaly set = union of both criteria, sorted by accuracy, capped at 5.
-    counts = np.array([(deg == d).sum().item() for d in all_degrees])
-    anomaly_idx = []
-    if len(all_degrees) > 3:
-        enough_nodes = counts >= 3
-        low_acc   = acc_median < np.nanmedian(acc_median)
-        k2_means  = card_stats.get(2, card_stats[max(k_values)])["means"]
-        high_card = k2_means > np.nanmean(k2_means)
-
-        if has_purity:
-            # Criterion A
-            neg_dp   = dp_means < np.nanmean(dp_means)
-            crit_a   = low_acc & high_card & neg_dp & enough_nodes
-            # Criterion B — step-to-step drop in Δpurity
-            dp_diff  = np.concatenate([[0.0], np.diff(dp_means)])
-            sharp_dp = dp_diff < (np.nanmean(dp_diff) - np.nanstd(dp_diff))
-            crit_b   = low_acc & sharp_dp & enough_nodes
-            combined = crit_a | crit_b
-        else:
-            combined = low_acc & high_card & enough_nodes
-
-        candidates = np.where(combined)[0]
-        if len(candidates) > 0:
-            # Sort by accuracy (most anomalous = lowest accuracy first), cap at 5
-            order = np.argsort(acc_median[candidates])
-            anomaly_idx = candidates[order][:5].tolist()
-
-    # ── figure layout ─────────────────────────────────────────────────────────
+    # ── figure ────────────────────────────────────────────────────────────────
     fig_w = _fig_w(len(all_degrees))
-    if has_purity:
-        fig, (ax_card, ax_dp) = plt.subplots(
-            2, 1, figsize=(fig_w, 7),
-            sharex=True, gridspec_kw={"height_ratios": [3, 1.4]},
-        )
-    else:
-        fig, ax_card = plt.subplots(figsize=(fig_w, 5))
-        ax_dp = None
+    fig, ax_card = plt.subplots(figsize=(fig_w, 5))
 
-    # ── top panel: anomaly vertical lines (behind all other elements) ─────────
-    all_axes = [ax_card] + ([ax_dp] if ax_dp is not None else [])
-    for ai in anomaly_idx:
-        for ax in all_axes:
-            ax.axvline(pos[ai], color=_ANOMALY_COLOR, lw=0.9,
-                       ls="--", alpha=0.40, zorder=1)
-
-    # ── top panel: cardinality lines ─────────────────────────────────────────
+    # ── cardinality lines ─────────────────────────────────────────────────────
     for k in k_values:
         color = _CARD_COLORS.get(k, "#9C27B0")
         m, s  = card_stats[k]["means"], card_stats[k]["stds"]
@@ -668,38 +611,20 @@ def plot_neighborhood_cardinality_vs_degree(
     ax_card.yaxis.set_major_formatter(
         ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax_card.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-    # Show degree labels on top panel even when sharex=True suppresses them
-    if has_purity:
-        _degree_axis(ax_card, pos, all_degrees)
-        plt.setp(ax_card.get_xticklabels(), visible=True)
 
-    # ── top panel: accuracy twin axis ────────────────────────────────────────
+    # ── accuracy twin axis ────────────────────────────────────────────────────
     ax_acc = ax_card.twinx()
-    # Regular accuracy line
     ax_acc.plot(pos, acc_median, color=_ACC_COLOR, linewidth=1.8,
                 marker="s", markersize=4, zorder=4,
                 label=f"Accuracy (median ± IQR, {n_runs} runs)")
     ax_acc.fill_between(pos, acc_q1, acc_q3,
                         color=_ACC_COLOR, alpha=0.15, zorder=3)
-    # Anomaly accent markers on the accuracy line
-    if anomaly_idx:
-        ax_acc.scatter([pos[ai] for ai in anomaly_idx],
-                       [acc_median[ai] for ai in anomaly_idx],
-                       color=_ANOMALY_COLOR, marker="*", s=120,
-                       zorder=6, label="_nolegend_")
     ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_COLOR)
     ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
     ax_acc.set_ylim(-0.05, 1.10)
     ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
-    # Degree labels at the top of the upper panel for each anomaly
-    for ai in anomaly_idx:
-        ax_card.text(pos[ai], 1.01, f"d={all_degrees[ai]}",
-                     transform=ax_card.get_xaxis_transform(),
-                     ha="center", va="bottom", fontsize=7,
-                     color=_ANOMALY_COLOR, rotation=90)
-
-    # ── top panel: combined legend ────────────────────────────────────────────
+    # ── legend ────────────────────────────────────────────────────────────────
     handles_card = [
         plt.Line2D([0], [0], color=_CARD_COLORS.get(k, "#9C27B0"), lw=2,
                    marker="o", markersize=4,
@@ -710,44 +635,21 @@ def plot_neighborhood_cardinality_vs_degree(
         plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="s", markersize=4,
                    label=f"Accuracy (median ± IQR, {n_runs} runs)"),
     ]
-    handles_anom = (
-        [plt.Line2D([0], [0], color=_ANOMALY_COLOR, lw=0, marker="*",
-                    markersize=9, label="Anomaly: acc↓  (card↑ + Δpur↓)  or  Δpur sharp drop")]
-        if anomaly_idx else []
-    )
-    ax_card.legend(handles=handles_card + handles_acc + handles_anom,
-                   loc="upper left", fontsize=8, framealpha=0.88)
+    ax_card.legend(handles=handles_card + handles_acc,
+                   loc="upper center", bbox_to_anchor=(0.5, -0.20),
+                   ncol=len(k_values) + 1, fontsize=8, framealpha=0.88,
+                   borderaxespad=0)
 
     prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
-    title    = "Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree"
-    if has_purity:
-        title += "  +  Δ Purity"
-    ax_card.set_title(f"{title}\n{subtitle}", fontsize=11)
+    ax_card.set_title(
+        f"Neighbourhood Cardinality (k=1, 2) & Accuracy vs. Node Degree\n{subtitle}",
+        fontsize=11,
+    )
 
-    # ── bottom panel: delta purity ────────────────────────────────────────────
-    if has_purity and ax_dp is not None:
-        ax_dp.plot(pos, dp_means, color=_PURITY_COLOR, linewidth=1.8,
-                   marker="o", markersize=4, zorder=3,
-                   label=f"Δ purity  (k={k_hi}−k={k_lo})  mean")
-        ax_dp.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2,
-                      label="No change")
-        # Anomaly accent markers on the delta purity line
-        if anomaly_idx:
-            ax_dp.scatter([pos[ai] for ai in anomaly_idx],
-                          [dp_means[ai] for ai in anomaly_idx],
-                          color=_ANOMALY_COLOR, marker="*", s=120,
-                          zorder=6)
-        ax_dp.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=10)
-        ax_dp.yaxis.set_major_formatter(
-            ticker.FuncFormatter(lambda x, _: f"{x:+.2f}"))
-        ax_dp.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-        ax_dp.legend(loc="upper right", fontsize=7, framealpha=0.85)
-        _degree_axis(ax_dp, pos, all_degrees)
-    else:
-        _degree_axis(ax_card, pos, all_degrees)
-
+    _degree_axis(ax_card, pos, all_degrees)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     _save(fig, _subdir(save_dir, "neighborhood_cardinality"),
           f"{prefix}_neighborhood_cardinality_vs_degree.png", show)
 
@@ -1117,86 +1019,30 @@ def plot_spl_combined_vs_degree(
 
     fig_w = _fig_w(n_deg)
 
-    # ── Figure 1: base ────────────────────────────────────────────────────────
-    fig1, (ax_top1, ax_bot1) = plt.subplots(
-        2, 1, figsize=(fig_w, 7), sharex=True,
-        gridspec_kw={"height_ratios": [3, 1]},
-    )
-    _draw_boxplots(ax_top1)
-    ax_top1.set_title(f"Avg. SPL to Training Nodes vs. Degree\n{subtitle}", fontsize=11)
-    ax_top1.legend(handles=spl_handles, fontsize=9, loc="upper left", framealpha=0.9)
-    plt.setp(ax_top1.get_xticklabels(), visible=True)
-
-    ax_bot1.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
-    ax_bot1.set_ylabel("# test nodes", fontsize=9, color="grey")
-    ax_bot1.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_bot1.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-    _x_axis(ax_bot1)
-
-    fig1.tight_layout()
-    _save(fig1, _subdir(save_dir, "spl_vs_degree"),
-          f"{prefix}_spl_combined_vs_degree.png", show)
-
-    # ── Figure 2: two-panel — SPL + accuracy + labelling ratio / Δ purity ──────
-    has_acc    = deg_acc_results is not None
-    has_purity = (purity_by_k is not None and len(purity_by_k) >= 2)
-    has_lr     = has_labeled_neighbor is not None
-    if not (has_acc or has_purity or has_lr):
+    # ── Figure: SPL boxplots + accuracy overlay ───────────────────────────────
+    if deg_acc_results is None:
         return
 
-    # ── pre-compute Δ purity (test nodes only) ────────────────────────────────
-    dp_means = None
-    k_lo = k_hi = None
-    if has_purity:
-        k_keys     = sorted(purity_by_k.keys())
-        k_lo, k_hi = k_keys[0], k_keys[-1]
-        delta_all  = purity_by_k[k_hi].cpu().float() - purity_by_k[k_lo].cpu().float()
-        dp_means   = np.array([
-            float(delta_all[deg == d][~torch.isnan(delta_all[deg == d])].mean())
-            if (deg == d).any() else float("nan")
-            for d in unique_degrees
-        ])
+    _, deg_data = _collect(deg_acc_results)
+    n_runs = len(deg_acc_results)
+    _med, _q1, _q3 = [], [], []
+    for d in unique_degrees:
+        means = [float(deg_data[d][r].mean()) for r in range(n_runs)
+                 if len(deg_data[d][r]) > 0]
+        if not means:
+            _med.append(np.nan); _q1.append(np.nan); _q3.append(np.nan)
+        else:
+            _med.append(float(np.median(means)))
+            _q1.append(float(np.percentile(means, 25)))
+            _q3.append(float(np.percentile(means, 75)))
+    acc_median = np.array(_med)
+    acc_q1     = np.array(_q1)
+    acc_q3     = np.array(_q3)
 
-    # ── pre-compute accuracy ───────────────────────────────────────────────────
-    acc_median = acc_q1 = acc_q3 = n_runs = None
-    if has_acc:
-        _, deg_data = _collect(deg_acc_results)
-        n_runs = len(deg_acc_results)
-        _med, _q1, _q3 = [], [], []
-        for d in unique_degrees:
-            means = [float(deg_data[d][r].mean()) for r in range(n_runs)
-                     if len(deg_data[d][r]) > 0]
-            if not means:
-                _med.append(np.nan); _q1.append(np.nan); _q3.append(np.nan)
-            else:
-                _med.append(float(np.median(means)))
-                _q1.append(float(np.percentile(means, 25)))
-                _q3.append(float(np.percentile(means, 75)))
-        acc_median = np.array(_med)
-        acc_q1     = np.array(_q1)
-        acc_q3     = np.array(_q3)
-
-    # ── pre-compute labelling ratio ───────────────────────────────────────────
-    ratio_vals = None
-    if has_lr:
-        hlr = has_labeled_neighbor.cpu()
-        ratio_vals = np.array([
-            float(hlr[deg == d].float().mean()) if (deg == d).any() else float("nan")
-            for d in unique_degrees
-        ])
-
-    # ── layout ────────────────────────────────────────────────────────────────
-    n_panels = 2 if dp_means is not None else 1
-    height_ratios = [3, 1.4] if n_panels == 2 else [1]
-    fig2, axes2 = plt.subplots(
-        n_panels, 1, figsize=(fig_w, 7 if n_panels == 2 else 5),
-        sharex=True, gridspec_kw={"height_ratios": height_ratios},
-    )
-    ax_top2 = axes2[0] if n_panels == 2 else axes2
-    ax_bot2 = axes2[1] if n_panels == 2 else None
+    fig2, ax_top2 = plt.subplots(figsize=(fig_w, 5))
 
     ax_top2.set_title(
-        f"Avg. SPL  +  Accuracy & Labelling Ratio vs. Degree\n{subtitle}", fontsize=11)
+        f"Avg. SPL  +  Accuracy vs. Degree\n{subtitle}", fontsize=11)
 
     # All-train SPL boxplots (centred, wider)
     bpa2 = ax_top2.boxplot(bp_all, positions=pos, widths=0.55, **_BP_KWARGS)
@@ -1207,50 +1053,30 @@ def plot_spl_combined_vs_degree(
     ax_top2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_top2.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
 
-    # Right twin axis — accuracy + labelling ratio (both 0–1 range)
+    # Right twin axis — accuracy
     ax_ov2 = ax_top2.twinx()
     ax_ov2.set_ylim(-0.05, 1.10)
-    ax_ov2.set_ylabel("Accuracy  /  Labelling ratio", fontsize=10)
-    ax_ov2.tick_params(axis="y", labelsize=8)
-    ax_ov2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:.0%}"))
+    ax_ov2.set_ylabel("Accuracy", fontsize=10, color=_SPL_ACC_COLOR)
+    ax_ov2.tick_params(axis="y", labelsize=8, colors=_SPL_ACC_COLOR)
+    ax_ov2.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_ov2.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
+                markersize=4, zorder=5)
+    ax_ov2.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
+                        alpha=0.15, zorder=4)
 
-    ov2_handles = [mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
-                                  label="Avg. SPL to any train node")]
+    ov2_handles = [
+        mpatches.Patch(color=_SPL_ALL_COLOR, alpha=0.65,
+                       label="Avg. SPL to any train node"),
+        plt.Line2D([0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
+                   label=f"Accuracy (median ± IQR, {n_runs} runs)"),
+    ]
+    ax_top2.legend(handles=ov2_handles, fontsize=9,
+                   loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                   ncol=2, framealpha=0.9, borderaxespad=0)
 
-    if acc_median is not None:
-        ax_ov2.plot(pos, acc_median, color=_SPL_ACC_COLOR, lw=1.8, marker="s",
-                    markersize=4, zorder=5)
-        ax_ov2.fill_between(pos, acc_q1, acc_q3, color=_SPL_ACC_COLOR,
-                            alpha=0.15, zorder=4)
-        ov2_handles.append(plt.Line2D(
-            [0], [0], color=_SPL_ACC_COLOR, lw=2, marker="s", markersize=4,
-            label=f"Accuracy  (median ± IQR, {n_runs} runs)"))
-
-    _LR_COLOR = "#E65100"
-    if ratio_vals is not None:
-        ax_ov2.plot(pos, ratio_vals, color=_LR_COLOR, lw=1.6, marker="^",
-                    markersize=4, ls="--", zorder=5)
-        ov2_handles.append(plt.Line2D(
-            [0], [0], color=_LR_COLOR, lw=2, marker="^", markersize=4, ls="--",
-            label="Labelling ratio"))
-
-    ax_top2.legend(handles=ov2_handles, fontsize=9, loc="upper left", framealpha=0.9)
-
-    # Bottom panel — Δ purity
-    if ax_bot2 is not None and dp_means is not None:
-        ax_bot2.plot(pos, dp_means, color=_SPL_PUR_COLOR, lw=1.8, marker="o",
-                     markersize=4, zorder=5)
-        ax_bot2.axhline(0, color="dimgrey", lw=1.0, ls="--", zorder=2)
-        ax_bot2.set_ylabel(f"Δ purity\n(k={k_hi}−k={k_lo})", fontsize=9,
-                           color=_SPL_PUR_COLOR)
-        ax_bot2.tick_params(axis="y", labelsize=8, colors=_SPL_PUR_COLOR)
-        ax_bot2.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-        _x_axis(ax_bot2)
-    else:
-        # single-panel: x-axis labels on the only panel
-        _x_axis(ax_top2)
-
+    _x_axis(ax_top2)
     fig2.tight_layout()
+    fig2.subplots_adjust(bottom=0.18)
     _save(fig2, _subdir(save_dir, "spl_vs_degree"),
           f"{prefix}_spl_combined_with_overlays_vs_degree.png", show)
 
@@ -1262,10 +1088,12 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
                                            has_khop_labeled_neighbor=None,
                                            k_hops: int = 1,
                                            save_dir=None, show=False):
-    """Accuracy and labelling ratio (1-hop and optional k-hop) vs. degree.
+    """One plot per hop: labelling ratio (left axis) + accuracy overlay (right axis).
 
-    Top panel  — accuracy (blue, left axis) + labelling ratio lines (right axis).
-    Bottom panel — count of test nodes per degree (grey bars).
+    Generates one file for 1-hop and, when ``has_khop_labeled_neighbor`` is
+    provided, a second file for k-hop.  Each figure has a top panel with the
+    labelling ratio line and the accuracy median, and a bottom panel with node
+    count bars.
 
     Parameters
     ----------
@@ -1274,108 +1102,94 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
     has_labeled_neighbor      : 1-D BoolTensor [num_test_nodes] — 1-hop presence.
     cfg                       : dict
     has_khop_labeled_neighbor : 1-D BoolTensor [num_test_nodes] or None — k-hop presence.
-    k_hops                    : int — receptive field radius (for axis label only).
+    k_hops                    : int — receptive field radius used for k-hop.
     save_dir                  : str or None
     show                      : bool
     """
-    # ── accuracy side ──────────────────────────────────────────────────────────
-    _, deg_data   = _collect(run_results)
-    acc_degrees   = sorted(deg_data.keys())
+    _LR_COLOR  = "#e67e22"
+    _LACC_COLOR = "#3498db"
 
-    acc_by_deg = {}
+    # ── shared pre-computation ─────────────────────────────────────────────────
+    _, deg_data = _collect(run_results)
+    acc_degrees = sorted(deg_data.keys())
+    acc_by_deg  = {}
     for d in acc_degrees:
         run_means = [float(a.mean()) for a in deg_data[d] if len(a) > 0]
         acc_by_deg[d] = float(np.median(run_means)) if run_means else float("nan")
 
-    # ── labelling ratio side ───────────────────────────────────────────────────
     deg        = test_deg.cpu()
-    has_1hop   = has_labeled_neighbor.cpu()
-    has_khop   = has_khop_labeled_neighbor.cpu() if has_khop_labeled_neighbor is not None else None
     all_unique = sorted(deg.unique().tolist())
-
-    ratio_1hop_by_deg  = {}
-    ratio_khop_by_deg  = {}
-    counts_by_deg      = {}
-    for d in all_unique:
-        mask = (deg == d)
-        ratio_1hop_by_deg[d] = float(has_1hop[mask].float().mean())
-        if has_khop is not None:
-            ratio_khop_by_deg[d] = float(has_khop[mask].float().mean())
-        counts_by_deg[d] = int(mask.sum())
-
-    # ── common degree axis ─────────────────────────────────────────────────────
     all_degrees = sorted(set(acc_degrees) | set(all_unique))
     pos         = list(range(len(all_degrees)))
 
-    acc_vals        = [acc_by_deg.get(d,       float("nan")) for d in all_degrees]
-    ratio_1hop_vals = [ratio_1hop_by_deg.get(d, float("nan")) for d in all_degrees]
-    ratio_khop_vals = [ratio_khop_by_deg.get(d, float("nan")) for d in all_degrees] \
-                      if has_khop is not None else None
-    counts          = [counts_by_deg.get(d, 0)                for d in all_degrees]
+    acc_vals = [acc_by_deg.get(d, float("nan")) for d in all_degrees]
 
-    prefix   = _fname_prefix(cfg)
     n_runs   = len(run_results)
     n_test   = sum(len(deg_data[d][0]) for d in acc_degrees)
+    prefix   = _fname_prefix(cfg)
     subtitle = _subtitle(cfg, n_test, len(all_degrees))
 
-    fig, (ax_main, ax_cnt) = plt.subplots(
-        2, 1, figsize=(_fig_w(len(all_degrees)), 6.5),
-        sharex=True, gridspec_kw={"height_ratios": [4, 1]},
-    )
+    def _one_plot(has_tensor, k_label, filename):
+        ratios, counts_list = _compute_labelling_ratio_by_degree(
+            has_tensor.cpu(), deg, all_unique)
+        ratio_by_deg = dict(zip(all_unique, ratios))
+        counts_by_deg = dict(zip(all_unique, counts_list))
+        ratio_vals = [ratio_by_deg.get(d, float("nan")) for d in all_degrees]
+        counts     = [counts_by_deg.get(d, 0)           for d in all_degrees]
 
-    # ── top panel: accuracy + labelling ratios ─────────────────────────────────
-    _ACC_COLOR   = "#3498db"
-    _LR1_COLOR   = "#e67e22"
-    _LRK_COLOR   = "#27ae60"
+        fig, (ax_top, ax_cnt) = plt.subplots(
+            2, 1, figsize=(_fig_w(len(all_degrees)), 6.5),
+            sharex=True, gridspec_kw={"height_ratios": [4, 1]},
+        )
 
-    ax_acc = ax_main
-    ax_acc.plot(pos, acc_vals, color=_ACC_COLOR, linewidth=1.8,
-                marker="o", markersize=4, zorder=3)
-    ax_acc.set_ylabel("Accuracy", fontsize=11, color=_ACC_COLOR)
-    ax_acc.tick_params(axis="y", colors=_ACC_COLOR, labelsize=8)
-    ax_acc.set_ylim(-0.05, 1.10)
-    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax_acc.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+        ax_top.plot(pos, ratio_vals, color=_LR_COLOR, linewidth=1.8,
+                    marker="s", markersize=4, zorder=3)
+        ax_top.set_ylabel(f"Labelling ratio  ({k_label})", fontsize=11,
+                          color=_LR_COLOR)
+        ax_top.tick_params(axis="y", colors=_LR_COLOR, labelsize=8)
+        ax_top.set_ylim(-0.05, 1.10)
+        ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
-    ax_lr = ax_acc.twinx()
-    ax_lr.plot(pos, ratio_1hop_vals, color=_LR1_COLOR, linewidth=1.8,
-               marker="s", markersize=4, zorder=3, label="1-hop LR")
-    if ratio_khop_vals is not None:
-        ax_lr.plot(pos, ratio_khop_vals, color=_LRK_COLOR, linewidth=1.8,
-                   marker="^", markersize=4, zorder=3, label=f"{k_hops}-hop LR")
-    ax_lr.set_ylabel("Labelling ratio", fontsize=11)
-    ax_lr.tick_params(axis="y", labelsize=8)
-    ax_lr.set_ylim(-0.05, 1.10)
-    ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_acc = ax_top.twinx()
+        ax_acc.plot(pos, acc_vals, color=_LACC_COLOR, linewidth=1.8,
+                    marker="o", markersize=4, zorder=4)
+        ax_acc.set_ylabel("Accuracy", fontsize=11, color=_LACC_COLOR)
+        ax_acc.tick_params(axis="y", colors=_LACC_COLOR, labelsize=8)
+        ax_acc.set_ylim(-0.05, 1.10)
+        ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
-    handles = [
-        plt.Line2D([0], [0], color=_ACC_COLOR, lw=2, marker="o", markersize=4,
-                   label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
-        plt.Line2D([0], [0], color=_LR1_COLOR, lw=2, marker="s", markersize=4,
-                   label="Labelling ratio  (1-hop)"),
-    ]
-    if ratio_khop_vals is not None:
-        handles.append(plt.Line2D(
-            [0], [0], color=_LRK_COLOR, lw=2, marker="^", markersize=4,
-            label=f"Labelling ratio  ({k_hops}-hop)",
-        ))
-    ax_acc.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.85)
-    ax_acc.set_title(
-        f"Accuracy & Labelling Ratio vs. Node Degree\n{subtitle}", fontsize=11,
-    )
+        handles = [
+            plt.Line2D([0], [0], color=_LR_COLOR, lw=2, marker="s", markersize=4,
+                       label=f"Labelling ratio  ({k_label})"),
+            plt.Line2D([0], [0], color=_LACC_COLOR, lw=2, marker="o", markersize=4,
+                       label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
+        ]
+        ax_top.legend(handles=handles,
+                      loc="upper center", bbox_to_anchor=(0.5, -0.14),
+                      ncol=2, fontsize=8, framealpha=0.85, borderaxespad=0)
+        ax_top.set_title(
+            f"Labelling Ratio ({k_label}) & Accuracy vs. Node Degree\n{subtitle}",
+            fontsize=11,
+        )
 
-    # ── bottom panel: node counts ──────────────────────────────────────────────
-    ax_cnt.bar(pos, counts, color="lightgrey", edgecolor="grey",
-               linewidth=0.5, width=0.7)
-    ax_cnt.set_ylabel("# test nodes", fontsize=9, color="grey")
-    ax_cnt.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_cnt.set_ylim(0, max(counts) * 1.3 if counts else 1)
-    ax_cnt.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.3)
-    _degree_axis(ax_cnt, pos, all_degrees)
+        ax_cnt.bar(pos, counts, color="lightgrey", edgecolor="grey",
+                   linewidth=0.5, width=0.7)
+        ax_cnt.set_ylabel("# test nodes", fontsize=9, color="grey")
+        ax_cnt.tick_params(axis="y", labelsize=7, colors="grey")
+        ax_cnt.set_ylim(0, max(counts) * 1.3 if counts else 1)
+        ax_cnt.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.3)
+        _degree_axis(ax_cnt, pos, all_degrees)
 
-    fig.tight_layout()
-    _save(fig, _subdir(save_dir, "labelling_ratio"),
-          f"{prefix}_acc_and_labelling_ratio_vs_degree.png", show)
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.14)
+        _save(fig, _subdir(save_dir, "labelling_ratio"), f"{prefix}_{filename}", show)
+
+    _one_plot(has_labeled_neighbor, "1-hop",
+              "labelling_ratio_1hop_vs_degree.png")
+    if has_khop_labeled_neighbor is not None:
+        _one_plot(has_khop_labeled_neighbor, f"{k_hops}-hop",
+                  f"labelling_ratio_{k_hops}hop_vs_degree.png")
 
 
 # ── labelling ratio vs. degree ────────────────────────────────────────────────
@@ -1405,12 +1219,7 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
     n_all  = int(len(deg))
     subtitle = _subtitle(cfg, n_all, len(unique_degrees))
 
-    counts = []
-    ratios = []
-    for d in unique_degrees:
-        mask = (deg == d)
-        counts.append(int(mask.sum()))
-        ratios.append(float(has[mask].float().mean()))
+    ratios, counts = _compute_labelling_ratio_by_degree(has, deg, unique_degrees)
 
     fig, (ax_top, ax_bot) = plt.subplots(
         2, 1, figsize=(_fig_w(len(unique_degrees)), 7),
@@ -1447,18 +1256,16 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
 def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
                           has_labeled_neighbor=None,
                           has_same_class_train=None, has_diff_class_train=None,
+                          deg_acc_results=None,
                           save_dir=None, show=False):
-    """Boxplot distribution of neighborhood purity per degree group.
+    """Purity boxplots per degree group with accuracy overlay.
 
-    Nodes are grouped by their 1-hop degree.  For each group the full
-    distribution of per-node purity values is shown as a boxplot.
-    The overall weighted-mean purity is overlaid as a horizontal dashed line.
-
-    When labelling-ratio tensors are provided (k=1 only), up to three lines
-    are overlaid on a secondary right-hand axis:
-      • Dark blue  (○) — any training neighbor present (overall labelling ratio).
-      • Dark green (▲) — same-class training neighbor present.
-      • Dark red   (▼) — diff-class training neighbor present.
+    Top panel
+        Left y-axis  — distribution of per-node k-hop purity as boxplots with
+                       a jitter strip, and an overall weighted-mean purity line.
+        Right y-axis — median classification accuracy per degree group (green).
+    Bottom panel
+        Node count per degree group (grey bars).
 
     purity(v) = |same-class nodes in N_k(v)| / |N_k(v)|
 
@@ -1468,15 +1275,18 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     purity_test          : 1-D FloatTensor of purity values for test nodes (NaN-safe).
     cfg                  : dict
     k                    : neighbourhood radius used to compute purity.
-    has_labeled_neighbor : optional BoolTensor [num_test_nodes] — True when a
-                           test node has ≥1 training neighbor of any class.
-    has_same_class_train : optional BoolTensor [num_test_nodes] — True when a
-                           test node has ≥1 same-class training neighbor.
-    has_diff_class_train : optional BoolTensor [num_test_nodes] — True when a
-                           test node has ≥1 diff-class training neighbor.
+    has_labeled_neighbor : unused, kept for call-site compatibility.
+    has_same_class_train : unused, kept for call-site compatibility.
+    has_diff_class_train : unused, kept for call-site compatibility.
+    deg_acc_results      : list[dict] — per-run output of get_accuracy_deg, or None.
     save_dir             : str or None
     show                 : bool
     """
+    _BOX_COLOR      = "#1565C0"   # deep blue — purity boxes
+    _JITTER_COLOR   = "#0D47A1"   # darker blue — strip dots
+    _MEAN_COLOR     = "#37474F"   # dark slate — overall mean line
+    _ACC_LINE_COLOR = "#388E3C"   # dark green — accuracy
+
     deg    = test_deg.cpu()
     purity = purity_test.cpu().numpy()
 
@@ -1484,103 +1294,104 @@ def plot_purity_vs_degree(test_deg, purity_test, cfg, k,
     pos    = list(range(len(unique_degrees)))
     prefix = _fname_prefix(cfg)
 
-    counts      = []
-    box_data    = []
-    mean_purs   = []
-    any_ratios  = []
-    same_ratios = []
-    diff_ratios = []
-
-    hln = has_labeled_neighbor.cpu().numpy()  if has_labeled_neighbor  is not None else None
-    hsc = has_same_class_train.cpu().numpy()  if has_same_class_train  is not None else None
-    hdc = has_diff_class_train.cpu().numpy()  if has_diff_class_train  is not None else None
-
+    counts, box_data, mean_purs = [], [], []
     for d in unique_degrees:
-        mask = (deg == d).numpy()
+        mask  = (deg == d).numpy()
         vals  = purity[mask]
         valid = vals[~np.isnan(vals)]
         counts.append(int(mask.sum()))
         box_data.append(valid if len(valid) > 0 else np.array([float("nan")]))
         mean_purs.append(float(valid.mean()) if len(valid) > 0 else float("nan"))
-        n = mask.sum()
-        if hln is not None:
-            any_ratios.append(float(hln[mask].mean())  if n > 0 else float("nan"))
-        if hsc is not None:
-            same_ratios.append(float(hsc[mask].mean()) if n > 0 else float("nan"))
-        if hdc is not None:
-            diff_ratios.append(float(hdc[mask].mean()) if n > 0 else float("nan"))
 
     n_test   = sum(counts)
     n_deg    = len(unique_degrees)
     subtitle = _subtitle(cfg, n_test, n_deg)
+    hop_label = f"{k}-hop"
 
-    fig, ax = plt.subplots(figsize=(_fig_w(n_deg), 5))
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(n_deg), 7),
+        sharex=True, gridspec_kw={"height_ratios": [4, 1]},
+    )
 
-    bp = ax.boxplot(box_data, positions=pos, widths=0.55, **_BP_KWARGS)
+    # ── purity boxplots ───────────────────────────────────────────────────────
+    bp = ax_top.boxplot(box_data, positions=pos, widths=0.55, **_BP_KWARGS)
     for patch in bp["boxes"]:
-        patch.set_facecolor("#e67e22")
-        patch.set_alpha(0.80)
+        patch.set_facecolor(_BOX_COLOR)
+        patch.set_alpha(0.70)
 
-    # Strip plot so extreme values (0% / 100%) are visible even when the
-    # whisker collapses to zero length (e.g. degree=1 where Q1=0 exactly).
+    # Jitter strip — shows collapsed distributions at 0%/100%
     rng = np.random.default_rng(0)
     for xi, vals in zip(pos, box_data):
         clean = vals[~np.isnan(vals)]
         if len(clean) == 0:
             continue
         jitter = rng.uniform(-0.18, 0.18, size=len(clean))
-        ax.scatter(xi + jitter, clean,
-                   s=6, color="#7d3c00", alpha=0.35,
-                   edgecolors="none", zorder=4)
+        ax_top.scatter(xi + jitter, clean, s=5, color=_JITTER_COLOR,
+                       alpha=0.25, edgecolors="none", zorder=4)
 
-    # Overall mean purity (weighted by node count)
+    # Weighted overall mean purity reference line
     valid_pairs = [(m, c) for m, c in zip(mean_purs, counts) if not np.isnan(m)]
     if valid_pairs:
         overall = sum(m * c for m, c in valid_pairs) / sum(c for _, c in valid_pairs)
-        ax.axhline(overall, color="dimgrey", lw=1.0, ls=":",
-                   label=f"Overall mean purity ({overall:.1%})", zorder=2)
+        ax_top.axhline(overall, color=_MEAN_COLOR, lw=1.2, ls="--", zorder=2,
+                       label=f"Overall mean purity ({overall:.1%})")
 
-    ax.set_ylabel(f"Neighborhood purity  (k={k})", fontsize=11)
-    ax.set_ylim(-0.05, 1.10)
-    ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
-
-    # Labelling ratio lines on secondary axis (same-class vs diff-class only)
-    _LR_LINES = [
-        (same_ratios, "#1565C0", "Same-class train nb"),
-        (diff_ratios, "#F9A825", "Diff-class train nb"),
-    ]
-    handles_lr = []
-    if any(r for r, *_ in _LR_LINES):
-        ax_lr = ax.twinx()
-        ax_lr.set_ylabel("Labelling ratio", fontsize=9, color="black")
-        ax_lr.tick_params(axis="y", labelsize=7, length=3)
-        ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
-        ax_lr.set_ylim(-0.05, 1.15)
-        for ratios, color, label in _LR_LINES:
-            if ratios:
-                ax_lr.plot(pos, ratios, color=color, lw=2.0, zorder=6)
-                handles_lr.append(plt.Line2D([0], [0], color=color, lw=2.0, label=label))
-
-    # Legend below the x-axis to avoid overlapping the title
-    purity_handle = mpatches.Patch(facecolor="#e67e22", alpha=0.80, label=f"Purity (k={k})")
-    ax.legend(handles=[purity_handle] + handles_lr,
-              loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=4,
-              fontsize=8, framealpha=0.85, borderaxespad=0)
-
-    ax.set_title(
-        f"Neighborhood Purity Distribution vs. Node Degree  (k={k})\n{subtitle}",
+    ax_top.set_ylabel(f"Neighborhood purity  ({hop_label})", fontsize=11)
+    ax_top.set_ylim(-0.05, 1.10)
+    ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_title(
+        f"Neighborhood Purity vs. Node Degree  ({hop_label})\n{subtitle}",
         fontsize=11,
     )
 
-    ax.set_xlabel("Node degree", fontsize=11)
-    ax.set_xlim(pos[0] - 0.6, pos[-1] + 0.6)
-    step = max(1, n_deg // 30)
-    ax.set_xticks(pos[::step])
-    ax.set_xticklabels(unique_degrees[::step], rotation=55, ha="right", fontsize=8)
+    # ── accuracy overlay (right axis) ─────────────────────────────────────────
+    legend_handles = [
+        mpatches.Patch(facecolor=_BOX_COLOR, alpha=0.70, label=f"Purity ({hop_label})"),
+    ]
+    if valid_pairs:
+        legend_handles.append(
+            plt.Line2D([0], [0], color=_MEAN_COLOR, lw=1.5, ls="--",
+                       label=f"Overall mean purity ({overall:.1%})")
+        )
+
+    acc_vals = None
+    n_runs   = 0
+    if deg_acc_results is not None:
+        _, deg_data = _collect(deg_acc_results)
+        n_runs = len(deg_acc_results)
+        acc_vals = np.array([
+            float(np.median([float(a.mean()) for a in deg_data.get(d, []) if len(a) > 0]))
+            if any(len(a) > 0 for a in deg_data.get(d, []))
+            else float("nan")
+            for d in unique_degrees
+        ])
+        ax_lr = ax_top.twinx()
+        ax_lr.set_ylabel("Accuracy", fontsize=9, color=_ACC_LINE_COLOR)
+        ax_lr.tick_params(axis="y", labelsize=8, colors=_ACC_LINE_COLOR)
+        ax_lr.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+        ax_lr.set_ylim(-0.05, 1.15)
+        ax_lr.plot(pos, acc_vals, color=_ACC_LINE_COLOR, lw=2.0,
+                   ls="-", marker="s", markersize=4, zorder=7)
+        legend_handles.append(plt.Line2D(
+            [0], [0], color=_ACC_LINE_COLOR, lw=2, ls="-", marker="s", markersize=4,
+            label=f"Accuracy (median, {n_runs} runs)",
+        ))
+
+    # ── bottom panel: count bars ──────────────────────────────────────────────
+    ax_bot.bar(pos, counts, color="lightgrey", edgecolor="#9E9E9E",
+               linewidth=0.5, width=0.65, zorder=2)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.3)
+    _degree_axis(ax_bot, pos, unique_degrees)
+
+    ax_bot.legend(handles=legend_handles,
+                  loc="upper center", bbox_to_anchor=(0.5, -0.42),
+                  ncol=2, fontsize=8, framealpha=0.88, borderaxespad=0)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.22)
+    fig.subplots_adjust(bottom=0.14)
     _save(fig, _subdir(save_dir, "purity_vs_degree"), f"{prefix}_purity_vs_degree_k{k}.png", show)
 
 
@@ -1657,6 +1468,134 @@ def plot_purity_delta_by_degree(test_deg, purity_by_k, cfg,
     k_range = f"k{k_min}-{k_max}"
     _save(fig, _subdir(save_dir, "purity_vs_degree"),
           f"{prefix}_purity_delta_by_degree_{k_range}.png", show)
+
+
+def plot_purity_boxplots_vs_degree(
+    test_deg, purity_by_k, deg_acc_results, cfg,
+    save_dir=None, show=False,
+):
+    """Side-by-side 1-hop / 2-hop purity boxplots per degree group with accuracy overlay.
+
+    Top panel
+        Left y-axis  — for each degree group: blue boxplot (k=1 purity) and
+                       orange boxplot (k=2 purity) placed side-by-side.
+        Right y-axis — median accuracy across runs with IQR shading (green).
+    Bottom panel
+        Node count bars per degree group.
+
+    Parameters
+    ----------
+    test_deg        : LongTensor [N_test]
+    purity_by_k     : dict {1: FloatTensor[N_test], 2: FloatTensor[N_test]}
+    deg_acc_results : list[dict] — output of get_accuracy_deg per run.
+    cfg             : dict
+    save_dir        : str or None
+    show            : bool
+    """
+    if 1 not in purity_by_k or 2 not in purity_by_k:
+        return
+
+    deg = test_deg.cpu()
+    unique_degrees = sorted(deg.unique().tolist())
+    pos    = list(range(len(unique_degrees)))
+    n_test = len(deg)
+    prefix   = _fname_prefix(cfg)
+    subtitle = _subtitle(cfg, n_test, len(unique_degrees))
+
+    # Purity data per degree group
+    p1_data, p2_data, counts = [], [], []
+    for d in unique_degrees:
+        mask = deg == d
+        counts.append(int(mask.sum()))
+        v1 = purity_by_k[1].cpu().numpy()[mask.numpy()]
+        v2 = purity_by_k[2].cpu().numpy()[mask.numpy()]
+        p1_data.append(v1[~np.isnan(v1)] if len(v1) > 0 else np.array([float("nan")]))
+        p2_data.append(v2[~np.isnan(v2)] if len(v2) > 0 else np.array([float("nan")]))
+
+    # Accuracy stats per degree group
+    _, deg_data = _collect(deg_acc_results)
+    n_runs = len(deg_acc_results)
+    acc_median, acc_q1, acc_q3 = [], [], []
+    for d in unique_degrees:
+        run_means = [float(a.mean()) for a in deg_data.get(d, []) if len(a) > 0]
+        if run_means:
+            acc_median.append(float(np.median(run_means)))
+            acc_q1.append(float(np.percentile(run_means, 25)))
+            acc_q3.append(float(np.percentile(run_means, 75)))
+        else:
+            acc_median.append(float("nan"))
+            acc_q1.append(float("nan"))
+            acc_q3.append(float("nan"))
+    acc_median = np.array(acc_median)
+    acc_q1, acc_q3 = np.array(acc_q1), np.array(acc_q3)
+
+    fig_w = max(14, min(len(unique_degrees) * 0.55, 56))
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(fig_w, 8),
+        sharex=True, gridspec_kw={"height_ratios": [4, 1]},
+    )
+
+    # ── top panel: side-by-side boxplots ─────────────────────────────────────
+    offset = 0.18
+    _C1 = "#2196F3"   # blue  — k=1
+    _C2 = "#FF5722"   # orange — k=2
+    _ACC_C = "#5D4037"   # brown — accuracy overlay (distinct from blue/orange purity palette)
+
+    bpos1 = [p - offset for p in pos]
+    bpos2 = [p + offset for p in pos]
+
+    bp1 = ax_top.boxplot(p1_data, positions=bpos1, widths=0.3, **_BP_KWARGS)
+    bp2 = ax_top.boxplot(p2_data, positions=bpos2, widths=0.3, **_BP_KWARGS)
+    for patch in bp1["boxes"]:
+        patch.set_facecolor(_C1)
+        patch.set_alpha(0.75)
+    for patch in bp2["boxes"]:
+        patch.set_facecolor(_C2)
+        patch.set_alpha(0.75)
+
+    ax_top.set_ylabel("Neighborhood purity", fontsize=11)
+    ax_top.set_ylim(-0.05, 1.10)
+    ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    # ── top panel: accuracy twin axis ────────────────────────────────────────
+    ax_acc = ax_top.twinx()
+    ax_acc.plot(pos, acc_median, color=_ACC_C, linewidth=1.8,
+                marker="s", markersize=4, zorder=4,
+                label=f"Accuracy (median, {n_runs} runs)")
+    ax_acc.fill_between(pos, acc_q1, acc_q3,
+                        color=_ACC_C, alpha=0.15, zorder=3)
+    ax_acc.set_ylabel("Classification accuracy", fontsize=11, color=_ACC_C)
+    ax_acc.tick_params(axis="y", colors=_ACC_C, labelsize=8)
+    ax_acc.set_ylim(-0.05, 1.10)
+    ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
+
+    # ── legend ────────────────────────────────────────────────────────────────
+    legend_handles = [
+        mpatches.Patch(facecolor=_C1, alpha=0.75, label="Purity (1-hop)"),
+        mpatches.Patch(facecolor=_C2, alpha=0.75, label="Purity (2-hop)"),
+        plt.Line2D([0], [0], color=_ACC_C, lw=2, marker="s", markersize=4,
+                   label=f"Accuracy (median, {n_runs} runs)"),
+        mpatches.Patch(facecolor=_ACC_C, alpha=0.15, label="Accuracy IQR"),
+    ]
+    ax_top.set_title(
+        f"Neighborhood Purity (1-hop vs 2-hop) & Accuracy vs. Node Degree\n{subtitle}",
+        fontsize=11,
+    )
+
+    # ── bottom panel: count bars ──────────────────────────────────────────────
+    ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    _degree_axis(ax_bot, pos, unique_degrees)
+
+    fig.tight_layout(rect=[0, 0.10, 1, 1])
+    fig.legend(handles=legend_handles,
+               loc="lower center", bbox_to_anchor=(0.5, 0.02),
+               ncol=4, fontsize=8, framealpha=0.88, borderaxespad=0)
+    _save(fig, _subdir(save_dir, "purity_vs_degree"),
+          f"{prefix}_purity_boxplots_vs_degree.png", show)
 
 
 # ── influence analysis: same-class vs diff-class training nodes ────────────────

@@ -22,8 +22,9 @@ All analysis scripts live in `analysis/` and are run from the repo root. See `ST
 
 ```bash
 # Build per-test-node feature table + logistic regression
-uv run analysis/node_feature_table.py --run 1 --no-influence --save-dir ./output
-uv run analysis/node_feature_table.py --run 1 --save-dir ./output --plot-roc --shap
+# Outputs (CSV, plots) are saved automatically to the run's exec directory under results/
+uv run analysis/node_feature_table.py --run 1 --no-influence
+uv run analysis/node_feature_table.py --run 1 --plot-roc --shap
 
 # Per-hop influence breakdown for specific nodes
 uv run analysis/hop_influence.py --node-idx 1362 --run 1
@@ -39,6 +40,8 @@ uv run analysis/degree_group.py --all-degrees --mode reachability --save-dir ./o
 
 Key flags for `analysis/node_feature_table.py`:
 - `--run N` / `--checkpoint PATH` — model source (mutually exclusive)
+- `--run N` — outputs always go to `results/{exec_dir}/` (ignores `--save-dir`)
+- `--save-dir PATH` — output directory; only effective when using `--checkpoint` (not `--run`)
 - `--no-influence` — skip expensive Jacobian computation (~minutes per run)
 - `--no-embeddings` — skip penultimate-layer embedding features
 - `--features f1,f2,...` — restrict LR to specific features (e.g. `purity_1hop,purity_2hop`)
@@ -86,7 +89,7 @@ The LR uses 5-fold stratified CV with `class_weight="balanced"`. Target is `corr
 
 ### Plotting (`plot_utils.py`)
 
-Shared utilities: `_fig_w`, `_degree_axis`, `_save`, `_subdir`, `_BP_KWARGS`, `_ACC_COLOR`, `_PURITY_COLOR`. All analysis plots reuse these. Output goes to subdirectories under `--save-dir` (e.g. `output/shap/`, `output/roc_pr_curves/`).
+Shared utilities: `_fig_w`, `_degree_axis`, `_save`, `_subdir`, `_BP_KWARGS`, `_ACC_COLOR`, `_PURITY_COLOR`. All analysis plots reuse these. Output goes to subdirectories under the save directory (e.g. `{save_dir}/shap/`, `{save_dir}/roc_pr_curves/`, `{save_dir}/node_feature_table/`). For `node_feature_table.py` with `--run N`, the save directory is always the run's exec directory under `results/`.
 
 ## Git
 
