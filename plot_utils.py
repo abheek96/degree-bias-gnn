@@ -3390,6 +3390,15 @@ def plot_centrality_vs_degree(test_deg, centrality, cfg, centrality_type,
         patch.set_facecolor(color)
         patch.set_alpha(0.65)
 
+    rng = np.random.default_rng(0)
+    for xi, vals in zip(pos, bp_data):
+        clean = vals[~np.isnan(vals)]
+        if len(clean) == 0:
+            continue
+        jitter = rng.uniform(-0.18, 0.18, size=len(clean))
+        ax_top.scatter(xi + jitter, clean, s=5, color=color,
+                       alpha=0.25, edgecolors="none", zorder=4)
+
     legend_handles = [
         plt.Line2D([0], [0], color=color, linewidth=6, alpha=0.65, label=label),
     ]
