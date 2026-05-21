@@ -251,16 +251,6 @@ def main():
         for k in range(1, purity_k_max + 1)
     } if _need_purity else {}
 
-    # Centrality measures are graph-fixed — compute once, sliced to test nodes
-    _need_centrality = plot_cfg.get("centrality_vs_degree", False)
-    if _need_centrality:
-        log.info("Computing closeness centrality …")
-        closeness_test = get_closeness_centrality(data).cpu()[data.test_mask.cpu()]
-        log.info("Computing eigenvector centrality …")
-        eigenvec_test  = get_eigenvector_centrality(data).cpu()[data.test_mask.cpu()]
-    else:
-        closeness_test = eigenvec_test = None
-
     # k_hops = num_layers - 1 because the final layer is nn.Linear (no message passing)
     k_hops = cfg["model"]["num_layers"] - 1
 
@@ -585,7 +575,11 @@ def main():
             show=plot_cfg.get("show", False),
         )
 
-    if plot_cfg.get("centrality_vs_degree", False) and closeness_test is not None:
+    if plot_cfg.get("centrality_vs_degree", False):
+        log.info("Computing closeness centrality …")
+        closeness_test = get_closeness_centrality(data).cpu()[data.test_mask.cpu()]
+        log.info("Computing eigenvector centrality …")
+        eigenvec_test  = get_eigenvector_centrality(data).cpu()[data.test_mask.cpu()]
         save_dir = exec_dir if plot_cfg.get("save", True) else None
         for ctype, cvals in [("closeness", closeness_test), ("eigenvector", eigenvec_test)]:
             plot_centrality_vs_degree(
