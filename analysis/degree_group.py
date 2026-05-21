@@ -43,10 +43,13 @@ from checkpoint_utils import (
     _deep_merge,
     load_cfg,
     load_data,
+    load_from_checkpoint,
+    _resolve_run_checkpoint,
     set_seed,
     train_model,
 )
 from dataset_utils import load_or_create_split
+from plot_utils import _fig_w, _degree_axis, _save, _subdir
 from influence import _analyse_node, _khop_distances, _khop_neighbors
 from models import get_model
 from train import train
@@ -353,135 +356,305 @@ def _log_results(results: dict, deg_label: str, k_hops: int):
              100 * _misc_rate(results["has_same_train_misc"], results["has_same_train"]))
 
 
-def _plot_reachability_by_degree(degree_results: dict, k_hops: int, cfg: dict,
-                                  save_path: str | None, show: bool):
-    degrees = sorted(degree_results.keys())
-    degrees = [d for d in degrees if degree_results[d]["n_misc"] > 0]
+_REACH_COLORS = {
+    "no_train":       "#D32F2F",
+    "no_same_train":  "#E65100",
+    "has_same_train": "#1565C0",
+}
+_REACH_LABELS = {
+    "no_train":       "No train node reachable",
+    "no_same_train":  "Train reachable, no same-class",
+    "has_same_train": "Same-class train reachable",
+}
+_SPARSE_THRESHOLD = 5
+
+
+def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
+    degrees = sorted(all_run_results[0].keys())
+    degrees = [d for d in degrees
+               if any(r[d]["n_misc"] > 0 for r in all_run_results)]
     if not degrees:
-        log.info("No misclassified nodes found for any degree — skipping plot.")
+        log.info("No misclassified nodes — skipping reachability stacked plot.")
         return
 
-    no_train_prop = [degree_results[d]["no_train_misc"]       / degree_results[d]["n_misc"] for d in degrees]
-    no_same_prop  = [degree_results[d]["no_same_train_misc"]  / degree_results[d]["n_misc"] for d in degrees]
-    has_same_prop = [degree_results[d]["has_same_train_misc"] / degree_results[d]["n_misc"] for d in degrees]
-    counts        = [degree_results[d]["n_misc"] for d in degrees]
+    def _prop(run, d, key):
+        n = run[d]["n_misc"]
+        return run[d][key] / n if n > 0 else float("nan")
 
-    x   = np.arange(len(degrees))
-    fig, ax = plt.subplots(figsize=(max(8, len(degrees) * 0.5), 5))
+    no_train_med, no_same_med, has_same_med, counts = [], [], [], []
+    for d in degrees:
+        no_train_med.append(np.nanmedian([_prop(r, d, "no_train_misc")  for r in all_run_results]))
+        no_same_med.append( np.nanmedian([_prop(r, d, "no_same_train_misc")  for r in all_run_results]))
+        has_same_med.append(np.nanmedian([_prop(r, d, "has_same_train_misc") for r in all_run_results]))
+        counts.append(int(np.median([r[d]["n_misc"] for r in all_run_results])))
 
-    ax.bar(x, no_train_prop,  color="#D32F2F", label="No train node reachable")
-    ax.bar(x, no_same_prop,   bottom=no_train_prop,
-           color="#FF8F00", label="Train reachable, no same-class")
-    ax.bar(x, has_same_prop,
-           bottom=[a + b for a, b in zip(no_train_prop, no_same_prop)],
-           color="#1565C0", label="Same-class train reachable")
-
-    for i, n in enumerate(counts):
-        ax.text(x[i], 1.01, str(n), ha="center", va="bottom", fontsize=7, color="dimgrey")
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(degrees, rotation=55, ha="right", fontsize=8)
-    ax.set_xlabel("Node degree", fontsize=11)
-    ax.set_ylabel("Proportion of misclassified nodes", fontsize=11)
-    ax.set_ylim(0, 1.12)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-
+    pos     = list(range(len(degrees)))
+    n_runs  = len(all_run_results)
     dataset = cfg["dataset"]["name"]
     model   = cfg["model"]["name"]
-    ax.set_title(
-        f"Training-node reachability for misclassified test nodes\n"
-        f"{dataset} · {model} · {k_hops}-hop receptive field",
+    subtitle = f"{dataset} · {model} · {k_hops}-hop receptive field · {n_runs} run{'s' if n_runs > 1 else ''}"
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    ax_top.bar(pos, no_train_med, color="#D32F2F")
+    ax_top.bar(pos, no_same_med,  bottom=no_train_med, color="#FF8F00")
+    bottom2 = [a + b for a, b in zip(no_train_med, no_same_med)]
+    ax_top.bar(pos, has_same_med, bottom=bottom2, color="#1565C0")
+
+    for i, n in enumerate(counts):
+        ax_top.text(pos[i], 1.01, str(n), ha="center", va="bottom",
+                    fontsize=7, color="dimgrey")
+
+    ax_top.set_ylabel("Proportion of misclassified nodes", fontsize=11)
+    ax_top.set_ylim(0, 1.12)
+    ax_top.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax_top.set_title(
+        f"Training-node reachability for misclassified test nodes\n{subtitle}",
         fontsize=11,
     )
-    fig.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02),
-               ncol=3, fontsize=9, framealpha=0.9)
-    fig.subplots_adjust(bottom=0.22)
+
+    ax_bot.bar(pos, counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# misc nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    _degree_axis(ax_bot, pos, degrees)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    legend_handles = [
+        mpatches.Patch(color="#D32F2F", label=_REACH_LABELS["no_train"]),
+        mpatches.Patch(color="#FF8F00", label=_REACH_LABELS["no_same_train"]),
+        mpatches.Patch(color="#1565C0", label=_REACH_LABELS["has_same_train"]),
+    ]
+    ax_bot.legend(handles=legend_handles, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.42), ncol=3,
+                  fontsize=9, framealpha=0.9, borderaxespad=0)
     fig.tight_layout()
-
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        log.info("Plot saved to %s", save_path)
-    if show:
-        plt.show()
-    plt.close(fig)
+    fig.subplots_adjust(bottom=0.14)
+    _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree.png", show)
 
 
-def _plot_classification_split_by_bucket(degree_results: dict, k_hops: int,
-                                          cfg: dict, save_path: str | None,
-                                          show: bool):
-    degrees = sorted(degree_results.keys())
-    degrees = [d for d in degrees if degree_results[d]["total"] > 0]
+def _plot_classification_split_by_bucket(all_run_results, k_hops, cfg, save_dir, show):
+    degrees = sorted(all_run_results[0].keys())
+    degrees = [d for d in degrees
+               if any(r[d]["total"] > 0 for r in all_run_results)]
     if not degrees:
-        log.info("No nodes found for any degree — skipping plot.")
         return
 
     n_deg   = len(degrees)
-    x       = np.arange(n_deg)
+    pos     = np.arange(n_deg)
     w       = 0.22
     offsets = [-w, 0, w]
+    n_runs  = len(all_run_results)
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+    subtitle = f"{dataset} · {model} · {k_hops}-hop · {n_runs} run{'s' if n_runs > 1 else ''}"
 
     buckets = [
-        ("no_train",       "no_train_misc",       "#C62828", "#FFCDD2", "No train reachable"),
-        ("no_same_train",  "no_same_train_misc",   "#E65100", "#FFE0B2", "Train, no same-class"),
-        ("has_same_train", "has_same_train_misc",  "#1565C0", "#BBDEFB", "Same-class train reachable"),
+        ("no_train",       "no_train_misc",      "#C62828", "#FFCDD2", _REACH_LABELS["no_train"]),
+        ("no_same_train",  "no_same_train_misc",  "#E65100", "#FFE0B2", _REACH_LABELS["no_same_train"]),
+        ("has_same_train", "has_same_train_misc", "#1565C0", "#BBDEFB", _REACH_LABELS["has_same_train"]),
     ]
 
-    fig, ax = plt.subplots(figsize=(max(10, n_deg * 0.75), 5))
-    max_count = 0
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(n_deg), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
     legend_handles = []
+    max_total = 0
     for (tot_key, misc_key, dark, light, label), offset in zip(buckets, offsets):
-        pos     = x + offset
-        correct = []
-        misc    = []
+        correct_med, misc_med = [], []
         for d in degrees:
-            r = degree_results[d]
-            total = r[tot_key]
-            m     = r[misc_key]
-            correct.append(total - m)
-            misc.append(m)
-            max_count = max(max_count, total)
-        correct = np.array(correct, dtype=float)
-        misc    = np.array(misc,    dtype=float)
-        ax.bar(pos, correct, width=w, color=light, edgecolor=dark, linewidth=0.6)
-        ax.bar(pos, misc, width=w, bottom=correct,
-               color=dark, edgecolor=dark, linewidth=0.6)
+            t = float(np.median([r[d][tot_key]  for r in all_run_results]))
+            m = float(np.median([r[d][misc_key] for r in all_run_results]))
+            correct_med.append(max(t - m, 0))
+            misc_med.append(m)
+            max_total = max(max_total, t)
+        correct_med = np.array(correct_med)
+        misc_med    = np.array(misc_med)
+        ax_top.bar(pos + offset, correct_med, width=w, color=light,
+                   edgecolor=dark, linewidth=0.6)
+        ax_top.bar(pos + offset, misc_med, width=w, bottom=correct_med,
+                   color=dark, edgecolor=dark, linewidth=0.6)
         legend_handles.append(
             mpatches.Patch(facecolor=light, edgecolor=dark, linewidth=0.8,
                            label=f"{label}  (light=correct, dark=misc)")
         )
 
-    ax.set_xticks(x)
-    ax.set_xticklabels(degrees, rotation=55, ha="right", fontsize=8)
-    ax.set_xlabel("Node degree", fontsize=11)
-    ax.set_ylabel("Number of nodes", fontsize=11)
-    ax.set_ylim(0, max_count * 1.15)
-    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-
-    dataset = cfg["dataset"]["name"]
-    model   = cfg["model"]["name"]
-    ax.set_title(
-        f"Correct vs misclassified node counts per reachability bucket\n"
-        f"{dataset} · {model} · {k_hops}-hop receptive field  "
-        f"(bar height = bucket size)",
+    ax_top.set_ylabel("Number of nodes (median across runs)", fontsize=11)
+    ax_top.set_ylim(0, max_total * 1.15)
+    ax_top.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax_top.set_title(
+        f"Correct vs misclassified per reachability bucket\n{subtitle}",
         fontsize=11,
     )
-    ax.legend(handles=legend_handles, loc="upper center",
-              bbox_to_anchor=(0.5, -0.18), ncol=1, fontsize=9, framealpha=0.9)
-    fig.subplots_adjust(bottom=0.28)
+
+    total_counts = [all_run_results[0][d]["total"] for d in degrees]
+    ax_bot.bar(pos, total_counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    _degree_axis(ax_bot, pos, degrees)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    ax_bot.legend(handles=legend_handles, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.42), ncol=1,
+                  fontsize=9, framealpha=0.9, borderaxespad=0)
     fig.tight_layout()
-
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        log.info("Plot saved to %s", save_path)
-    if show:
-        plt.show()
-    plt.close(fig)
+    fig.subplots_adjust(bottom=0.14)
+    _save(fig, save_dir, f"{dataset}_{model}_classification_split_by_bucket.png", show)
 
 
-def _load_data_and_train(cfg, device):
+def _plot_misc_rate_by_bucket(all_run_results, k_hops, cfg, save_dir, show):
+    """Per-degree misclassification rate for each reachability bucket.
+
+    Three lines with IQR bands. Dashed where median bucket count < _SPARSE_THRESHOLD.
+    """
+    degrees = sorted(all_run_results[0].keys())
+    if not degrees:
+        return
+
+    n_runs  = len(all_run_results)
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
+    subtitle = (f"{dataset} · {model} · {k_hops}-hop receptive field  ·  "
+                f"median ± IQR, {n_runs} run{'s' if n_runs > 1 else ''}")
+
+    pos         = list(range(len(degrees)))
+    bucket_keys = ["no_train", "no_same_train", "has_same_train"]
+    misc_keys   = ["no_train_misc", "no_same_train_misc", "has_same_train_misc"]
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(_fig_w(len(degrees)), 7),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    legend_handles = []
+    for bkey, mkey in zip(bucket_keys, misc_keys):
+        color = _REACH_COLORS[bkey]
+        label = _REACH_LABELS[bkey]
+        med_rates, q1_rates, q3_rates, med_counts = [], [], [], []
+        for d in degrees:
+            rates = [r[d][mkey] / r[d][bkey] for r in all_run_results if r[d][bkey] > 0]
+            if rates:
+                med_rates.append(float(np.median(rates)))
+                q1_rates.append(float(np.percentile(rates, 25)))
+                q3_rates.append(float(np.percentile(rates, 75)))
+            else:
+                med_rates.append(float("nan"))
+                q1_rates.append(float("nan"))
+                q3_rates.append(float("nan"))
+            med_counts.append(float(np.median([r[d][bkey] for r in all_run_results])))
+
+        med_rates  = np.array(med_rates)
+        q1_rates   = np.array(q1_rates)
+        q3_rates   = np.array(q3_rates)
+        med_counts = np.array(med_counts)
+        dense      = med_counts >= _SPARSE_THRESHOLD
+
+        for i in range(len(pos)):
+            if np.isnan(med_rates[i]):
+                continue
+            ls    = "-"    if dense[i] else "--"
+            alpha = 1.0    if dense[i] else 0.45
+            if i + 1 < len(pos) and not np.isnan(med_rates[i + 1]):
+                ax_top.plot([pos[i], pos[i + 1]], [med_rates[i], med_rates[i + 1]],
+                            color=color, linewidth=1.8, linestyle=ls, alpha=alpha)
+            ax_top.scatter([pos[i]], [med_rates[i]], color=color, s=25,
+                           zorder=5, alpha=alpha)
+        for i in range(len(pos)):
+            if dense[i] and not np.isnan(q1_rates[i]):
+                ax_top.fill_between([pos[i] - 0.3, pos[i] + 0.3],
+                                    [q1_rates[i]] * 2, [q3_rates[i]] * 2,
+                                    color=color, alpha=0.12)
+        legend_handles.append(
+            plt.Line2D([0], [0], color=color, linewidth=1.8, marker="o",
+                       markersize=4, label=label)
+        )
+
+    legend_handles.append(
+        plt.Line2D([0], [0], color="grey", linewidth=1.2, linestyle="--",
+                   label=f"dashed = bucket n < {_SPARSE_THRESHOLD}")
+    )
+
+    ax_top.set_ylabel("Misclassification rate", fontsize=11)
+    ax_top.set_ylim(-0.05, 1.15)
+    ax_top.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax_top.set_title(
+        f"Misclassification rate per reachability bucket\n{subtitle}",
+        fontsize=11,
+    )
+
+    total_counts = [all_run_results[0][d]["total"] for d in degrees]
+    ax_bot.bar(pos, total_counts, color="lightgrey", alpha=0.7, width=0.6)
+    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    _degree_axis(ax_bot, pos, degrees)
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    ax_bot.legend(handles=legend_handles, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.42), ncol=2,
+                  fontsize=8, framealpha=0.88, borderaxespad=0)
+    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.14)
+    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_by_bucket_and_degree.png", show)
+
+
+def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show):
+    """Overall misclassification rate per bucket, collapsed across degree.
+
+    Shows median ± IQR across runs.
+    """
+    bucket_keys = ["no_train", "no_same_train", "has_same_train"]
+    misc_keys   = ["no_train_misc", "no_same_train_misc", "has_same_train_misc"]
+    n_runs      = len(all_run_results)
+    dataset     = cfg["dataset"]["name"]
+    model       = cfg["model"]["name"]
+
+    run_rates = {bkey: [] for bkey in bucket_keys}
+    for run_result in all_run_results:
+        for bkey, mkey in zip(bucket_keys, misc_keys):
+            total = sum(r[bkey] for r in run_result.values())
+            misc  = sum(r[mkey] for r in run_result.values())
+            run_rates[bkey].append(misc / total if total > 0 else float("nan"))
+
+    med  = [float(np.nanmedian(run_rates[k])) for k in bucket_keys]
+    q1   = [float(np.nanpercentile(run_rates[k], 25)) for k in bucket_keys]
+    q3   = [float(np.nanpercentile(run_rates[k], 75)) for k in bucket_keys]
+    yerr = [[m - lo for m, lo in zip(med, q1)],
+            [hi - m  for m, hi in zip(med, q3)]]
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    xpos   = np.arange(len(bucket_keys))
+    colors = [_REACH_COLORS[k] for k in bucket_keys]
+    ax.bar(xpos, med, color=colors, alpha=0.75, width=0.5,
+           edgecolor="white", linewidth=0.5)
+    ax.errorbar(xpos, med, yerr=yerr, fmt="none", color="black",
+                capsize=4, linewidth=1.2)
+    for i, (m, hi) in enumerate(zip(med, q3)):
+        ax.text(xpos[i], hi + 0.015, f"{m:.1%}", ha="center", va="bottom",
+                fontsize=9, fontweight="bold")
+
+    ax.set_xticks(xpos)
+    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=9)
+    ax.set_ylabel("Misclassification rate", fontsize=11)
+    ax.set_ylim(0, 1.15)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax.set_title(
+        f"Overall misclassification rate by reachability bucket\n"
+        f"{dataset} · {model} · {k_hops}-hop  ·  "
+        f"median ± IQR, {n_runs} run{'s' if n_runs > 1 else ''}",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal.png", show)
+
+
+def _load_data_and_train(cfg, device, run_id=None):
     from dataset import load_dataset
     from dataset_utils import apply_split
     data = load_dataset(cfg["dataset"])
@@ -491,52 +664,66 @@ def _load_data_and_train(cfg, device):
     data = apply_split(data, split, cfg["dataset"])
     data = data.to(device)
     k_hops = cfg["model"]["num_layers"] - 1
-    log.info("Training model (%s, %d layers, k_hops=%d)...",
-             cfg["model"]["name"], cfg["model"]["num_layers"], k_hops)
-    set_seed(cfg.get("seed", 42))
-    pred, _ = train_model(data, cfg, device)
+    if run_id is not None:
+        ckpt_path = _resolve_run_checkpoint(cfg, run_id)
+        if ckpt_path is None:
+            raise ValueError(f"Checkpoint for run {run_id} not found")
+        log.info("Loading checkpoint run %d: %s", run_id, ckpt_path)
+        pred, _ = load_from_checkpoint(cfg, data, device, ckpt_path)
+    else:
+        log.info("Training model (%s, %d layers, k_hops=%d)...",
+                 cfg["model"]["name"], cfg["model"]["num_layers"], k_hops)
+        set_seed(cfg.get("seed", 42))
+        pred, _ = train_model(data, cfg, device)
     return data, pred.cpu(), k_hops
 
 
 def _run_reachability(cfg, deg_min, deg_max, device, all_degrees=False,
-                      save_dir=None, show=False):
-    data, pred, k_hops = _load_data_and_train(cfg, device)
-    N          = data.num_nodes
-    all_deg    = graph_degree(data.edge_index[1], N).cpu()
-    y          = data.y.cpu()
-    train_set  = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
-    test_idx   = data.test_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
+                      save_dir=None, show=False, n_runs=1):
+    run_ids = list(range(1, n_runs + 1)) if n_runs > 1 else [None]
+
+    # Resolve save_dir from exec_dir of run 1 when loading checkpoints
+    if save_dir is None and run_ids[0] is not None:
+        ckpt = _resolve_run_checkpoint(cfg, run_ids[0])
+        if ckpt:
+            save_dir = os.path.dirname(os.path.dirname(ckpt))
+
+    # Load data once (graph topology fixed across runs)
+    data, _, k_hops = _load_data_and_train(cfg, device, run_id=run_ids[0])
+    N         = data.num_nodes
+    all_deg   = graph_degree(data.edge_index[1], N).cpu()
+    y         = data.y.cpu()
+    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
+    test_idx  = data.test_mask.cpu().nonzero(as_tuple=False).view(-1).tolist()
 
     if all_degrees:
         unique_degrees = sorted(all_deg[data.test_mask.cpu()].unique().long().tolist())
-        log.info("Computing reachability for %d unique test-node degrees...",
-                 len(unique_degrees))
-        degree_results = {}
-        for d in unique_degrees:
-            r = _compute_reachability(
-                test_idx, all_deg, y, pred, train_set,
-                data.edge_index, k_hops, N, d, d,
-            )
-            degree_results[d] = r
-            if r["n_misc"] > 0:
-                _log_results(r, str(d), k_hops)
+        log.info("Computing reachability for %d degrees × %d run(s)...",
+                 len(unique_degrees), len(run_ids))
+        all_run_results = []
+        for run_id in run_ids:
+            _, pred, _ = _load_data_and_train(cfg, device, run_id=run_id)
+            degree_results = {
+                d: _compute_reachability(
+                    test_idx, all_deg, y, pred, train_set,
+                    data.edge_index, k_hops, N, d, d,
+                )
+                for d in unique_degrees
+            }
+            all_run_results.append(degree_results)
 
-        dataset = cfg["dataset"]["name"]
-        model   = cfg["model"]["name"]
-        save_path_stacked = None
-        save_path_split   = None
-        if save_dir:
-            save_path_stacked = os.path.join(
-                save_dir, "reachability",
-                f"{dataset}_{model}_reachability_by_degree.png",
-            )
-            save_path_split = os.path.join(
-                save_dir, "reachability",
-                f"{dataset}_{model}_classification_split_by_bucket.png",
-            )
-        _plot_reachability_by_degree(degree_results, k_hops, cfg, save_path_stacked, show)
-        _plot_classification_split_by_bucket(degree_results, k_hops, cfg, save_path_split, show)
+        # Log results from first run
+        for d in unique_degrees:
+            if all_run_results[0][d]["n_misc"] > 0:
+                _log_results(all_run_results[0][d], str(d), k_hops)
+
+        reach_dir = _subdir(save_dir, "reachability")
+        _plot_reachability_by_degree(all_run_results, k_hops, cfg, reach_dir, show)
+        _plot_classification_split_by_bucket(all_run_results, k_hops, cfg, reach_dir, show)
+        _plot_misc_rate_by_bucket(all_run_results, k_hops, cfg, reach_dir, show)
+        _plot_misc_rate_marginal(all_run_results, k_hops, cfg, reach_dir, show)
     else:
+        _, pred, _ = _load_data_and_train(cfg, device, run_id=run_ids[0])
         results = _compute_reachability(
             test_idx, all_deg, y, pred, train_set,
             data.edge_index, k_hops, N, deg_min, deg_max,
@@ -573,6 +760,8 @@ def main():
                         help="Directory to save plots (reachability --all-degrees only)")
     parser.add_argument("--show", action="store_true",
                         help="Display plots interactively (reachability --all-degrees only)")
+    parser.add_argument("--n-runs", type=int, default=1,
+                        help="Number of checkpoint runs to aggregate (reachability mode only)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -593,7 +782,7 @@ def main():
         if args.mode != "reachability":
             parser.error("--all-degrees is only supported with --mode reachability")
         _run_reachability(cfg, None, None, device, all_degrees=True,
-                          save_dir=args.save_dir, show=args.show)
+                          save_dir=args.save_dir, show=args.show, n_runs=args.n_runs)
         return
 
     # Resolve degree range
@@ -617,7 +806,7 @@ def main():
     elif args.mode == "reachability":
         _run_reachability(cfg, deg_min, deg_max, device,
                           all_degrees=False,
-                          save_dir=args.save_dir, show=args.show)
+                          save_dir=args.save_dir, show=args.show, n_runs=args.n_runs)
 
 
 if __name__ == "__main__":
