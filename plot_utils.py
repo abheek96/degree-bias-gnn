@@ -3390,27 +3390,34 @@ def plot_centrality_vs_degree(test_deg, centrality, cfg, centrality_type,
         patch.set_facecolor(color)
         patch.set_alpha(0.65)
 
+    legend_handles = [
+        plt.Line2D([0], [0], color=color, linewidth=6, alpha=0.65, label=label),
+    ]
+
     if deg_acc_results is not None:
         _, acc_by_deg = _collect(deg_acc_results)
-        acc_pos, acc_means = [], []
+        n_runs = len(deg_acc_results)
+        acc_pos, acc_median, acc_q1, acc_q3 = [], [], [], []
         for i, d in enumerate(unique_degrees):
-            runs = acc_by_deg.get(d, [])
-            if runs:
+            run_means = [float(a.mean()) for a in acc_by_deg.get(d, []) if len(a) > 0]
+            if run_means:
                 acc_pos.append(i)
-                acc_means.append(float(np.mean(runs)))
+                acc_median.append(float(np.median(run_means)))
+                acc_q1.append(float(np.percentile(run_means, 25)))
+                acc_q3.append(float(np.percentile(run_means, 75)))
         if acc_pos:
             ax_acc = ax_top.twinx()
-            ax_acc.plot(acc_pos, acc_means, color=_ACC_COLOR, linewidth=1.8,
-                        marker="o", markersize=4, zorder=5, label="Accuracy")
+            ax_acc.plot(acc_pos, acc_median, color=_ACC_COLOR, linewidth=1.8,
+                        marker="o", markersize=4, zorder=5)
+            ax_acc.fill_between(acc_pos, acc_q1, acc_q3,
+                                color=_ACC_COLOR, alpha=0.15, zorder=4)
             ax_acc.set_ylabel("Accuracy", fontsize=10, color=_ACC_COLOR)
             ax_acc.tick_params(axis="y", labelsize=8, colors=_ACC_COLOR)
             ax_acc.set_ylim(0, 1.15)
-            handles = [
-                plt.Line2D([0], [0], color=color, linewidth=6, alpha=0.65, label=label),
-                plt.Line2D([0], [0], color=_ACC_COLOR, linewidth=1.8,
-                           marker="o", markersize=4, label="Accuracy"),
-            ]
-            ax_top.legend(handles=handles, fontsize=8, loc="upper right")
+            legend_handles.append(plt.Line2D(
+                [0], [0], color=_ACC_COLOR, linewidth=1.8, marker="o", markersize=4,
+                label=f"Accuracy (median ± IQR, {n_runs} runs)",
+            ))
 
     ax_top.set_ylabel(label, fontsize=11)
     ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
@@ -3422,7 +3429,12 @@ def plot_centrality_vs_degree(test_deg, centrality, cfg, centrality_type,
     _degree_axis(ax_bot, pos, unique_degrees)
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
+    ax_bot.legend(handles=legend_handles,
+                  loc="upper center", bbox_to_anchor=(0.5, -0.42),
+                  ncol=2, fontsize=8, framealpha=0.88, borderaxespad=0)
+
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.14)
     _save(fig, _subdir(save_dir, "centrality_vs_degree"),
           f"{prefix}_{fname_key}_vs_degree.png", show)
 
