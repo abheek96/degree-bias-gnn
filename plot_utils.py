@@ -3391,7 +3391,7 @@ def plot_centrality_vs_degree(test_deg, centrality, cfg, centrality_type,
         patch.set_alpha(0.65)
 
     if deg_acc_results is not None:
-        acc_by_deg = _collect(deg_acc_results)
+        _, acc_by_deg = _collect(deg_acc_results)
         acc_pos, acc_means = [], []
         for i, d in enumerate(unique_degrees):
             runs = acc_by_deg.get(d, [])
