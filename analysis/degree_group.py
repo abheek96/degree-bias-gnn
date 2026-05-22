@@ -415,18 +415,17 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
         fontsize=11,
     )
 
-    counts = [int(np.median([r[d]["n_misc"]  for r in all_run_results])) for d in degrees]
-    totals = [int(np.median([r[d]["total"]   for r in all_run_results])) for d in degrees]
-    w = 0.35
-    ax_bot.bar([p - w / 2 for p in group_centers], totals, width=w, color="steelblue",  alpha=0.5, label="# total")
-    ax_bot.bar([p + w / 2 for p in group_centers], counts, width=w, color="lightgrey", alpha=0.9, label="# misc (median)")
-    ax_bot.set_ylabel("# nodes", fontsize=9, color="grey")
-    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
-    bot_legend_handles = [
-        mpatches.Patch(color="steelblue", alpha=0.5, label="# total"),
-        mpatches.Patch(color="lightgrey", alpha=0.9, label="# misc (median)"),
+    misc_rates = [
+        np.median([r[d]["n_misc"] / r[d]["total"] if r[d]["total"] > 0 else float("nan")
+                   for r in all_run_results])
+        for d in degrees
     ]
-    ax_bot.legend(handles=bot_legend_handles, fontsize=8, framealpha=0.8)
+    ax_bot.plot(group_centers, misc_rates, color="dimgrey", linewidth=1.6,
+                marker="o", markersize=4)
+    ax_bot.set_ylabel("Misc rate\n(#misc/#total)", fontsize=8, color="grey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax_bot.set_ylim(0, max(misc_rates) * 1.25)
     _degree_axis(ax_bot, group_centers, degrees)
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
@@ -435,11 +434,11 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
         mpatches.Patch(color="#FF8F00", label=_REACH_LABELS["no_same_train"]),
         mpatches.Patch(color="#1565C0", label=_REACH_LABELS["has_same_train"]),
     ]
-    ax_top.legend(handles=legend_handles, loc="upper center",
-                  bbox_to_anchor=(0.5, 1.18), ncol=3,
+    ax_top.legend(handles=legend_handles, loc="center left",
+                  bbox_to_anchor=(1.01, 0.5), ncol=1,
                   fontsize=9, framealpha=0.9)
     fig.tight_layout()
-    fig.subplots_adjust(top=0.88, bottom=0.14)
+    fig.subplots_adjust(right=0.72, bottom=0.14)
     run_tag = f"_run{run_id:02d}" if run_id is not None else f"_{n_runs}runs"
     _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree{run_tag}.png", show)
 
