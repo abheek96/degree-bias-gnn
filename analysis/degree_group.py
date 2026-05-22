@@ -435,10 +435,11 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
         mpatches.Patch(color="#FF8F00", label=_REACH_LABELS["no_same_train"]),
         mpatches.Patch(color="#1565C0", label=_REACH_LABELS["has_same_train"]),
     ]
-    ax_top.legend(handles=legend_handles, loc="upper right",
+    ax_top.legend(handles=legend_handles, loc="upper center",
+                  bbox_to_anchor=(0.5, 1.18), ncol=3,
                   fontsize=9, framealpha=0.9)
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.14)
+    fig.subplots_adjust(top=0.88, bottom=0.14)
     run_tag = f"_run{run_id:02d}" if run_id is not None else f"_{n_runs}runs"
     _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree{run_tag}.png", show)
 
