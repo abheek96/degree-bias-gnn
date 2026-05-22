@@ -45,6 +45,9 @@ Model source (mutually exclusive)
 ----------------------------------
   --checkpoint PATH   load a saved state_dict
   --run N             resolve results/{exec}/checkpoints/run{N:02d}_*.pt
+  --multi-run         load all num_runs checkpoints, average influence features
+                      across runs, and predict misclassification frequency
+                      (Ridge regression instead of logistic regression)
   (neither)           retrain from scratch with config seed
 
 Usage
@@ -53,6 +56,7 @@ Usage
   uv run analysis/node_feature_table.py --run 1 --no-influence
   uv run analysis/node_feature_table.py \\
       --checkpoint results/.../checkpoints/run01_seed42.pt --save-dir ./output
+  uv run analysis/node_feature_table.py --multi-run --shap
 """
 
 import argparse
@@ -157,7 +161,61 @@ _FEATURE_DISPLAY_NAMES: dict[str, str] = {
     "emb_purity_delta":             "Embedding purity delta (same − diff)",
     "closeness_centrality":         "Closeness centrality",
     "eigenvector_centrality":       "Eigenvector centrality",
+    # multi-run averaged columns
+    "avg_total_infl_same_1hop":      "Avg influence: same-class (1-hop)",
+    "avg_total_infl_diff_1hop":      "Avg influence: diff-class (1-hop)",
+    "avg_total_infl_same_2hop":      "Avg influence: same-class (2-hop)",
+    "avg_total_infl_diff_2hop":      "Avg influence: diff-class (2-hop)",
+    "avg_same_train_infl_frac_1hop": "Avg infl frac: same-class train (1-hop)",
+    "avg_diff_train_infl_frac_1hop": "Avg infl frac: diff-class train (1-hop)",
+    "avg_same_train_infl_frac_2hop": "Avg infl frac: same-class train (2-hop)",
+    "avg_diff_train_infl_frac_2hop": "Avg infl frac: diff-class train (2-hop)",
+    "avg_emb_sim_same_1hop":         "Avg emb sim: same-class (1-hop)",
+    "avg_emb_sim_diff_1hop":         "Avg emb sim: diff-class (1-hop)",
+    "avg_emb_purity_delta":          "Avg embedding purity delta",
+    "std_misc_freq":                 "Std dev of misclassification across runs",
 }
+
+# Topology-fixed features shared by both single-run and multi-run modes.
+_TOPO_COLS = [
+    "degree",
+    "min_dist_to_train",
+    "min_dist_to_same_class_train",
+    "avg_spl_to_train",
+    "avg_spl_to_same_class_train",
+    "purity_1hop",
+    "purity_2hop",
+    "n_same_train_1hop",
+    "n_diff_train_1hop",
+    "n_same_train_2hop",
+    "n_diff_train_2hop",
+    "same_train_ratio_1hop",
+    "diff_train_ratio_1hop",
+    "same_train_ratio_2hop",
+    "diff_train_ratio_2hop",
+    "mean_cosine_sim_1hop",
+    "closeness_centrality",
+    "eigenvector_centrality",
+]
+
+_MULTI_INFL_COLS = [
+    "avg_total_infl_same_1hop",
+    "avg_total_infl_diff_1hop",
+    "avg_total_infl_same_2hop",
+    "avg_total_infl_diff_2hop",
+    "avg_same_train_infl_frac_1hop",
+    "avg_diff_train_infl_frac_1hop",
+    "avg_same_train_infl_frac_2hop",
+    "avg_diff_train_infl_frac_2hop",
+]
+
+_MULTI_EMB_COLS = [
+    "avg_emb_sim_same_1hop",
+    "avg_emb_sim_diff_1hop",
+    "avg_emb_purity_delta",
+]
+
+_FEATURE_COLS_MULTI = _TOPO_COLS + _MULTI_INFL_COLS + _MULTI_EMB_COLS + ["std_misc_freq"]
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -299,6 +357,12 @@ _NAN_INFL = {
     "diff_train_infl_frac_2hop": float("nan"),
 }
 
+_NAN_EMB = {
+    "emb_sim_same_1hop": float("nan"),
+    "emb_sim_diff_1hop": float("nan"),
+    "emb_purity_delta":  float("nan"),
+}
+
 
 # ── per-node feature computation ───────────────────────────────────────────────
 
@@ -392,6 +456,102 @@ def _build_rows(
             log.info("  processed %d / %d test nodes", pos + 1, len(test_idx))
 
     return rows
+
+
+# ── multi-run helpers ─────────────────────────────────────────────────────────
+
+def _compute_run_dependent_features(
+    data, model, pred, k_hops: int, device,
+    train_set: set, y, test_idx: list,
+    skip_influence: bool, skip_embeddings: bool,
+) -> list[dict]:
+    """Compute per-node influence, embedding, and correctness for one run."""
+    N          = data.num_nodes
+    edge_index = data.edge_index
+    adj        = _build_adj_list(edge_index.cpu(), N)
+
+    if skip_embeddings:
+        embeddings = None
+    elif hasattr(model, "get_intermediate"):
+        embeddings = model.get_intermediate(data.x, data.edge_index, layer=k_hops).cpu()
+    else:
+        with torch.no_grad():
+            embeddings = model(data.x, data.edge_index).cpu()
+
+    rows = []
+    for node_x in test_idx:
+        true_lbl = int(y[node_x].item())
+        S1       = list(adj[node_x])
+        subsets2 = k_hop_subsets_exact(node_x, 2, edge_index, N, device)
+
+        infl = (
+            _influence_features(node_x, data, model, k_hops, subsets2, y, train_set, true_lbl)
+            if not skip_influence
+            else _NAN_INFL
+        )
+        emb = (
+            _embedding_sim_features(node_x, S1, embeddings, y, true_lbl)
+            if not skip_embeddings
+            else _NAN_EMB
+        )
+
+        rows.append({
+            "node_idx": node_x,
+            "correct":  int(int(pred[node_x].item()) == true_lbl),
+            **infl,
+            **emb,
+        })
+
+    return rows
+
+
+def _load_all_runs(cfg, data_on_device, n_runs: int, device) -> list[tuple]:
+    """Load all N run checkpoints; return list of (pred_cpu, model) tuples."""
+    runs = []
+    for run_id in range(1, n_runs + 1):
+        ckpt_path = _resolve_run_checkpoint(cfg, run_id)
+        if ckpt_path is None:
+            raise RuntimeError(
+                f"Could not resolve checkpoint for run {run_id}. "
+                f"Ensure {n_runs} runs have been trained."
+            )
+        pred, model = load_from_checkpoint(cfg, data_on_device, device, ckpt_path)
+        runs.append((pred.cpu(), model))
+        log.info("Loaded run %d/%d: %s", run_id, n_runs, ckpt_path)
+    return runs
+
+
+def _aggregate_multi_run(
+    topo_df: pd.DataFrame,
+    run_features_list: list[list[dict]],
+) -> pd.DataFrame:
+    """Combine topology features with run-averaged influence/embedding features.
+
+    run_features_list : one list[dict] per run; each dict has node_idx, correct,
+                        8 infl cols, 3 emb cols.
+    Returns a DataFrame with topology cols + avg_* cols + std_misc_freq + misc_freq.
+    """
+    run_dfs = [
+        pd.DataFrame(feats).set_index("node_idx")
+        for feats in run_features_list
+    ]
+
+    infl_emb_cols = [c for c in run_dfs[0].columns if c != "correct"]
+    correct_arr   = np.stack([df["correct"].values for df in run_dfs], axis=1)  # [n_test, n_runs]
+    misc_freq     = 1.0 - correct_arr.mean(axis=1)
+    std_misc      = correct_arr.std(axis=1)
+
+    avg_dict: dict[str, np.ndarray] = {}
+    for col in infl_emb_cols:
+        stacked = np.stack([df[col].values.astype(float) for df in run_dfs], axis=1)
+        avg_dict[f"avg_{col}"] = np.nanmean(stacked, axis=1)
+
+    avg_df = pd.DataFrame(avg_dict, index=run_dfs[0].index)
+    avg_df["std_misc_freq"] = std_misc
+    avg_df["misc_freq"]     = misc_freq
+    avg_df = avg_df.reset_index()
+
+    return topo_df.merge(avg_df, on="node_idx")
 
 
 # ── univariate AUROC ──────────────────────────────────────────────────────────
@@ -500,6 +660,67 @@ def _run_logistic_regression(df: pd.DataFrame, feature_cols=None):
     return auroc, acc, pr_auc, coef_df, p_misc, y_misc
 
 
+# ── Ridge regression (multi-run) ──────────────────────────────────────────────
+
+def _run_ridge_regression(df: pd.DataFrame, feature_cols=None):
+    from scipy.stats import spearmanr
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    cols      = feature_cols if feature_cols is not None else _FEATURE_COLS_MULTI
+    available = [c for c in cols if c in df.columns]
+    available = [c for c in available if df[c].notna().any()]
+    df_clean  = df[available + ["misc_freq"]].dropna()
+    n_dropped = len(df) - len(df_clean)
+    if n_dropped:
+        log.warning("Dropped %d rows with NaN before Ridge fitting", n_dropped)
+
+    X      = df_clean[available].values.astype(float)
+    y_freq = df_clean["misc_freq"].values
+
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("ridge",  Ridge(alpha=1.0)),
+    ])
+
+    cv        = KFold(n_splits=5, shuffle=True, random_state=42)
+    oof_preds = np.zeros(len(y_freq))
+    r2_scores: list[float] = []
+
+    for train_idx, test_idx in cv.split(X):
+        pipe.fit(X[train_idx], y_freq[train_idx])
+        oof_preds[test_idx] = pipe.predict(X[test_idx])
+        ss_res = np.sum((y_freq[test_idx] - oof_preds[test_idx]) ** 2)
+        ss_tot = np.sum((y_freq[test_idx] - y_freq[test_idx].mean()) ** 2)
+        r2_scores.append(1 - ss_res / ss_tot if ss_tot > 0 else float("nan"))
+
+    spear_r, spear_p = spearmanr(y_freq, oof_preds)
+    rmse = float(np.sqrt(np.mean((y_freq - oof_preds) ** 2)))
+    r2   = float(np.nanmean(r2_scores))
+
+    pipe.fit(X, y_freq)
+    coef_df = (
+        pd.DataFrame({"feature": available, "coefficient": pipe.named_steps["ridge"].coef_})
+        .assign(abs_coef=lambda d: d["coefficient"].abs())
+        .sort_values("abs_coef", ascending=False)
+        .drop(columns="abs_coef")
+        .reset_index(drop=True)
+    )
+
+    log.info("── Ridge Regression results (5-fold CV, target=misc_freq) ─────────")
+    log.info("  n=%d  mean misc_freq=%.3f  std=%.3f", len(df_clean), y_freq.mean(), y_freq.std())
+    log.info("  Spearman r=%.4f (p=%.4e)", spear_r, spear_p)
+    log.info("  OOF R²=%.4f  RMSE=%.4f", r2, rmse)
+    log.info("  Coefficients (|coef| descending):")
+    for _, row in coef_df.iterrows():
+        log.info("    %-42s  %+.4f", row["feature"], row["coefficient"])
+    log.info("────────────────────────────────────────────────────────────────────")
+
+    return spear_r, r2, rmse, coef_df, oof_preds, y_freq
+
+
 # ── SHAP values ───────────────────────────────────────────────────────────────
 
 def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
@@ -555,7 +776,65 @@ def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
     return -shap_vals, X, display_names, -base_vals, node_idxs
 
 
-def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, save_dir, show):
+def _compute_shap_values_multi(df: pd.DataFrame, feature_cols=None):
+    """OOF SHAP values for Ridge regression on misc_freq (multi-run mode)."""
+    import shap
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    cols      = feature_cols if feature_cols is not None else _FEATURE_COLS_MULTI
+    available = [c for c in cols if c in df.columns]
+    available = [c for c in available if df[c].notna().any()]
+
+    keep = available + ["misc_freq"]
+    if "node_idx" in df.columns:
+        keep = ["node_idx"] + keep
+    df_clean  = df[keep].dropna(subset=available + ["misc_freq"])
+
+    X         = df_clean[available].values.astype(float)
+    y_freq    = df_clean["misc_freq"].values
+    node_idxs = (
+        df_clean["node_idx"].values.astype(int)
+        if "node_idx" in df_clean.columns
+        else np.arange(len(y_freq))
+    )
+
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("ridge",  Ridge(alpha=1.0)),
+    ])
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+
+    shap_vals = np.zeros((len(y_freq), len(available)))
+    base_vals = np.zeros(len(y_freq))
+
+    for fold_idx, (train_idx, test_idx) in enumerate(cv.split(X)):
+        X_tr, X_te = X[train_idx], X[test_idx]
+        pipe.fit(X_tr, y_freq[train_idx])
+        scaler      = pipe.named_steps["scaler"]
+        ridge_model = pipe.named_steps["ridge"]
+
+        X_tr_sc = scaler.transform(X_tr)
+        X_te_sc = scaler.transform(X_te)
+
+        explainer = shap.LinearExplainer(
+            ridge_model,
+            masker=shap.maskers.Independent(X_tr_sc),
+        )
+        sv = explainer.shap_values(X_te_sc)
+        shap_vals[test_idx] = sv
+        base_vals[test_idx] = explainer.expected_value
+        log.info("  SHAP fold %d/%d done", fold_idx + 1, cv.n_splits)
+
+    display_names = [_FEATURE_DISPLAY_NAMES.get(c, c) for c in available]
+    # No negation: positive SHAP → higher misc_freq → more misclassification
+    return shap_vals, X, display_names, base_vals, node_idxs
+
+
+def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, save_dir, show,
+                        target_label="log-odds of misclassification", suffix=""):
     import shap
     import matplotlib.pyplot as plt
 
@@ -571,7 +850,7 @@ def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, 
         plot_size=(10, fig_h),
     )
     fig = plt.gcf()
-    fig.axes[0].set_xlabel("SHAP value  (impact on log-odds of misclassification)")
+    fig.axes[0].set_xlabel(f"SHAP value  (impact on {target_label})")
     fig.suptitle(
         f"{dataset} · {model_name} — SHAP feature importance\n"
         "(positive = increases P(misclassified), OOF across 5 folds)",
@@ -583,7 +862,7 @@ def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, 
     if save_dir:
         sub  = os.path.join(save_dir, "shap")
         os.makedirs(sub, exist_ok=True)
-        path = os.path.join(sub, f"{dataset}_{model_name}_shap_beeswarm.png")
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_beeswarm{suffix}.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
         log.info("Saved → %s", path)
 
@@ -593,7 +872,8 @@ def _plot_shap_beeswarm(shap_values, X_raw, feature_names, dataset, model_name, 
         plt.close(fig)
 
 
-def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, show):
+def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, show,
+                   target_label="log-odds of misclassification", suffix=""):
     import shap
     import matplotlib.pyplot as plt
 
@@ -608,7 +888,7 @@ def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, sh
         plot_size=(8, fig_h),
     )
     fig = plt.gcf()
-    fig.axes[0].set_xlabel("mean |SHAP value|  (mean absolute impact on log-odds of misclassification)")
+    fig.axes[0].set_xlabel(f"mean |SHAP value|  (mean absolute impact on {target_label})")
     fig.suptitle(
         f"{dataset} · {model_name} — SHAP global feature importance (mean |SHAP|)\n"
         "OOF across 5 folds",
@@ -620,7 +900,7 @@ def _plot_shap_bar(shap_values, feature_names, dataset, model_name, save_dir, sh
     if save_dir:
         sub  = os.path.join(save_dir, "shap")
         os.makedirs(sub, exist_ok=True)
-        path = os.path.join(sub, f"{dataset}_{model_name}_shap_bar.png")
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_bar{suffix}.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
         log.info("Saved → %s", path)
 
@@ -706,7 +986,8 @@ def _plot_shap_decision(shap_values, base_values, feature_names,
 
 def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
                          feature_names, target_node_idxs, df,
-                         dataset, model_name, save_dir, show):
+                         dataset, model_name, save_dir, show,
+                         target_col="correct", suffix=""):
     import shap
     import matplotlib.pyplot as plt
 
@@ -727,11 +1008,15 @@ def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
 
         meta_row = df[df["node_idx"] == node_idx]
         if not meta_row.empty:
-            deg     = int(meta_row["degree"].iloc[0])
-            pur     = meta_row["purity_1hop"].iloc[0]
-            correct = int(meta_row["correct"].iloc[0])
-            status  = "correct" if correct else "misclassified"
-            subtitle = f"degree={deg}  purity_1hop={pur:.2f}  {status}"
+            deg = int(meta_row["degree"].iloc[0])
+            pur = meta_row["purity_1hop"].iloc[0]
+            if target_col == "misc_freq":
+                mf       = float(meta_row["misc_freq"].iloc[0])
+                subtitle = f"degree={deg}  purity_1hop={pur:.2f}  misc_freq={mf:.2f}"
+            else:
+                correct  = int(meta_row["correct"].iloc[0])
+                status   = "correct" if correct else "misclassified"
+                subtitle = f"degree={deg}  purity_1hop={pur:.2f}  {status}"
         else:
             subtitle = ""
 
@@ -749,7 +1034,7 @@ def _plot_shap_waterfall(shap_values, X_raw, base_values, node_idxs,
         if save_dir:
             sub  = os.path.join(save_dir, "shap")
             os.makedirs(sub, exist_ok=True)
-            path = os.path.join(sub, f"{dataset}_{model_name}_shap_waterfall_node{node_idx}.png")
+            path = os.path.join(sub, f"{dataset}_{model_name}_shap_waterfall_node{node_idx}{suffix}.png")
             fig.savefig(path, dpi=150, bbox_inches="tight")
             log.info("Saved → %s", path)
 
@@ -966,6 +1251,172 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
     return df
 
 
+def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
+              feature_cols=None, compute_shap=False, shap_nodes=None, show=False):
+    """Multi-run pipeline: average influence across N runs and predict misc_freq.
+
+    Loads all num_runs checkpoints, computes per-run Jacobian influence and
+    embedding features, averages them, and trains a Ridge regression to predict
+    misclassification frequency (fraction of runs a node is misclassified).
+    """
+    n_runs    = cfg.get("num_runs", 1)
+    cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
+    data = load_or_create_split(
+        cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
+    )
+
+    k_hops = cfg["model"]["num_layers"] - 1
+    log.info("Multi-run mode: n_runs=%d  dataset=%s  model=%s  k_hops=%d",
+             n_runs, cfg["dataset"]["name"], cfg["model"]["name"], k_hops)
+
+    N         = data.num_nodes
+    y         = data.y.cpu()
+    all_deg   = graph_degree(data.edge_index[1], N).cpu()
+    test_mask = data.test_mask.cpu()
+    test_idx  = test_mask.nonzero(as_tuple=False).view(-1).tolist()
+    train_set = set(data.train_mask.cpu().nonzero(as_tuple=False).view(-1).tolist())
+
+    # ── topology-fixed features (computed once, same across all runs) ─────────
+    log.info("Computing topology-fixed features …")
+    purity_1     = get_node_purity(data, k=1, node_mask=test_mask)
+    purity_2     = get_node_purity(data, k=2, node_mask=test_mask)
+    dist_any, dist_same = compute_distances_to_train(data)
+    avg_spl      = get_avg_spl_to_train(data)
+    avg_spl_same = get_avg_spl_to_same_class_train(data)
+    closeness    = get_closeness_centrality(data).cpu()
+    eigenvec     = get_eigenvector_centrality(data).cpu()
+
+    data = data.to(device)
+
+    INF        = N + 1
+    edge_index = data.edge_index.cpu()
+    x_feat     = data.x.cpu()
+    adj        = _build_adj_list(edge_index, N)
+
+    topo_rows = []
+    for pos, node_x in enumerate(test_idx):
+        true_lbl = int(y[node_x].item())
+        S1       = list(adj[node_x])
+        subsets2 = k_hop_subsets_exact(node_x, 2, edge_index, N, "cpu")
+        S2       = subsets2[2].tolist() if len(subsets2) > 2 else []
+
+        st1 = _hop_ring_stats(S1, train_set, y, true_lbl)
+        st2 = _hop_ring_stats(S2, train_set, y, true_lbl)
+
+        if S1:
+            focal   = F.normalize(x_feat[node_x].unsqueeze(0), dim=1)
+            nbr_mat = F.normalize(x_feat[S1], dim=1)
+            cos_sim = float((focal * nbr_mat).sum(dim=1).mean().item())
+        else:
+            cos_sim = float("nan")
+
+        min_d  = int(dist_any[pos].item())
+        min_ds = int(dist_same[pos].item())
+
+        topo_rows.append({
+            "node_idx":                     node_x,
+            "degree":                       int(all_deg[node_x].item()),
+            "min_dist_to_train":            min_d  if min_d  < INF else float("nan"),
+            "min_dist_to_same_class_train": min_ds if min_ds < INF else float("nan"),
+            "avg_spl_to_train":             float(avg_spl[node_x].item()),
+            "avg_spl_to_same_class_train":  float(avg_spl_same[node_x].item()),
+            "purity_1hop":                  float(purity_1[pos].item()),
+            "purity_2hop":                  float(purity_2[pos].item()),
+            "n_same_train_1hop":            st1["n_same"],
+            "n_diff_train_1hop":            st1["n_diff"],
+            "n_same_train_2hop":            st2["n_same"],
+            "n_diff_train_2hop":            st2["n_diff"],
+            "same_train_ratio_1hop":        st1["ratio_same"],
+            "diff_train_ratio_1hop":        st1["ratio_diff"],
+            "same_train_ratio_2hop":        st2["ratio_same"],
+            "diff_train_ratio_2hop":        st2["ratio_diff"],
+            "mean_cosine_sim_1hop":         cos_sim,
+            "closeness_centrality":         float(closeness[node_x].item()),
+            "eigenvector_centrality":       float(eigenvec[node_x].item()),
+        })
+        if (pos + 1) % 100 == 0 or (pos + 1) == len(test_idx):
+            log.info("  topology: %d / %d test nodes", pos + 1, len(test_idx))
+
+    topo_df = pd.DataFrame(topo_rows)
+
+    # ── load all runs and compute per-run features ────────────────────────────
+    log.info("Loading %d run checkpoints …", n_runs)
+    runs = _load_all_runs(cfg, data, n_runs, device)
+
+    run_features_list = []
+    for run_id, (pred_cpu, model) in enumerate(runs, 1):
+        log.info("Computing run %d/%d features %s…",
+                 run_id, n_runs,
+                 "(skipping influence)" if skip_influence else "(with Jacobian influence)")
+        feats = _compute_run_dependent_features(
+            data=data, model=model, pred=pred_cpu, k_hops=k_hops, device=device,
+            train_set=train_set, y=y, test_idx=test_idx,
+            skip_influence=skip_influence, skip_embeddings=skip_embeddings,
+        )
+        run_features_list.append(feats)
+
+    # ── aggregate across runs ─────────────────────────────────────────────────
+    log.info("Aggregating features across %d runs …", n_runs)
+    df = _aggregate_multi_run(topo_df, run_features_list)
+
+    log.info("Multi-run feature table: %d rows × %d columns", len(df), len(df.columns))
+    log.info("misc_freq distribution: mean=%.3f  std=%.3f  min=%.2f  max=%.2f",
+             df["misc_freq"].mean(), df["misc_freq"].std(),
+             df["misc_freq"].min(), df["misc_freq"].max())
+    log.info("Always misclassified (freq=1): %d   always correct (freq=0): %d",
+             int((df["misc_freq"] == 1.0).sum()),
+             int((df["misc_freq"] == 0.0).sum()))
+
+    # ── save CSV ──────────────────────────────────────────────────────────────
+    if save_dir:
+        sub   = os.path.join(save_dir, "node_feature_table")
+        os.makedirs(sub, exist_ok=True)
+        fname = (
+            f"{cfg['dataset']['name']}_{cfg['model']['name']}"
+            f"_node_features_multi.csv"
+        )
+        path = os.path.join(sub, fname)
+        df.to_csv(path, index=False)
+        log.info("Saved → %s", path)
+
+    # ── Ridge regression ──────────────────────────────────────────────────────
+    _run_ridge_regression(df, feature_cols=feature_cols)
+
+    # ── SHAP ─────────────────────────────────────────────────────────────────
+    if compute_shap or shap_nodes:
+        log.info("Computing SHAP values (Ridge, 5-fold OOF, LinearExplainer) …")
+        shap_values, X_raw, feat_names, base_values, shap_node_idxs = \
+            _compute_shap_values_multi(df, feature_cols=feature_cols)
+
+        if compute_shap:
+            _plot_shap_beeswarm(
+                shap_values, X_raw, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+                target_label="misclassification frequency",
+                suffix="_multi",
+            )
+            _plot_shap_bar(
+                shap_values, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+                target_label="misclassification frequency",
+                suffix="_multi",
+            )
+
+        if shap_nodes:
+            _plot_shap_waterfall(
+                shap_values, X_raw, base_values, shap_node_idxs,
+                feat_names, shap_nodes, df,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+                target_col="misc_freq",
+                suffix="_multi",
+            )
+
+    return df
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -1004,6 +1455,10 @@ def main():
                             help="Path to a saved model checkpoint.")
     ckpt_group.add_argument("--run", type=int, default=None,
                             help="Run index (1-based) whose checkpoint to load.")
+    ckpt_group.add_argument("--multi-run", action="store_true",
+                            help="Load all num_runs checkpoints, average influence features "
+                                 "across runs, and predict misclassification frequency "
+                                 "(Ridge regression). Mutually exclusive with --run/--checkpoint.")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1033,6 +1488,14 @@ def main():
     if args.run is not None and checkpoint_path is not None:
         save_dir = os.path.dirname(os.path.dirname(checkpoint_path))
         log.info("save_dir set to run directory: %s", save_dir)
+    elif args.multi_run:
+        if args.save_dir:
+            save_dir = args.save_dir
+        else:
+            run1_ckpt = _resolve_run_checkpoint(cfg, 1)
+            save_dir  = os.path.dirname(os.path.dirname(run1_ckpt)) if run1_ckpt else None
+        if save_dir:
+            log.info("save_dir set to exec directory: %s", save_dir)
     else:
         save_dir = args.save_dir
         if save_dir is None and checkpoint_path is not None:
@@ -1041,10 +1504,16 @@ def main():
 
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     shap_nodes   = [int(n.strip()) for n in args.shap_nodes.split(",")] if args.shap_nodes else None
-    run(cfg, checkpoint_path, device, save_dir, args.no_influence, args.no_embeddings,
-        feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
-        plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap,
-        shap_nodes=shap_nodes)
+
+    if args.multi_run:
+        run_multi(cfg, device, save_dir, args.no_influence, args.no_embeddings,
+                  feature_cols=feature_cols, compute_shap=args.shap,
+                  shap_nodes=shap_nodes, show=args.show)
+    else:
+        run(cfg, checkpoint_path, device, save_dir, args.no_influence, args.no_embeddings,
+            feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
+            plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap,
+            shap_nodes=shap_nodes)
 
 
 if __name__ == "__main__":
