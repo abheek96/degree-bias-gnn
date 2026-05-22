@@ -366,7 +366,6 @@ _REACH_LABELS = {
     "no_same_train":  "Train reachable, no same-class",
     "has_same_train": "Same-class train reachable",
 }
-_SPARSE_THRESHOLD = 5
 
 
 def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
@@ -379,31 +378,33 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
 
     def _prop(run, d, key):
         n = run[d]["n_misc"]
-        return run[d][key] / n if n > 0 else float("nan")
+        return run[d][key] / n if n > 0 else 0.0
 
-    no_train_med, no_same_med, has_same_med, counts, totals = [], [], [], [], []
-    for d in degrees:
-        no_train_med.append(np.nanmedian([_prop(r, d, "no_train_misc")  for r in all_run_results]))
-        no_same_med.append( np.nanmedian([_prop(r, d, "no_same_train_misc")  for r in all_run_results]))
-        has_same_med.append(np.nanmedian([_prop(r, d, "has_same_train_misc") for r in all_run_results]))
-        counts.append(int(np.median([r[d]["n_misc"]   for r in all_run_results])))
-        totals.append(int(np.median([r[d]["total"]    for r in all_run_results])))
-
-    pos     = list(range(len(degrees)))
     n_runs  = len(all_run_results)
+    n_deg   = len(degrees)
     dataset = cfg["dataset"]["name"]
     model   = cfg["model"]["name"]
     subtitle = f"{dataset} · {model} · {k_hops}-hop receptive field · {n_runs} run{'s' if n_runs > 1 else ''}"
 
+    group_centers = np.arange(n_deg)
+    bar_w = 0.8 / max(n_runs, 1)
+
     fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(_fig_w(len(degrees)), 7),
+        2, 1, figsize=(_fig_w(n_deg), 7),
         sharex=True, gridspec_kw={"height_ratios": [3, 1]},
     )
 
-    ax_top.bar(pos, no_train_med, color="#D32F2F")
-    ax_top.bar(pos, no_same_med,  bottom=no_train_med, color="#FF8F00")
-    bottom2 = [a + b for a, b in zip(no_train_med, no_same_med)]
-    ax_top.bar(pos, has_same_med, bottom=bottom2, color="#1565C0")
+    for ri, run_result in enumerate(all_run_results):
+        offset = (ri - (n_runs - 1) / 2) * bar_w
+        xpos   = group_centers + offset
+        nt = [_prop(run_result, d, "no_train_misc")       for d in degrees]
+        ns = [_prop(run_result, d, "no_same_train_misc")  for d in degrees]
+        hs = [_prop(run_result, d, "has_same_train_misc") for d in degrees]
+        bot_ns = nt
+        bot_hs = [a + b for a, b in zip(nt, ns)]
+        ax_top.bar(xpos, nt, width=bar_w, color="#D32F2F", alpha=0.8)
+        ax_top.bar(xpos, ns, width=bar_w, bottom=bot_ns, color="#FF8F00", alpha=0.8)
+        ax_top.bar(xpos, hs, width=bar_w, bottom=bot_hs, color="#1565C0", alpha=0.8)
 
     ax_top.set_ylabel("Proportion of misclassified nodes", fontsize=11)
     ax_top.set_ylim(0, 1.05)
@@ -414,13 +415,19 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
         fontsize=11,
     )
 
+    counts = [int(np.median([r[d]["n_misc"]  for r in all_run_results])) for d in degrees]
+    totals = [int(np.median([r[d]["total"]   for r in all_run_results])) for d in degrees]
     w = 0.35
-    ax_bot.bar([p - w / 2 for p in pos], counts,  width=w, color="lightgrey", alpha=0.9, label="# misc")
-    ax_bot.bar([p + w / 2 for p in pos], totals,  width=w, color="steelblue",  alpha=0.5, label="# total")
+    ax_bot.bar([p - w / 2 for p in group_centers], totals, width=w, color="steelblue",  alpha=0.5, label="# total")
+    ax_bot.bar([p + w / 2 for p in group_centers], counts, width=w, color="lightgrey", alpha=0.9, label="# misc (median)")
     ax_bot.set_ylabel("# nodes", fontsize=9, color="grey")
     ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_bot.legend(fontsize=8, framealpha=0.8)
-    _degree_axis(ax_bot, pos, degrees)
+    bot_legend_handles = [
+        mpatches.Patch(color="steelblue", alpha=0.5, label="# total"),
+        mpatches.Patch(color="lightgrey", alpha=0.9, label="# misc (median)"),
+    ]
+    ax_bot.legend(handles=bot_legend_handles, fontsize=8, framealpha=0.8)
+    _degree_axis(ax_bot, group_centers, degrees)
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
     legend_handles = [
@@ -428,109 +435,14 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
         mpatches.Patch(color="#FF8F00", label=_REACH_LABELS["no_same_train"]),
         mpatches.Patch(color="#1565C0", label=_REACH_LABELS["has_same_train"]),
     ]
-    ax_bot.legend(handles=legend_handles, loc="upper center",
-                  bbox_to_anchor=(0.5, -0.42), ncol=3,
-                  fontsize=9, framealpha=0.9, borderaxespad=0)
+    ax_top.legend(handles=legend_handles, loc="upper right",
+                  fontsize=9, framealpha=0.9)
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.14)
     _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree.png", show)
 
 
 
-def _plot_misc_rate_by_bucket(all_run_results, k_hops, cfg, save_dir, show):
-    """Per-degree misclassification rate for each reachability bucket.
-
-    Three lines with IQR bands. Dashed where median bucket count < _SPARSE_THRESHOLD.
-    """
-    degrees = sorted(all_run_results[0].keys())
-    if not degrees:
-        return
-
-    n_runs  = len(all_run_results)
-    dataset = cfg["dataset"]["name"]
-    model   = cfg["model"]["name"]
-    subtitle = (f"{dataset} · {model} · {k_hops}-hop receptive field  ·  "
-                f"median ± IQR, {n_runs} run{'s' if n_runs > 1 else ''}")
-
-    pos         = list(range(len(degrees)))
-    bucket_keys = ["no_train", "no_same_train", "has_same_train"]
-    misc_keys   = ["no_train_misc", "no_same_train_misc", "has_same_train_misc"]
-
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(_fig_w(len(degrees)), 7),
-        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
-    )
-
-    legend_handles = []
-    for bkey, mkey in zip(bucket_keys, misc_keys):
-        color = _REACH_COLORS[bkey]
-        label = _REACH_LABELS[bkey]
-        med_rates, q1_rates, q3_rates, med_counts = [], [], [], []
-        for d in degrees:
-            rates = [r[d][mkey] / r[d][bkey] for r in all_run_results if r[d][bkey] > 0]
-            if rates:
-                med_rates.append(float(np.median(rates)))
-                q1_rates.append(float(np.percentile(rates, 25)))
-                q3_rates.append(float(np.percentile(rates, 75)))
-            else:
-                med_rates.append(float("nan"))
-                q1_rates.append(float("nan"))
-                q3_rates.append(float("nan"))
-            med_counts.append(float(np.median([r[d][bkey] for r in all_run_results])))
-
-        med_rates  = np.array(med_rates)
-        q1_rates   = np.array(q1_rates)
-        q3_rates   = np.array(q3_rates)
-        med_counts = np.array(med_counts)
-        dense      = med_counts >= _SPARSE_THRESHOLD
-
-        for i in range(len(pos)):
-            if np.isnan(med_rates[i]):
-                continue
-            ls    = "-"    if dense[i] else "--"
-            alpha = 1.0    if dense[i] else 0.45
-            if i + 1 < len(pos) and not np.isnan(med_rates[i + 1]):
-                ax_top.plot([pos[i], pos[i + 1]], [med_rates[i], med_rates[i + 1]],
-                            color=color, linewidth=1.8, linestyle=ls, alpha=alpha)
-            ax_top.scatter([pos[i]], [med_rates[i]], color=color, s=25,
-                           zorder=5, alpha=alpha)
-        for i in range(len(pos)):
-            if dense[i] and not np.isnan(q1_rates[i]):
-                ax_top.fill_between([pos[i] - 0.3, pos[i] + 0.3],
-                                    [q1_rates[i]] * 2, [q3_rates[i]] * 2,
-                                    color=color, alpha=0.12)
-        legend_handles.append(
-            plt.Line2D([0], [0], color=color, linewidth=1.8, marker="o",
-                       markersize=4, label=label)
-        )
-
-    legend_handles.append(
-        plt.Line2D([0], [0], color="grey", linewidth=1.2, linestyle="--",
-                   label=f"dashed = bucket n < {_SPARSE_THRESHOLD}")
-    )
-
-    ax_top.set_ylabel("Misclassification rate", fontsize=11)
-    ax_top.set_ylim(-0.05, 1.15)
-    ax_top.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-    ax_top.set_title(
-        f"Misclassification rate per reachability bucket\n{subtitle}",
-        fontsize=11,
-    )
-
-    total_counts = [all_run_results[0][d]["total"] for d in degrees]
-    ax_bot.bar(pos, total_counts, color="lightgrey", alpha=0.7, width=0.6)
-    ax_bot.set_ylabel("# test nodes", fontsize=9, color="grey")
-    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
-    _degree_axis(ax_bot, pos, degrees)
-    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-
-    ax_bot.legend(handles=legend_handles, loc="upper center",
-                  bbox_to_anchor=(0.5, -0.42), ncol=2,
-                  fontsize=8, framealpha=0.88, borderaxespad=0)
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=0.14)
-    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_by_bucket_and_degree.png", show)
 
 
 def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show):
@@ -569,7 +481,7 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show):
                 fontsize=9, fontweight="bold")
 
     ax.set_xticks(xpos)
-    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=9,
+    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=7,
                        rotation=15, ha="right")
     ax.set_ylabel("Misclassification rate", fontsize=11)
     ax.set_ylim(0, 1.15)
@@ -648,7 +560,6 @@ def _run_reachability(cfg, deg_min, deg_max, device, all_degrees=False,
 
         reach_dir = _subdir(save_dir, "reachability")
         _plot_reachability_by_degree(all_run_results, k_hops, cfg, reach_dir, show)
-        _plot_misc_rate_by_bucket(all_run_results, k_hops, cfg, reach_dir, show)
         _plot_misc_rate_marginal(all_run_results, k_hops, cfg, reach_dir, show)
     else:
         _, pred, _ = _load_data_and_train(cfg, device, run_id=run_ids[0])
