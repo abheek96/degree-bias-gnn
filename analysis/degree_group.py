@@ -439,7 +439,7 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
                   fontsize=9, framealpha=0.9)
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.14)
-    _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree.png", show)
+    _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree_{n_runs}runs.png", show)
 
 
 
@@ -494,7 +494,7 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show):
         fontsize=11,
     )
     fig.tight_layout()
-    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal.png", show)
+    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal_{n_runs}runs.png", show)
 
 
 def _load_data_and_train(cfg, device, run_id=None):
