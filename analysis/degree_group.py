@@ -368,7 +368,7 @@ _REACH_LABELS = {
 }
 
 
-def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
+def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, run_id=None):
     degrees = sorted(all_run_results[0].keys())
     degrees = [d for d in degrees
                if any(r[d]["n_misc"] > 0 for r in all_run_results)]
@@ -439,13 +439,14 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show):
                   fontsize=9, framealpha=0.9)
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.14)
-    _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree_{n_runs}runs.png", show)
+    run_tag = f"_run{run_id:02d}" if run_id is not None else f"_{n_runs}runs"
+    _save(fig, save_dir, f"{dataset}_{model}_reachability_by_degree{run_tag}.png", show)
 
 
 
 
 
-def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show):
+def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show, run_id=None):
     """Overall misclassification rate per bucket, collapsed across degree.
 
     Shows median ± IQR across runs.
@@ -494,7 +495,8 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show):
         fontsize=11,
     )
     fig.tight_layout()
-    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal_{n_runs}runs.png", show)
+    run_tag = f"_run{run_id:02d}" if run_id is not None else f"_{n_runs}runs"
+    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal{run_tag}.png", show)
 
 
 def _load_data_and_train(cfg, device, run_id=None):
@@ -559,8 +561,9 @@ def _run_reachability(cfg, deg_min, deg_max, device, all_degrees=False,
                 _log_results(all_run_results[0][d], str(d), k_hops)
 
         reach_dir = _subdir(save_dir, "reachability")
-        _plot_reachability_by_degree(all_run_results, k_hops, cfg, reach_dir, show)
-        _plot_misc_rate_marginal(all_run_results, k_hops, cfg, reach_dir, show)
+        for run_id, run_result in zip(run_ids, all_run_results):
+            _plot_reachability_by_degree([run_result], k_hops, cfg, reach_dir, show, run_id=run_id)
+            _plot_misc_rate_marginal([run_result], k_hops, cfg, reach_dir, show, run_id=run_id)
     else:
         _, pred, _ = _load_data_and_train(cfg, device, run_id=run_ids[0])
         results = _compute_reachability(
