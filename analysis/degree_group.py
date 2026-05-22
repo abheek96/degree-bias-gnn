@@ -648,7 +648,7 @@ def _run_reachability(cfg, deg_min, deg_max, device, all_degrees=False,
 
         reach_dir = _subdir(save_dir, "reachability")
         _plot_reachability_by_degree(all_run_results, k_hops, cfg, reach_dir, show)
-_plot_misc_rate_by_bucket(all_run_results, k_hops, cfg, reach_dir, show)
+        _plot_misc_rate_by_bucket(all_run_results, k_hops, cfg, reach_dir, show)
         _plot_misc_rate_marginal(all_run_results, k_hops, cfg, reach_dir, show)
     else:
         _, pred, _ = _load_data_and_train(cfg, device, run_id=run_ids[0])
