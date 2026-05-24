@@ -217,6 +217,48 @@ _MULTI_EMB_COLS = [
 
 _FEATURE_COLS_MULTI = _TOPO_COLS + _MULTI_INFL_COLS + _MULTI_EMB_COLS + ["std_misc_freq"]
 
+# Feature groups for the paper-facing RFA/RFR plot (6 logical categories).
+# Each value lists the column names present in single-run mode; multi-run mode
+# uses the same groups but with avg_* equivalents for influence/embedding cols.
+_FEATURE_GROUP_MAP: dict[str, list[str]] = {
+    "degree": ["degree"],
+    "purity": ["purity_1hop", "purity_2hop", "mean_cosine_sim_1hop"],
+    "training_proximity": [
+        "min_dist_to_train", "min_dist_to_same_class_train",
+        "avg_spl_to_train", "avg_spl_to_same_class_train",
+        "n_same_train_1hop", "n_diff_train_1hop",
+        "n_same_train_2hop", "n_diff_train_2hop",
+        "same_train_ratio_1hop", "diff_train_ratio_1hop",
+        "same_train_ratio_2hop", "diff_train_ratio_2hop",
+    ],
+    "centrality": ["closeness_centrality", "eigenvector_centrality"],
+    "influence": [
+        "total_infl_same_1hop", "total_infl_diff_1hop",
+        "total_infl_same_2hop", "total_infl_diff_2hop",
+        "same_train_infl_frac_1hop", "diff_train_infl_frac_1hop",
+        "same_train_infl_frac_2hop", "diff_train_infl_frac_2hop",
+    ],
+    "embedding": ["emb_sim_same_1hop", "emb_sim_diff_1hop", "emb_purity_delta"],
+}
+
+_FEATURE_GROUP_MAP_MULTI: dict[str, list[str]] = {
+    **{k: v for k, v in _FEATURE_GROUP_MAP.items()
+       if k not in ("influence", "embedding")},
+    "influence": _MULTI_INFL_COLS,
+    "embedding": _MULTI_EMB_COLS + ["std_misc_freq"],
+}
+
+_GROUP_ORDER = ["degree", "purity", "training_proximity", "centrality", "influence", "embedding"]
+
+_GROUP_DISPLAY_NAMES = {
+    "degree":             "Degree",
+    "purity":             "Purity",
+    "training_proximity": "Training proximity",
+    "centrality":         "Centrality",
+    "influence":          "Influence (Jacobian)",
+    "embedding":          "Embedding",
+}
+
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -721,6 +763,177 @@ def _run_ridge_regression(df: pd.DataFrame, feature_cols=None):
     return spear_r, r2, rmse, coef_df, oof_preds, y_freq
 
 
+# ── recursive feature selection ────────────────────────────────────────────────
+
+def _sequential_forward_selection(df, candidate_cols, metric_fn):
+    """Greedy forward selection over candidate_cols.
+
+    Returns list of (step, feature_added, metric_after_add).
+    metric_fn(df, subset) → float (higher is better).
+    """
+    selected, remaining = [], list(candidate_cols)
+    steps = []
+    for _ in range(len(candidate_cols)):
+        best_col, best_score = None, -np.inf
+        for col in remaining:
+            score = metric_fn(df, selected + [col])
+            if score > best_score:
+                best_score, best_col = score, col
+        selected.append(best_col)
+        remaining.remove(best_col)
+        steps.append((len(selected), best_col, best_score))
+    return steps
+
+
+def _sequential_backward_elimination(df, candidate_cols, metric_fn):
+    """Greedy backward elimination over candidate_cols.
+
+    Returns list of (step, feature_removed, metric_after_removal) where step is
+    the number of features remaining after the removal.  The first entry has
+    step = N (full model score, feature_removed = None).  Subsequent entries
+    decrease to step = 1 (single feature remaining).
+    """
+    remaining = list(candidate_cols)
+    steps = [(len(remaining), None, metric_fn(df, remaining))]
+    while len(remaining) > 1:
+        best_col, best_score = None, -np.inf
+        for col in remaining:
+            subset = [c for c in remaining if c != col]
+            score = metric_fn(df, subset)
+            if score > best_score:
+                best_score, best_col = score, col
+        remaining.remove(best_col)
+        steps.append((len(remaining), best_col, best_score))
+    return steps
+
+
+def _expand_groups(group_names, group_map, df):
+    """Expand a list of group names to column names present in df."""
+    cols = []
+    for g in group_names:
+        cols.extend(c for c in group_map.get(g, []) if c in df.columns)
+    return cols
+
+
+def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name):
+    """Run RFA and RFR at both individual-feature and group granularities.
+
+    Saves two CSVs and one 2-panel PNG.
+    """
+    import matplotlib.pyplot as plt
+
+    metric_label = "Spearman r" if is_multi_run else "PR-AUC"
+    suffix       = "multi" if is_multi_run else "single"
+    group_map    = _FEATURE_GROUP_MAP_MULTI if is_multi_run else _FEATURE_GROUP_MAP
+
+    if is_multi_run:
+        def metric_fn(d, cols):
+            if not cols:
+                return -np.inf
+            spear_r, *_ = _run_ridge_regression(d, feature_cols=cols)
+            return float(spear_r)
+    else:
+        def metric_fn(d, cols):
+            if not cols:
+                return -np.inf
+            _, _, pr_auc, *_ = _run_logistic_regression(d, feature_cols=cols)
+            return float(pr_auc)
+
+    # ── individual features ───────────────────────────────────────────────────
+    all_ind_cols = _FEATURE_COLS_MULTI if is_multi_run else _FEATURE_COLS
+    ind_cols = [c for c in all_ind_cols if c in df.columns and df[c].notna().any()]
+
+    log.info("RFA/RFR individual features (%d cols) …", len(ind_cols))
+    rfa_ind = _sequential_forward_selection(df, ind_cols, metric_fn)
+    rfr_ind = _sequential_backward_elimination(df, ind_cols, metric_fn)
+
+    rows_ind = (
+        [{"step": s, "feature": f, metric_label: m, "direction": "RFA"} for s, f, m in rfa_ind] +
+        [{"step": s, "feature": f, metric_label: m, "direction": "RFR"} for s, f, m in rfr_ind]
+    )
+    df_ind = pd.DataFrame(rows_ind)
+
+    # ── group features ────────────────────────────────────────────────────────
+    avail_groups = [
+        g for g in _GROUP_ORDER
+        if any(c in df.columns and df[c].notna().any()
+               for c in group_map.get(g, []))
+    ]
+    skipped = [g for g in _GROUP_ORDER if g not in avail_groups]
+    if skipped:
+        log.warning("Skipping groups (no data): %s", skipped)
+
+    def group_metric_fn(d, group_names):
+        flat = _expand_groups(group_names, group_map, d)
+        return metric_fn(d, flat) if flat else -np.inf
+
+    log.info("RFA/RFR feature groups (%d groups) …", len(avail_groups))
+    rfa_grp = _sequential_forward_selection(df, avail_groups, group_metric_fn)
+    rfr_grp = _sequential_backward_elimination(df, avail_groups, group_metric_fn)
+
+    rows_grp = (
+        [{"step": s, "group": g, metric_label: m, "direction": "RFA"} for s, g, m in rfa_grp] +
+        [{"step": s, "group": g, metric_label: m, "direction": "RFR"} for s, g, m in rfr_grp]
+    )
+    df_grp = pd.DataFrame(rows_grp)
+
+    # ── save CSVs ─────────────────────────────────────────────────────────────
+    if save_dir:
+        sub = os.path.join(save_dir, "node_feature_table")
+        os.makedirs(sub, exist_ok=True)
+        df_ind.to_csv(os.path.join(sub, f"feature_selection_individual_{suffix}.csv"), index=False)
+        df_grp.to_csv(os.path.join(sub, f"feature_selection_group_{suffix}.csv"), index=False)
+        log.info("Saved feature-selection CSVs → %s", sub)
+
+    # ── full-model score (all available features) ─────────────────────────────
+    full_score = metric_fn(df, ind_cols)
+    log.info("Full-model %s = %.4f", metric_label, full_score)
+
+    # ── plot ──────────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+
+    for ax, df_sub, x_col, title, x_labels in [
+        (axes[0], df_grp, "group", "Group-level RFA / RFR",
+         [_GROUP_DISPLAY_NAMES.get(g, g) for g in avail_groups]),
+        (axes[1], df_ind, "feature", "Individual-feature RFA / RFR", None),
+    ]:
+        for direction, color, ls in [("RFA", "#1565C0", "-"), ("RFR", "#C62828", "--")]:
+            sub = df_sub[df_sub["direction"] == direction].sort_values("step")
+            ax.plot(sub["step"], sub[metric_label], color=color, ls=ls, lw=1.8,
+                    marker="o", markersize=4, label=direction)
+
+        ax.axhline(full_score, color="#555", ls=":", lw=1.0, label=f"Full model ({full_score:.3f})")
+        ax.set_xlabel("# groups" if x_col == "group" else "# features")
+        ax.set_ylabel(metric_label)
+        ax.set_title(title)
+        ax.legend(fontsize=8)
+
+        if x_col == "group" and x_labels:
+            n_grp = len(avail_groups)
+            ax.set_xticks(range(1, n_grp + 1))
+            rfa_sub = df_sub[df_sub["direction"] == "RFA"].sort_values("step")
+            ax.set_xticklabels(
+                [_GROUP_DISPLAY_NAMES.get(g, g) for g in rfa_sub["group"]],
+                rotation=30, ha="right", fontsize=7,
+            )
+
+    fig.suptitle(f"{dataset} · {model_name} — feature selection ({suffix})", fontsize=10)
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "node_feature_table")
+        path = os.path.join(sub, f"feature_selection_{suffix}.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return df_ind, df_grp
+
+
 # ── SHAP values ───────────────────────────────────────────────────────────────
 
 def _compute_shap_values(df: pd.DataFrame, feature_cols=None):
@@ -1118,7 +1331,7 @@ def _plot_roc_pr(curves, baseline_rate, dataset, model_name, save_dir, show):
 
 def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=False,
         feature_cols=None, univariate_auroc=False, plot_roc=False, show=False,
-        compute_shap=False, shap_nodes=None):
+        compute_shap=False, shap_nodes=None, feature_selection=False):
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     data = load_or_create_split(
         cfg["dataset"], cfg.get("split", "random"), cfg.get("seed", 42), cache_dir,
@@ -1224,6 +1437,11 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                      cfg["dataset"]["name"], cfg["model"]["name"],
                      save_dir, show)
 
+    if feature_selection:
+        log.info("Running recursive feature addition/removal (single-run) …")
+        _run_feature_selection(df, is_multi_run=False, save_dir=save_dir, show=show,
+                               dataset=cfg["dataset"]["name"], model_name=cfg["model"]["name"])
+
     if compute_shap or shap_nodes:
         log.info("Computing SHAP values (5-fold OOF, LinearExplainer) …")
         shap_values, X_raw, feat_names, base_values, shap_node_idxs = \
@@ -1252,7 +1470,8 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
 
 
 def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
-              feature_cols=None, compute_shap=False, shap_nodes=None, show=False):
+              feature_cols=None, compute_shap=False, shap_nodes=None, show=False,
+              feature_selection=False):
     """Multi-run pipeline: average influence across N runs and predict misc_freq.
 
     Loads all num_runs checkpoints, computes per-run Jacobian influence and
@@ -1382,6 +1601,12 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
     # ── Ridge regression ──────────────────────────────────────────────────────
     _run_ridge_regression(df, feature_cols=feature_cols)
 
+    # ── recursive feature selection ───────────────────────────────────────────
+    if feature_selection:
+        log.info("Running recursive feature addition/removal (multi-run) …")
+        _run_feature_selection(df, is_multi_run=True, save_dir=save_dir, show=show,
+                               dataset=cfg["dataset"]["name"], model_name=cfg["model"]["name"])
+
     # ── SHAP ─────────────────────────────────────────────────────────────────
     if compute_shap or shap_nodes:
         log.info("Computing SHAP values (Ridge, 5-fold OOF, LinearExplainer) …")
@@ -1449,6 +1674,9 @@ def main():
     parser.add_argument("--shap-nodes", default=None,
                         help="Comma-separated graph node indices for per-node SHAP waterfall plots "
                              "(e.g. '1362,42'). Implies SHAP computation.")
+    parser.add_argument("--feature-selection", action="store_true",
+                        help="Run recursive feature addition/removal (RFA/RFR) and plot "
+                             "PR-AUC (single-run) or Spearman r (multi-run) vs. k curve.")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,
@@ -1508,12 +1736,13 @@ def main():
     if args.multi_run:
         run_multi(cfg, device, save_dir, args.no_influence, args.no_embeddings,
                   feature_cols=feature_cols, compute_shap=args.shap,
-                  shap_nodes=shap_nodes, show=args.show)
+                  shap_nodes=shap_nodes, show=args.show,
+                  feature_selection=args.feature_selection)
     else:
         run(cfg, checkpoint_path, device, save_dir, args.no_influence, args.no_embeddings,
             feature_cols=feature_cols, univariate_auroc=args.univariate_auroc,
             plot_roc=args.plot_roc, show=args.show, compute_shap=args.shap,
-            shap_nodes=shap_nodes)
+            shap_nodes=shap_nodes, feature_selection=args.feature_selection)
 
 
 if __name__ == "__main__":
