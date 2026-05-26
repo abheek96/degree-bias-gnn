@@ -217,7 +217,7 @@ _MULTI_EMB_COLS = [
 
 _FEATURE_COLS_MULTI = _TOPO_COLS + _MULTI_INFL_COLS + _MULTI_EMB_COLS + ["std_misc_freq"]
 
-# Feature groups for the paper-facing RFA/RFR plot (6 logical categories).
+# Feature groups for subset-comparison plot (6 logical categories).
 # Each value lists the column names present in single-run mode; multi-run mode
 # uses the same groups but with avg_* equivalents for influence/embedding cols.
 _FEATURE_GROUP_MAP: dict[str, list[str]] = {
@@ -258,6 +258,25 @@ _GROUP_DISPLAY_NAMES = {
     "influence":          "Influence (Jacobian)",
     "embedding":          "Embedding",
 }
+
+# Hardcoded subset specs for the feature subset comparison plot.
+# Each entry is (display_label, list_of_group_keys).  Groups whose columns are
+# absent at runtime (e.g. --no-influence) are silently skipped; specs that
+# expand to an empty column set are dropped.  "Full model" is added dynamically
+# as the union of all available groups so it always reflects the actual run.
+_SUBSET_SPECS: list[tuple[str, list[str]]] = [
+    # ── single groups ─────────────────────────────────────────────────────────
+    ("Degree",                         ["degree"]),
+    ("Purity",                         ["purity"]),
+    ("Training proximity",             ["training_proximity"]),
+    ("Centrality",                     ["centrality"]),
+    ("Influence",                      ["influence"]),
+    ("Embedding",                      ["embedding"]),
+    # ── combinations ─────────────────────────────────────────────────────────
+    ("Degree + Purity",                ["degree", "purity"]),
+    ("Degree + Training proximity",    ["degree", "training_proximity"]),
+    ("All structural",                 ["degree", "purity", "training_proximity", "centrality"]),
+]
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -763,29 +782,7 @@ def _run_ridge_regression(df: pd.DataFrame, feature_cols=None):
     return spear_r, r2, rmse, coef_df, oof_preds, y_freq
 
 
-# ── recursive feature selection ────────────────────────────────────────────────
-
-def _sequential_backward_elimination(df, candidate_cols, metric_fn):
-    """Greedy backward elimination over candidate_cols.
-
-    Returns list of (step, feature_removed, metric_after_removal) where step is
-    the number of features remaining after the removal.  The first entry has
-    step = N (full model score, feature_removed = None).  Subsequent entries
-    decrease to step = 1 (single feature remaining).
-    """
-    remaining = list(candidate_cols)
-    steps = [(len(remaining), None, metric_fn(df, remaining))]
-    while len(remaining) > 1:
-        best_col, best_score = None, -np.inf
-        for col in remaining:
-            subset = [c for c in remaining if c != col]
-            score = metric_fn(df, subset)
-            if score > best_score:
-                best_score, best_col = score, col
-        remaining.remove(best_col)
-        steps.append((len(remaining), best_col, best_score))
-    return steps
-
+# ── feature subset comparison ─────────────────────────────────────────────────
 
 def _expand_groups(group_names, group_map, df):
     """Expand a list of group names to column names present in df."""
@@ -795,104 +792,123 @@ def _expand_groups(group_names, group_map, df):
     return cols
 
 
-def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name):
-    """Run RFR at both individual-feature and group granularities.
+def _run_subset_comparison(df, is_multi_run, save_dir, show, dataset, model_name):
+    """Evaluate each entry in _SUBSET_SPECS plus a dynamic Full model bar.
 
-    Saves two CSVs and one 2-panel PNG.
+    Saves one CSV and one horizontal bar chart PNG.
     """
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 
     metric_label = "Spearman r" if is_multi_run else "PR-AUC"
     suffix       = "multi" if is_multi_run else "single"
     group_map    = _FEATURE_GROUP_MAP_MULTI if is_multi_run else _FEATURE_GROUP_MAP
 
     if is_multi_run:
-        def metric_fn(d, cols):
-            if not cols:
-                return -np.inf
-            spear_r, *_ = _run_ridge_regression(d, feature_cols=cols)
+        def metric_fn(cols):
+            spear_r, *_ = _run_ridge_regression(df, feature_cols=cols)
             return float(spear_r)
     else:
-        def metric_fn(d, cols):
-            if not cols:
-                return -np.inf
-            _, _, pr_auc, *_ = _run_logistic_regression(d, feature_cols=cols)
+        def metric_fn(cols):
+            _, _, pr_auc, *_ = _run_logistic_regression(df, feature_cols=cols)
             return float(pr_auc)
 
-    # ── individual features ───────────────────────────────────────────────────
-    all_ind_cols = _FEATURE_COLS_MULTI if is_multi_run else _FEATURE_COLS
-    ind_cols = [c for c in all_ind_cols if c in df.columns and df[c].notna().any()]
+    def _eval(label, groups):
+        cols = [c for c in _expand_groups(groups, group_map, df) if df[c].notna().any()]
+        if not cols:
+            log.info("Skipping subset '%s' (no available columns)", label)
+            return None
+        score = metric_fn(cols)
+        log.info("  %-35s  %s=%.4f", label, metric_label, score)
+        return {"label": label, metric_label: score, "n_groups": len(groups)}
 
-    log.info("RFR individual features (%d cols) …", len(ind_cols))
-    rfr_ind = _sequential_backward_elimination(df, ind_cols, metric_fn)
+    results = []
+    for label, groups in _SUBSET_SPECS:
+        row = _eval(label, groups)
+        if row is not None:
+            results.append(row)
 
-    rows_ind = [{"step": s, "feature": f, metric_label: m} for s, f, m in rfr_ind]
-    df_ind = pd.DataFrame(rows_ind)
-
-    # ── group features ────────────────────────────────────────────────────────
+    # Full model = union of all available groups (added dynamically)
     avail_groups = [
         g for g in _GROUP_ORDER
-        if any(c in df.columns and df[c].notna().any()
-               for c in group_map.get(g, []))
+        if any(c in df.columns and df[c].notna().any() for c in group_map.get(g, []))
     ]
-    skipped = [g for g in _GROUP_ORDER if g not in avail_groups]
-    if skipped:
-        log.warning("Skipping groups (no data): %s", skipped)
+    row = _eval("Full model", avail_groups)
+    if row is not None:
+        results.append(row)
 
-    def group_metric_fn(d, group_names):
-        flat = _expand_groups(group_names, group_map, d)
-        return metric_fn(d, flat) if flat else -np.inf
+    if not results:
+        log.warning("No subsets could be evaluated.")
+        return pd.DataFrame()
 
-    log.info("RFR feature groups (%d groups) …", len(avail_groups))
-    rfr_grp = _sequential_backward_elimination(df, avail_groups, group_metric_fn)
+    df_res = (
+        pd.DataFrame(results)
+        .sort_values(metric_label, ascending=True)
+        .reset_index(drop=True)
+    )
 
-    rows_grp = [{"step": s, "group": g, metric_label: m} for s, g, m in rfr_grp]
-    df_grp = pd.DataFrame(rows_grp)
-
-    # ── save CSVs ─────────────────────────────────────────────────────────────
+    # ── save CSV ──────────────────────────────────────────────────────────────
     if save_dir:
         sub = os.path.join(save_dir, "node_feature_table")
         os.makedirs(sub, exist_ok=True)
-        df_ind.to_csv(os.path.join(sub, f"rfr_individual_{suffix}.csv"), index=False)
-        df_grp.to_csv(os.path.join(sub, f"rfr_group_{suffix}.csv"), index=False)
-        log.info("Saved feature-selection CSVs → %s", sub)
-
-    # ── full-model score (all available features) ─────────────────────────────
-    full_score = metric_fn(df, ind_cols)
-    log.info("Full-model %s = %.4f", metric_label, full_score)
+        path = os.path.join(sub, f"subset_comparison_{suffix}.csv")
+        df_res.to_csv(path, index=False)
+        log.info("Saved subset comparison CSV → %s", path)
 
     # ── plot ──────────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    _C_SINGLE = "#4878CF"   # individual feature group
+    _C_COMBO  = "#EE854A"   # multi-group combination
+    _C_FULL   = "#333333"   # full model
 
-    for ax, df_sub, x_col, title in [
-        (axes[0], df_grp, "group", "Group-level RFR"),
-        (axes[1], df_ind, "feature", "Individual-feature RFR"),
-    ]:
-        sub = df_sub.sort_values("step")
-        ax.plot(sub["step"], sub[metric_label], color="#C62828", ls="--", lw=1.8,
-                marker="o", markersize=4, label="RFR")
+    def _bar_color(row):
+        if row["label"] == "Full model":
+            return _C_FULL
+        return _C_SINGLE if row["n_groups"] == 1 else _C_COMBO
 
-        ax.axhline(full_score, color="#555", ls=":", lw=1.0, label=f"Full model ({full_score:.3f})")
-        ax.set_xlabel("# groups remaining" if x_col == "group" else "# features remaining")
-        ax.set_ylabel(metric_label)
-        ax.set_title(title)
-        ax.legend(fontsize=8)
+    colors = [_bar_color(row) for _, row in df_res.iterrows()]
 
-        if x_col == "group":
-            steps = sub["step"].tolist()
-            ax.set_xticks(steps)
-            labels = []
-            for _, row in sub.iterrows():
-                g = row["group"]
-                labels.append(_GROUP_DISPLAY_NAMES.get(g, g) if pd.notna(g) and g is not None else "Full")
-            ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=7)
+    fig, ax = plt.subplots(figsize=(7, 0.55 * len(df_res) + 1.0))
+    bars = ax.barh(df_res["label"], df_res[metric_label], color=colors, height=0.6, zorder=2)
 
-    fig.suptitle(f"{dataset} · {model_name} — RFR feature selection ({suffix})", fontsize=10)
+    # Score labels at the end of each bar
+    x_max = df_res[metric_label].max()
+    x_min = df_res[metric_label].min()
+    for bar, score in zip(bars, df_res[metric_label]):
+        ax.text(
+            bar.get_width() + (x_max - x_min) * 0.015,
+            bar.get_y() + bar.get_height() / 2,
+            f"{score:.3f}", va="center", ha="left", fontsize=7.5,
+        )
+
+    # Degree reference line
+    degree_rows = df_res[df_res["label"] == "Degree"]
+    if not degree_rows.empty:
+        deg_score = float(degree_rows[metric_label].iloc[0])
+        ax.axvline(deg_score, color="#D65F5F", ls="--", lw=1.2, zorder=3)
+        ax.text(
+            deg_score, len(df_res) - 0.1,
+            f" degree\n ({deg_score:.3f})",
+            color="#D65F5F", fontsize=7.5, va="top",
+        )
+
+    # Legend
+    legend_handles = [
+        Patch(facecolor=_C_SINGLE, label="Single group"),
+        Patch(facecolor=_C_COMBO,  label="Combination"),
+        Patch(facecolor=_C_FULL,   label="Full model"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8, loc="lower right")
+
+    ax.set_xlabel(metric_label)
+    ax.set_xlim(max(0.0, x_min - (x_max - x_min) * 0.05), x_max + (x_max - x_min) * 0.18)
+    ax.set_title(f"{dataset} · {model_name} — feature subset comparison ({suffix})", fontsize=10)
+    ax.grid(axis="x", lw=0.5, alpha=0.4, zorder=1)
+    ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
 
     if save_dir:
         sub  = os.path.join(save_dir, "node_feature_table")
-        path = os.path.join(sub, f"rfr_{suffix}.png")
+        path = os.path.join(sub, f"subset_comparison_{suffix}.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
         log.info("Saved → %s", path)
 
@@ -901,7 +917,7 @@ def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name
     else:
         plt.close(fig)
 
-    return df_ind, df_grp
+    return df_res
 
 
 # ── SHAP values ───────────────────────────────────────────────────────────────
@@ -1409,7 +1425,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
 
     if feature_selection:
         log.info("Running recursive feature addition/removal (single-run) …")
-        _run_feature_selection(df, is_multi_run=False, save_dir=save_dir, show=show,
+        _run_subset_comparison(df, is_multi_run=False, save_dir=save_dir, show=show,
                                dataset=cfg["dataset"]["name"], model_name=cfg["model"]["name"])
 
     if compute_shap or shap_nodes:
@@ -1574,7 +1590,7 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
     # ── recursive feature selection ───────────────────────────────────────────
     if feature_selection:
         log.info("Running recursive feature addition/removal (multi-run) …")
-        _run_feature_selection(df, is_multi_run=True, save_dir=save_dir, show=show,
+        _run_subset_comparison(df, is_multi_run=True, save_dir=save_dir, show=show,
                                dataset=cfg["dataset"]["name"], model_name=cfg["model"]["name"])
 
     # ── SHAP ─────────────────────────────────────────────────────────────────
