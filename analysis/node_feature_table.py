@@ -765,26 +765,6 @@ def _run_ridge_regression(df: pd.DataFrame, feature_cols=None):
 
 # ── recursive feature selection ────────────────────────────────────────────────
 
-def _sequential_forward_selection(df, candidate_cols, metric_fn):
-    """Greedy forward selection over candidate_cols.
-
-    Returns list of (step, feature_added, metric_after_add).
-    metric_fn(df, subset) → float (higher is better).
-    """
-    selected, remaining = [], list(candidate_cols)
-    steps = []
-    for _ in range(len(candidate_cols)):
-        best_col, best_score = None, -np.inf
-        for col in remaining:
-            score = metric_fn(df, selected + [col])
-            if score > best_score:
-                best_score, best_col = score, col
-        selected.append(best_col)
-        remaining.remove(best_col)
-        steps.append((len(selected), best_col, best_score))
-    return steps
-
-
 def _sequential_backward_elimination(df, candidate_cols, metric_fn):
     """Greedy backward elimination over candidate_cols.
 
@@ -816,7 +796,7 @@ def _expand_groups(group_names, group_map, df):
 
 
 def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name):
-    """Run RFA and RFR at both individual-feature and group granularities.
+    """Run RFR at both individual-feature and group granularities.
 
     Saves two CSVs and one 2-panel PNG.
     """
@@ -843,14 +823,10 @@ def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name
     all_ind_cols = _FEATURE_COLS_MULTI if is_multi_run else _FEATURE_COLS
     ind_cols = [c for c in all_ind_cols if c in df.columns and df[c].notna().any()]
 
-    log.info("RFA/RFR individual features (%d cols) …", len(ind_cols))
-    rfa_ind = _sequential_forward_selection(df, ind_cols, metric_fn)
+    log.info("RFR individual features (%d cols) …", len(ind_cols))
     rfr_ind = _sequential_backward_elimination(df, ind_cols, metric_fn)
 
-    rows_ind = (
-        [{"step": s, "feature": f, metric_label: m, "direction": "RFA"} for s, f, m in rfa_ind] +
-        [{"step": s, "feature": f, metric_label: m, "direction": "RFR"} for s, f, m in rfr_ind]
-    )
+    rows_ind = [{"step": s, "feature": f, metric_label: m} for s, f, m in rfr_ind]
     df_ind = pd.DataFrame(rows_ind)
 
     # ── group features ────────────────────────────────────────────────────────
@@ -867,22 +843,18 @@ def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name
         flat = _expand_groups(group_names, group_map, d)
         return metric_fn(d, flat) if flat else -np.inf
 
-    log.info("RFA/RFR feature groups (%d groups) …", len(avail_groups))
-    rfa_grp = _sequential_forward_selection(df, avail_groups, group_metric_fn)
+    log.info("RFR feature groups (%d groups) …", len(avail_groups))
     rfr_grp = _sequential_backward_elimination(df, avail_groups, group_metric_fn)
 
-    rows_grp = (
-        [{"step": s, "group": g, metric_label: m, "direction": "RFA"} for s, g, m in rfa_grp] +
-        [{"step": s, "group": g, metric_label: m, "direction": "RFR"} for s, g, m in rfr_grp]
-    )
+    rows_grp = [{"step": s, "group": g, metric_label: m} for s, g, m in rfr_grp]
     df_grp = pd.DataFrame(rows_grp)
 
     # ── save CSVs ─────────────────────────────────────────────────────────────
     if save_dir:
         sub = os.path.join(save_dir, "node_feature_table")
         os.makedirs(sub, exist_ok=True)
-        df_ind.to_csv(os.path.join(sub, f"feature_selection_individual_{suffix}.csv"), index=False)
-        df_grp.to_csv(os.path.join(sub, f"feature_selection_group_{suffix}.csv"), index=False)
+        df_ind.to_csv(os.path.join(sub, f"rfr_individual_{suffix}.csv"), index=False)
+        df_grp.to_csv(os.path.join(sub, f"rfr_group_{suffix}.csv"), index=False)
         log.info("Saved feature-selection CSVs → %s", sub)
 
     # ── full-model score (all available features) ─────────────────────────────
@@ -892,37 +864,26 @@ def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name
     # ── plot ──────────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
-    for ax, df_sub, x_col, title, x_labels in [
-        (axes[0], df_grp, "group", "Group-level RFA / RFR",
-         [_GROUP_DISPLAY_NAMES.get(g, g) for g in avail_groups]),
-        (axes[1], df_ind, "feature", "Individual-feature RFA / RFR", None),
+    for ax, df_sub, x_col, title in [
+        (axes[0], df_grp, "group", "Group-level RFR"),
+        (axes[1], df_ind, "feature", "Individual-feature RFR"),
     ]:
-        for direction, color, ls in [("RFA", "#1565C0", "-"), ("RFR", "#C62828", "--")]:
-            sub = df_sub[df_sub["direction"] == direction].sort_values("step")
-            ax.plot(sub["step"], sub[metric_label], color=color, ls=ls, lw=1.8,
-                    marker="o", markersize=4, label=direction)
+        sub = df_sub.sort_values("step")
+        ax.plot(sub["step"], sub[metric_label], color="#C62828", ls="--", lw=1.8,
+                marker="o", markersize=4, label="RFR")
 
         ax.axhline(full_score, color="#555", ls=":", lw=1.0, label=f"Full model ({full_score:.3f})")
-        ax.set_xlabel("# groups" if x_col == "group" else "# features")
+        ax.set_xlabel("# groups remaining" if x_col == "group" else "# features remaining")
         ax.set_ylabel(metric_label)
         ax.set_title(title)
         ax.legend(fontsize=8)
 
-        if x_col == "group" and x_labels:
-            n_grp = len(avail_groups)
-            ax.set_xticks(range(1, n_grp + 1))
-            rfa_sub = df_sub[df_sub["direction"] == "RFA"].sort_values("step")
-            ax.set_xticklabels(
-                [_GROUP_DISPLAY_NAMES.get(g, g) for g in rfa_sub["group"]],
-                rotation=30, ha="right", fontsize=7,
-            )
-
-    fig.suptitle(f"{dataset} · {model_name} — feature selection ({suffix})", fontsize=10)
+    fig.suptitle(f"{dataset} · {model_name} — RFR feature selection ({suffix})", fontsize=10)
     fig.tight_layout()
 
     if save_dir:
         sub  = os.path.join(save_dir, "node_feature_table")
-        path = os.path.join(sub, f"feature_selection_{suffix}.png")
+        path = os.path.join(sub, f"rfr_{suffix}.png")
         fig.savefig(path, dpi=150, bbox_inches="tight")
         log.info("Saved → %s", path)
 
