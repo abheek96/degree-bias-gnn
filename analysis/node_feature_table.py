@@ -215,7 +215,7 @@ _MULTI_EMB_COLS = [
     "avg_emb_purity_delta",
 ]
 
-_FEATURE_COLS_MULTI = _TOPO_COLS + _MULTI_INFL_COLS + _MULTI_EMB_COLS + ["std_misc_freq"]
+_FEATURE_COLS_MULTI = _TOPO_COLS + _MULTI_INFL_COLS + _MULTI_EMB_COLS
 
 # Feature groups for subset-comparison plot (6 logical categories).
 # Each value lists the column names present in single-run mode; multi-run mode
@@ -245,7 +245,7 @@ _FEATURE_GROUP_MAP_MULTI: dict[str, list[str]] = {
     **{k: v for k, v in _FEATURE_GROUP_MAP.items()
        if k not in ("influence", "embedding")},
     "influence": _MULTI_INFL_COLS,
-    "embedding": _MULTI_EMB_COLS + ["std_misc_freq"],
+    "embedding": _MULTI_EMB_COLS,
 }
 
 _GROUP_ORDER = ["degree", "purity", "training_proximity", "centrality", "influence", "embedding"]
@@ -874,10 +874,13 @@ def _run_subset_comparison(df, is_multi_run, save_dir, show, dataset, model_name
     x_max = df_res[metric_label].max()
     x_min = df_res[metric_label].min()
     for bar, score in zip(bars, df_res[metric_label]):
+        w      = bar.get_width()
+        offset = (x_max - x_min) * 0.015
         ax.text(
-            bar.get_width() + (x_max - x_min) * 0.015,
+            w + offset if score >= 0 else w - offset,
             bar.get_y() + bar.get_height() / 2,
-            f"{score:.3f}", va="center", ha="left", fontsize=7.5,
+            f"{score:.3f}", va="center",
+            ha="left" if score >= 0 else "right", fontsize=7.5,
         )
 
     # Degree reference line
@@ -885,10 +888,11 @@ def _run_subset_comparison(df, is_multi_run, save_dir, show, dataset, model_name
     if not degree_rows.empty:
         deg_score = float(degree_rows[metric_label].iloc[0])
         ax.axvline(deg_score, color="#D65F5F", ls="--", lw=1.2, zorder=3)
+        label_ha = "left" if deg_score >= 0 else "right"
         ax.text(
             deg_score, len(df_res) - 0.1,
             f" degree\n ({deg_score:.3f})",
-            color="#D65F5F", fontsize=7.5, va="top",
+            color="#D65F5F", fontsize=7.5, va="top", ha=label_ha,
         )
 
     # Legend
@@ -900,7 +904,7 @@ def _run_subset_comparison(df, is_multi_run, save_dir, show, dataset, model_name
     ax.legend(handles=legend_handles, fontsize=8, loc="lower right")
 
     ax.set_xlabel(metric_label)
-    ax.set_xlim(max(0.0, x_min - (x_max - x_min) * 0.05), x_max + (x_max - x_min) * 0.18)
+    ax.set_xlim(x_min - (x_max - x_min) * 0.05, x_max + (x_max - x_min) * 0.18)
     ax.set_title(f"{dataset} · {model_name} — feature subset comparison ({suffix})", fontsize=10)
     ax.grid(axis="x", lw=0.5, alpha=0.4, zorder=1)
     ax.spines[["top", "right"]].set_visible(False)
@@ -1424,7 +1428,7 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                      save_dir, show)
 
     if feature_selection:
-        log.info("Running recursive feature addition/removal (single-run) …")
+        log.info("Running feature subset comparison (single-run) …")
         _run_subset_comparison(df, is_multi_run=False, save_dir=save_dir, show=show,
                                dataset=cfg["dataset"]["name"], model_name=cfg["model"]["name"])
 
@@ -1589,7 +1593,7 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
 
     # ── recursive feature selection ───────────────────────────────────────────
     if feature_selection:
-        log.info("Running recursive feature addition/removal (multi-run) …")
+        log.info("Running feature subset comparison (multi-run) …")
         _run_subset_comparison(df, is_multi_run=True, save_dir=save_dir, show=show,
                                dataset=cfg["dataset"]["name"], model_name=cfg["model"]["name"])
 
@@ -1661,8 +1665,8 @@ def main():
                         help="Comma-separated graph node indices for per-node SHAP waterfall plots "
                              "(e.g. '1362,42'). Implies SHAP computation.")
     parser.add_argument("--feature-selection", action="store_true",
-                        help="Run recursive feature addition/removal (RFA/RFR) and plot "
-                             "PR-AUC (single-run) or Spearman r (multi-run) vs. k curve.")
+                        help="Compare named feature subsets by PR-AUC (single-run) "
+                             "or Spearman r (multi-run) and save a bar chart.")
 
     ckpt_group = parser.add_mutually_exclusive_group()
     ckpt_group.add_argument("--checkpoint", default=None,

@@ -447,56 +447,60 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
 
 
 def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show, run_id=None):
-    """Overall misclassification rate per bucket, collapsed across degree.
+    """Grouped bar chart: total nodes and misclassified nodes per degree group.
 
-    Shows median ± IQR across runs.
+    For each degree on the x-axis two bars are drawn side-by-side:
+      - total test nodes in that degree group  (fixed across runs)
+      - misclassified nodes (median across runs; IQR error bar when n_runs > 1)
     """
-    bucket_keys = ["no_train", "no_same_train", "has_same_train"]
-    misc_keys   = ["no_train_misc", "no_same_train_misc", "has_same_train_misc"]
-    n_runs      = len(all_run_results)
-    dataset     = cfg["dataset"]["name"]
-    model       = cfg["model"]["name"]
+    n_runs  = len(all_run_results)
+    dataset = cfg["dataset"]["name"]
+    model   = cfg["model"]["name"]
 
-    run_rates = {bkey: [] for bkey in bucket_keys}
-    for run_result in all_run_results:
-        for bkey, mkey in zip(bucket_keys, misc_keys):
-            total = sum(r[bkey] for r in run_result.values())
-            misc  = sum(r[mkey] for r in run_result.values())
-            run_rates[bkey].append(misc / total if total > 0 else float("nan"))
+    degrees = sorted(all_run_results[0].keys())
 
-    med  = [float(np.nanmedian(run_rates[k])) for k in bucket_keys]
-    q1   = [float(np.nanpercentile(run_rates[k], 25)) for k in bucket_keys]
-    q3   = [float(np.nanpercentile(run_rates[k], 75)) for k in bucket_keys]
-    yerr = [[m - lo for m, lo in zip(med, q1)],
-            [hi - m  for m, hi in zip(med, q3)]]
+    totals   = np.array([all_run_results[0][d]["total"] for d in degrees], dtype=float)
+    misc_mat = np.array(
+        [[r[d]["n_misc"] for d in degrees] for r in all_run_results], dtype=float
+    )  # shape [n_runs, n_degrees]
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    xpos   = np.arange(len(bucket_keys))
-    colors = [_REACH_COLORS[k] for k in bucket_keys]
-    ax.bar(xpos, med, color=colors, alpha=0.75, width=0.5,
-           edgecolor="white", linewidth=0.5)
-    ax.errorbar(xpos, med, yerr=yerr, fmt="none", color="black",
-                capsize=4, linewidth=1.2)
-    for i, (m, hi) in enumerate(zip(med, q3)):
-        ax.text(xpos[i], hi + 0.015, f"{m:.1%}", ha="center", va="bottom",
-                fontsize=9, fontweight="bold")
+    misc_med = np.median(misc_mat, axis=0)
+    misc_q1  = np.percentile(misc_mat, 25, axis=0)
+    misc_q3  = np.percentile(misc_mat, 75, axis=0)
+    yerr     = [misc_med - misc_q1, misc_q3 - misc_med]
+
+    width = 0.35
+    xpos  = np.arange(len(degrees))
+
+    fig, ax = plt.subplots(figsize=(_fig_w(len(degrees)), 4.5))
+    ax.bar(xpos - width / 2, totals,   width, label="Total nodes",
+           color="#4878CF", alpha=0.75, edgecolor="white")
+    misc_bars = ax.bar(xpos + width / 2, misc_med, width, label="Misclassified",
+                       color="#D65F5F", alpha=0.75, edgecolor="white")
+    if n_runs > 1:
+        ax.errorbar(xpos + width / 2, misc_med, yerr=yerr,
+                    fmt="none", color="black", capsize=3, linewidth=1.0)
+
+    for bar, val in zip(misc_bars, misc_med):
+        if val > 0:
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
+                    str(int(round(val))), ha="center", va="bottom", fontsize=7)
 
     ax.set_xticks(xpos)
-    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=7,
-                       rotation=15, ha="right")
-    ax.set_ylabel("Misclassification rate", fontsize=11)
-    ax.set_ylim(0, 1.15)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.set_xticklabels([str(d) for d in degrees], fontsize=8)
+    ax.set_xlabel("Node degree", fontsize=10)
+    ax.set_ylabel("# nodes", fontsize=10)
+    ax.legend(fontsize=8)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    run_desc = f"median ± IQR, {n_runs} runs" if n_runs > 1 else "1 run"
     ax.set_title(
-        f"Overall misclassification rate by reachability bucket\n"
-        f"{dataset} · {model} · {k_hops}-hop  ·  "
-        f"median ± IQR, {n_runs} run{'s' if n_runs > 1 else ''}",
-        fontsize=11,
+        f"Node count and misclassified count by degree group\n"
+        f"{dataset} · {model} · {k_hops}-hop · {run_desc}",
+        fontsize=10,
     )
     fig.tight_layout()
     run_tag = f"_run{run_id:02d}" if run_id is not None else f"_{n_runs}runs"
-    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal{run_tag}.png", show)
+    _save(fig, save_dir, f"{dataset}_{model}_degree_group_counts{run_tag}.png", show)
 
 
 def _load_data_and_train(cfg, device, run_id=None):
