@@ -878,6 +878,15 @@ def _run_feature_selection(df, is_multi_run, save_dir, show, dataset, model_name
         ax.set_title(title)
         ax.legend(fontsize=8)
 
+        if x_col == "group":
+            steps = sub["step"].tolist()
+            ax.set_xticks(steps)
+            labels = []
+            for _, row in sub.iterrows():
+                g = row["group"]
+                labels.append(_GROUP_DISPLAY_NAMES.get(g, g) if pd.notna(g) and g is not None else "Full")
+            ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=7)
+
     fig.suptitle(f"{dataset} · {model_name} — RFR feature selection ({suffix})", fontsize=10)
     fig.tight_layout()
 
