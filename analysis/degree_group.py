@@ -523,36 +523,42 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
     colors = [_REACH_COLORS[k] for k in bucket_keys]
 
     box_data = [run_rates[k] for k in bucket_keys]
-    bp = ax.boxplot(box_data, positions=xpos, widths=0.45, patch_artist=True,
-                    medianprops=dict(color="black", linewidth=1.5),
-                    whiskerprops=dict(linewidth=1.0),
-                    capprops=dict(linewidth=1.0),
-                    flierprops=dict(marker="o", markersize=4, linestyle="none",
-                                   markeredgecolor="black", alpha=0.6))
+    bp = ax.boxplot(box_data, positions=xpos, widths=0.35, **_BP_KWARGS)
     for patch, color in zip(bp["boxes"], colors):
         patch.set_facecolor(color)
-        patch.set_alpha(0.75)
+        patch.set_alpha(0.65)
 
-    # Annotate median above each box
+    # Overlay individual run points (jittered)
+    rng = np.random.default_rng(0)
+    for i, k in enumerate(bucket_keys):
+        vals = np.array([v for v in run_rates[k] if not np.isnan(v)])
+        jitter = rng.uniform(-0.08, 0.08, size=len(vals))
+        ax.scatter(xpos[i] + jitter, vals, color=colors[i], s=22,
+                   zorder=3, alpha=0.85, edgecolors="white", linewidths=0.4)
+
+    # Annotate median to the right of each box to avoid overlap
     for i, k in enumerate(bucket_keys):
         vals = [v for v in run_rates[k] if not np.isnan(v)]
         if vals:
             med = float(np.median(vals))
-            top = float(np.percentile(vals, 75))
-            ax.text(xpos[i], top + 0.015, f"{med:.1%}", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold")
+            ax.text(xpos[i] + 0.22, med, f"{med:.1%}", ha="left", va="center",
+                    fontsize=9, fontweight="bold", color=colors[i])
 
     ax.set_xticks(xpos)
-    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=7,
-                       rotation=15, ha="right")
+    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=9)
     ax.set_ylabel("Misclassification rate", fontsize=11)
-    ax.set_ylim(0, 1.15)
+
+    # Auto y-limits: tight around the data with a small margin
+    all_vals = [v for k in bucket_keys for v in run_rates[k] if not np.isnan(v)]
+    pad = 0.06
+    ax.set_ylim(max(0.0, min(all_vals) - pad), min(1.0, max(all_vals) + pad))
+
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax.spines[["top", "right"]].set_visible(False)
     ax.set_title(
         f"Misclassification rate by reachability bucket\n"
-        f"{dataset} · {model} · {k_hops}-hop  ·  "
-        f"boxplot across {n_runs} runs",
+        f"{dataset} · {model} · {k_hops}-hop  ·  {n_runs} runs",
         fontsize=11,
     )
     fig.tight_layout()
