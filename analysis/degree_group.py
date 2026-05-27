@@ -544,8 +544,10 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             ax.text(xpos[i] + 0.22, med, f"{med:.1%}", ha="left", va="center",
                     fontsize=9, fontweight="bold", color=colors[i])
 
+    import textwrap
+    wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
     ax.set_xticks(xpos)
-    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=9)
+    ax.set_xticklabels(wrapped_labels, fontsize=9, ha="center")
     ax.set_ylabel("Misclassification rate", fontsize=11)
 
     # Auto y-limits: tight around the data with a small margin
