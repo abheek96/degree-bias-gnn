@@ -420,10 +420,10 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
                    for r in all_run_results])
         for d in degrees
     ]
-    ax_bot.plot(group_centers, misc_rates, color="dimgrey", linewidth=1.6,
-                marker="o", markersize=4)
-    ax_bot.set_ylabel("Misc rate\n(#misc/#total)", fontsize=8, color="grey")
-    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
+    ax_bot.bar(group_centers, misc_rates, width=0.7, color="dimgrey", alpha=0.75,
+               edgecolor="white", linewidth=0.4)
+    ax_bot.set_ylabel("Misclassification\nrate", fontsize=9, color="dimgrey")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="dimgrey")
     ax_bot.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
     ax_bot.set_ylim(0, max(misc_rates) * 1.25)
     _degree_axis(ax_bot, group_centers, degrees)
