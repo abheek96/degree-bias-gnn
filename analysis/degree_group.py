@@ -579,11 +579,19 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             bp_d["boxes"][0].set_alpha(0.30)
             bp_d["boxes"][0].set_hatch("///")
 
+            # jittered node points (cap at 300 for readability)
+            dvals_arr = np.array(dvals, dtype=float)
+            if len(dvals_arr) > 300:
+                dvals_arr = rng.choice(dvals_arr, size=300, replace=False)
+            jitter_d = rng.uniform(-0.06, 0.06, size=len(dvals_arr))
+            ax2.scatter(xpos[i] + off + jitter_d, dvals_arr, color=color,
+                        s=8, zorder=3, alpha=0.35, edgecolors="none")
+
+            # median label to the right of the box to avoid overlap
             med_d = float(np.median(dvals))
-            q3_d  = float(np.percentile(dvals, 75))
-            ax2.text(xpos[i] + off, q3_d + 0.3, f"{med_d:.0f}",
-                     ha="center", va="bottom", fontsize=8,
-                     fontweight="bold", color=color, alpha=0.8)
+            ax2.text(xpos[i] + off + 0.18, med_d, f"{med_d:.0f}",
+                     ha="left", va="center", fontsize=8,
+                     fontweight="bold", color=color, alpha=0.85)
 
     # ── axes cosmetics ───────────────────────────────────────────────────────
     wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
