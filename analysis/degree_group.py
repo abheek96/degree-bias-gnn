@@ -500,13 +500,13 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show, run_i
 
 
 def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir, show):
-    """Two-panel plot per reachability bucket, collapsed across degree.
+    """Single-panel plot: misc-rate boxes (left y-axis) and degree-distribution
+    boxes (right y-axis) shown side-by-side within each reachability bucket.
 
-    Top panel:    Boxplot of per-run misclassification rates (one point per run).
-    Bottom panel: Boxplot of degree distribution of nodes in each bucket
-                  (topology is fixed across runs; uses run 0 counts).
-
-    Only meaningful when len(all_run_results) > 1.
+    Left  y-axis: misclassification rate (%).
+    Right y-axis: node degree.
+    Each bucket has two boxes: misc-rate (solid fill) offset left, degree (hatched)
+    offset right.  Only meaningful when len(all_run_results) > 1.
     """
     import textwrap
     bucket_keys = ["no_train", "no_same_train", "has_same_train"]
@@ -515,7 +515,7 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
     dataset     = cfg["dataset"]["name"]
     model       = cfg["model"]["name"]
 
-    # ── per-run misc rates (top panel) ──────────────────────────────────────
+    # ── per-run misc rates ───────────────────────────────────────────────────
     run_rates = {bkey: [] for bkey in bucket_keys}
     for run_result in all_run_results:
         for bkey, mkey in zip(bucket_keys, misc_keys):
@@ -523,8 +523,7 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             misc  = sum(r[mkey] for r in run_result.values())
             run_rates[bkey].append(misc / total if total > 0 else float("nan"))
 
-    # ── degree distribution per bucket (bottom panel) ───────────────────────
-    # Topology (and therefore bucket membership) is fixed across runs; use run 0.
+    # ── degree distribution per bucket (topology fixed; use run 0) ──────────
     ref_result = all_run_results[0]
     deg_vals = {bkey: [] for bkey in bucket_keys}
     for degree, r in ref_result.items():
@@ -533,61 +532,87 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             if count > 0:
                 deg_vals[bkey].extend([degree] * count)
 
-    # ── layout ──────────────────────────────────────────────────────────────
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(6, 8), sharex=True,
-        gridspec_kw={"height_ratios": [1, 1], "hspace": 0.08},
-    )
-    xpos   = np.arange(len(bucket_keys))
+    # ── layout ───────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax2    = ax.twinx()          # right y-axis for degree
+    xpos   = np.arange(len(bucket_keys), dtype=float)
     colors = [_REACH_COLORS[k] for k in bucket_keys]
+    off    = 0.20                # offset from bucket centre
 
-    def _draw_bucket_boxes(ax, data_per_bucket, ylabel, pct_fmt=False):
-        bp = ax.boxplot(data_per_bucket, positions=xpos, widths=0.35, **_BP_KWARGS)
-        for patch, color in zip(bp["boxes"], colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.65)
-        ax.set_ylabel(ylabel, fontsize=11)
-        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-        ax.spines[["top", "right"]].set_visible(False)
-        if pct_fmt:
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-        return bp
-
-    # Top: misc rates
-    _draw_bucket_boxes(ax_top, [run_rates[k] for k in bucket_keys],
-                       "Misclassification rate", pct_fmt=True)
+    # shared boxplot style overrides
+    _bp_misc = {**_BP_KWARGS,
+                "medianprops": dict(color="black", linewidth=1.5)}
+    _bp_deg  = {**_BP_KWARGS,
+                "medianprops": dict(color="#444444", linewidth=1.5)}
 
     rng = np.random.default_rng(0)
-    for i, k in enumerate(bucket_keys):
-        vals = np.array([v for v in run_rates[k] if not np.isnan(v)])
-        jitter = rng.uniform(-0.08, 0.08, size=len(vals))
-        ax_top.scatter(xpos[i] + jitter, vals, color=colors[i], s=22,
-                       zorder=3, alpha=0.85, edgecolors="white", linewidths=0.4)
-        if len(vals):
-            med = float(np.median(vals))
-            ax_top.text(xpos[i] + 0.22, med, f"{med:.1%}", ha="left", va="center",
-                        fontsize=9, fontweight="bold", color=colors[i])
 
+    for i, (bkey, mkey) in enumerate(zip(bucket_keys, misc_keys)):
+        color = colors[i]
+
+        # — misc-rate box (left, solid) on ax ─────────────────────────────
+        rate_data = [v for v in run_rates[bkey] if not np.isnan(v)]
+        bp_r = ax.boxplot([rate_data], positions=[xpos[i] - off],
+                          widths=0.28, **_bp_misc)
+        bp_r["boxes"][0].set_facecolor(color)
+        bp_r["boxes"][0].set_alpha(0.70)
+
+        # jittered run points
+        jitter = rng.uniform(-0.06, 0.06, size=len(rate_data))
+        ax.scatter(xpos[i] - off + jitter, rate_data, color=color, s=18,
+                   zorder=3, alpha=0.85, edgecolors="white", linewidths=0.4)
+
+        # median annotation above the box
+        if rate_data:
+            med_r = float(np.median(rate_data))
+            q3_r  = float(np.percentile(rate_data, 75))
+            ax.text(xpos[i] - off, q3_r + 0.018, f"{med_r:.1%}",
+                    ha="center", va="bottom", fontsize=8,
+                    fontweight="bold", color=color)
+
+        # — degree box (right, hatched) on ax2 ────────────────────────────
+        dvals = deg_vals[bkey]
+        if dvals:
+            bp_d = ax2.boxplot([dvals], positions=[xpos[i] + off],
+                               widths=0.28, **_bp_deg)
+            bp_d["boxes"][0].set_facecolor(color)
+            bp_d["boxes"][0].set_alpha(0.30)
+            bp_d["boxes"][0].set_hatch("///")
+
+            med_d = float(np.median(dvals))
+            q3_d  = float(np.percentile(dvals, 75))
+            ax2.text(xpos[i] + off, q3_d + 0.3, f"{med_d:.0f}",
+                     ha="center", va="bottom", fontsize=8,
+                     fontweight="bold", color=color, alpha=0.8)
+
+    # ── axes cosmetics ───────────────────────────────────────────────────────
+    wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
+    ax.set_xticks(xpos)
+    ax.set_xticklabels(wrapped_labels, fontsize=9, ha="center")
+    ax.set_xlim(-0.55, len(bucket_keys) - 0.45)
+
+    ax.set_ylabel("Misclassification rate", fontsize=11)
     all_rate_vals = [v for k in bucket_keys for v in run_rates[k] if not np.isnan(v)]
     pad = 0.06
-    ax_top.set_ylim(max(0.0, min(all_rate_vals) - pad),
-                    min(1.0, max(all_rate_vals) + pad))
+    ax.set_ylim(max(0.0, min(all_rate_vals) - pad),
+                min(1.0, max(all_rate_vals) + pad))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax.spines[["top"]].set_visible(False)
 
-    # Bottom: degree distributions
-    _draw_bucket_boxes(ax_bot, [deg_vals[k] for k in bucket_keys], "Node degree")
+    ax2.set_ylabel("Node degree", fontsize=11)
+    ax2.spines[["top"]].set_visible(False)
 
-    for i, k in enumerate(bucket_keys):
-        if deg_vals[k]:
-            med = float(np.median(deg_vals[k]))
-            ax_bot.text(xpos[i] + 0.22, med, f"{med:.0f}", ha="left", va="center",
-                        fontsize=9, fontweight="bold", color=colors[i])
+    # legend
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor="grey", alpha=0.70, label="Misc rate (left axis)"),
+        Patch(facecolor="grey", alpha=0.30, hatch="///", label="Node degree (right axis)"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8, loc="upper right",
+              framealpha=0.8, edgecolor="lightgrey")
 
-    # Shared x-axis labels (only on bottom panel)
-    wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
-    ax_bot.set_xticks(xpos)
-    ax_bot.set_xticklabels(wrapped_labels, fontsize=9, ha="center")
-
-    ax_top.set_title(
+    ax.set_title(
         f"Misclassification rate & degree distribution by reachability bucket\n"
         f"{dataset} · {model} · {k_hops}-hop  ·  {n_runs} runs",
         fontsize=11,
