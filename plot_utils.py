@@ -1092,12 +1092,12 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
                                            has_khop_labeled_neighbor=None,
                                            k_hops: int = 1,
                                            save_dir=None, show=False):
-    """One plot per hop: labelling ratio (left axis) + accuracy overlay (right axis).
+    """One plot per hop: labelling ratio bars (left axis) + accuracy line overlay (right axis).
 
     Generates one file for 1-hop and, when ``has_khop_labeled_neighbor`` is
     provided, a second file for k-hop.  Each figure has a top panel with the
-    labelling ratio line and the accuracy median, and a bottom panel with node
-    count bars.
+    labelling ratio bars and the accuracy median line, and a bottom panel with
+    node count bars.
 
     Parameters
     ----------
@@ -1146,12 +1146,13 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
             sharex=True, gridspec_kw={"height_ratios": [4, 1]},
         )
 
-        ax_top.plot(pos, ratio_vals, color=_LR_COLOR, linewidth=1.8,
-                    marker="s", markersize=4, zorder=3)
+        _ratio_vals_safe = [v if not np.isnan(v) else 0.0 for v in ratio_vals]
+        ax_top.bar(pos, _ratio_vals_safe, color=_LR_COLOR, alpha=0.75,
+                   width=0.6, zorder=3)
         ax_top.set_ylabel(f"Labelling ratio  ({k_label})", fontsize=11,
                           color=_LR_COLOR)
         ax_top.tick_params(axis="y", colors=_LR_COLOR, labelsize=8)
-        ax_top.set_ylim(-0.05, 1.10)
+        ax_top.set_ylim(0, 1.10)
         ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
         ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
@@ -1160,12 +1161,12 @@ def plot_acc_and_labelling_ratio_vs_degree(run_results, test_deg,
                     marker="o", markersize=4, zorder=4)
         ax_acc.set_ylabel("Accuracy", fontsize=11, color=_LACC_COLOR)
         ax_acc.tick_params(axis="y", colors=_LACC_COLOR, labelsize=8)
-        ax_acc.set_ylim(-0.05, 1.10)
+        ax_acc.set_ylim(0, 1.10)
         ax_acc.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
 
         handles = [
-            plt.Line2D([0], [0], color=_LR_COLOR, lw=2, marker="s", markersize=4,
-                       label=f"Labelling ratio  ({k_label})"),
+            mpatches.Patch(facecolor=_LR_COLOR, alpha=0.75,
+                           label=f"Labelling ratio  ({k_label})"),
             plt.Line2D([0], [0], color=_LACC_COLOR, lw=2, marker="o", markersize=4,
                        label=f"Accuracy  ({n_runs} run{'s' if n_runs > 1 else ''}, median)"),
         ]
@@ -1230,10 +1231,10 @@ def plot_labelling_ratio_vs_degree(all_deg, has_labeled_neighbor, cfg,
         sharex=True, gridspec_kw={"height_ratios": [3, 1]},
     )
 
-    ax_top.plot(pos, ratios, marker="o", linewidth=1.8, markersize=5,
-                color="#2980b9", zorder=3)
+    _ratios_safe = [v if not np.isnan(v) else 0.0 for v in ratios]
+    ax_top.bar(pos, _ratios_safe, color="#2980b9", alpha=0.75, width=0.6, zorder=3)
     ax_top.set_ylabel("Labelling ratio", fontsize=11)
-    ax_top.set_ylim(-0.05, 1.10)
+    ax_top.set_ylim(0, 1.10)
     ax_top.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1))
     ax_top.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
     ax_top.set_title(
