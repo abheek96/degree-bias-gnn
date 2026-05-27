@@ -523,14 +523,23 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             misc  = sum(r[mkey] for r in run_result.values())
             run_rates[bkey].append(misc / total if total > 0 else float("nan"))
 
-    # ── degree distribution per bucket (topology fixed; use run 0) ──────────
-    ref_result = all_run_results[0]
+    # ── degree distribution of *misclassified* nodes per bucket ─────────────
+    # Bucket membership is topology-fixed, but which nodes are misclassified
+    # varies per run, so we pool misclassified-node degrees across all runs.
     deg_vals = {bkey: [] for bkey in bucket_keys}
-    for degree, r in ref_result.items():
-        for bkey in bucket_keys:
-            count = r[bkey]
-            if count > 0:
-                deg_vals[bkey].extend([degree] * count)
+    for run_result in all_run_results:
+        for degree, r in run_result.items():
+            for bkey, mkey in zip(bucket_keys, misc_keys):
+                count = r[mkey]   # misclassified nodes at this degree in this bucket
+                if count > 0:
+                    deg_vals[bkey].extend([degree] * count)
+
+    for bkey in bucket_keys:
+        log.info("Degree dist (%s): %d misclassified node-run pairs, "
+                 "degrees %s–%s",
+                 bkey, len(deg_vals[bkey]),
+                 min(deg_vals[bkey]) if deg_vals[bkey] else "N/A",
+                 max(deg_vals[bkey]) if deg_vals[bkey] else "N/A")
 
     # ── layout ───────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -557,18 +566,10 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
         bp_r["boxes"][0].set_facecolor(color)
         bp_r["boxes"][0].set_alpha(0.70)
 
-        # jittered run points
+        # jittered run points (one per run — always few enough to show all)
         jitter = rng.uniform(-0.06, 0.06, size=len(rate_data))
         ax.scatter(xpos[i] - off + jitter, rate_data, color=color, s=18,
                    zorder=3, alpha=0.85, edgecolors="white", linewidths=0.4)
-
-        # median annotation above the box
-        if rate_data:
-            med_r = float(np.median(rate_data))
-            q3_r  = float(np.percentile(rate_data, 75))
-            ax.text(xpos[i] - off, q3_r + 0.018, f"{med_r:.1%}",
-                    ha="center", va="bottom", fontsize=8,
-                    fontweight="bold", color=color)
 
         # — degree box (right, hatched) on ax2 ────────────────────────────
         dvals = deg_vals[bkey]
@@ -579,19 +580,15 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             bp_d["boxes"][0].set_alpha(0.30)
             bp_d["boxes"][0].set_hatch("///")
 
-            # jittered node points (cap at 300 for readability)
+            # jittered misclassified-node points; pool size logged above —
+            # sample proportionally if > 200, otherwise show all
             dvals_arr = np.array(dvals, dtype=float)
-            if len(dvals_arr) > 300:
-                dvals_arr = rng.choice(dvals_arr, size=300, replace=False)
+            n_show = min(len(dvals_arr), max(50, len(dvals_arr) // n_runs * 2))
+            if len(dvals_arr) > n_show:
+                dvals_arr = rng.choice(dvals_arr, size=n_show, replace=False)
             jitter_d = rng.uniform(-0.06, 0.06, size=len(dvals_arr))
             ax2.scatter(xpos[i] + off + jitter_d, dvals_arr, color=color,
-                        s=8, zorder=3, alpha=0.35, edgecolors="none")
-
-            # median label to the right of the box to avoid overlap
-            med_d = float(np.median(dvals))
-            ax2.text(xpos[i] + off + 0.18, med_d, f"{med_d:.0f}",
-                     ha="left", va="center", fontsize=8,
-                     fontweight="bold", color=color, alpha=0.85)
+                        s=8, zorder=3, alpha=0.45, edgecolors="none")
 
     # ── axes cosmetics ───────────────────────────────────────────────────────
     wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
