@@ -415,17 +415,27 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
         fontsize=11,
     )
 
-    misc_rates = [
-        np.median([r[d]["n_misc"] / r[d]["total"] if r[d]["total"] > 0 else float("nan")
-                   for r in all_run_results])
+    misc_counts = [
+        [r[d]["n_misc"] for r in all_run_results]
         for d in degrees
     ]
-    ax_bot.plot(group_centers, misc_rates, color="dimgrey", linewidth=1.6,
-                marker="o", markersize=4)
-    ax_bot.set_ylabel("Misc rate\n(#misc/#total)", fontsize=8, color="grey")
+    bp = ax_bot.boxplot(
+        misc_counts,
+        positions=group_centers,
+        widths=bar_w * max(n_runs, 1) * 0.6,
+        patch_artist=True,
+        medianprops=dict(color="black", linewidth=1.5),
+        boxprops=dict(facecolor="dimgrey", alpha=0.55),
+        whiskerprops=dict(linewidth=0.9),
+        capprops=dict(linewidth=0.9),
+        flierprops=dict(marker="o", markersize=3, markerfacecolor="dimgrey",
+                        markeredgewidth=0.5, alpha=0.6),
+        manage_ticks=False,
+    )
+    ax_bot.set_ylabel("# misclassified\nnodes", fontsize=8, color="grey")
     ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_bot.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    ax_bot.set_ylim(0, max(misc_rates) * 1.25)
+    max_count = max(max(c) for c in misc_counts) if misc_counts else 1
+    ax_bot.set_ylim(0, max_count * 1.35)
     _degree_axis(ax_bot, group_centers, degrees)
     ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
@@ -565,9 +575,8 @@ def _run_reachability(cfg, deg_min, deg_max, device, all_degrees=False,
                 _log_results(all_run_results[0][d], str(d), k_hops)
 
         reach_dir = _subdir(save_dir, "reachability")
-        for run_id, run_result in zip(run_ids, all_run_results):
-            _plot_reachability_by_degree([run_result], k_hops, cfg, reach_dir, show, run_id=run_id)
-            _plot_misc_rate_marginal([run_result], k_hops, cfg, reach_dir, show, run_id=run_id)
+        _plot_reachability_by_degree(all_run_results, k_hops, cfg, reach_dir, show)
+        _plot_misc_rate_marginal(all_run_results, k_hops, cfg, reach_dir, show)
     else:
         _, pred, _ = _load_data_and_train(cfg, device, run_id=run_ids[0])
         results = _compute_reachability(
