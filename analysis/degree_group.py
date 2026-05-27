@@ -521,7 +521,7 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show, run_i
     )
     fig.tight_layout()
     run_tag = f"_run{run_id:02d}" if run_id is not None else f"_{n_runs}runs"
-    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal{run_tag}.png", show)
+    _save(fig, save_dir, f"{dataset}_{model}_degree_group_counts{run_tag}.png", show)
 
 
 def _load_data_and_train(cfg, device, run_id=None):
