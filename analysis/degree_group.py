@@ -49,7 +49,7 @@ from checkpoint_utils import (
     train_model,
 )
 from dataset_utils import load_or_create_split
-from plot_utils import _fig_w, _degree_axis, _save, _subdir
+from plot_utils import _fig_w, _degree_axis, _save, _subdir, _BP_KWARGS
 from influence import _analyse_node, _khop_distances, _khop_neighbors
 from models import get_model
 from train import train
