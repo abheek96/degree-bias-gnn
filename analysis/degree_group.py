@@ -390,8 +390,8 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
     bar_w = 0.8 / max(n_runs, 1)
 
     fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(_fig_w(n_deg), 7),
-        sharex=True, gridspec_kw={"height_ratios": [3, 1]},
+        2, 1, figsize=(_fig_w(n_deg), 8),
+        sharex=True, gridspec_kw={"height_ratios": [3, 1.5]},
     )
 
     for ri, run_result in enumerate(all_run_results):
@@ -415,19 +415,40 @@ def _plot_reachability_by_degree(all_run_results, k_hops, cfg, save_dir, show, r
         fontsize=11,
     )
 
-    misc_rates = [
-        np.median([r[d]["n_misc"] / r[d]["total"] if r[d]["total"] > 0 else float("nan")
-                   for r in all_run_results])
+    # Bottom panel: bar (total nodes, left axis) + boxplot (% misc, right axis)
+    offset = 0.22
+    totals = [all_run_results[0][d]["total"] for d in degrees]
+    ax_bot.bar(group_centers - offset, totals, width=0.38, color="#4878CF",
+               alpha=0.75, edgecolor="white", label="# nodes (total)")
+    ax_bot.set_ylabel("# nodes (total)", fontsize=8, color="#4878CF")
+    ax_bot.tick_params(axis="y", labelsize=7, colors="#4878CF")
+    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+
+    misc_pcts = [
+        [(r[d]["n_misc"] / r[d]["total"] * 100) if r[d]["total"] > 0 else 0.0
+         for r in all_run_results]
         for d in degrees
     ]
-    ax_bot.plot(group_centers, misc_rates, color="dimgrey", linewidth=1.6,
-                marker="o", markersize=4)
-    ax_bot.set_ylabel("Misc rate\n(#misc/#total)", fontsize=8, color="grey")
-    ax_bot.tick_params(axis="y", labelsize=7, colors="grey")
-    ax_bot.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    ax_bot.set_ylim(0, max(misc_rates) * 1.25)
+    ax_pct = ax_bot.twinx()
+    ax_pct.boxplot(
+        misc_pcts,
+        positions=group_centers + offset,
+        widths=0.38,
+        patch_artist=True,
+        medianprops=dict(color="black", linewidth=1.5),
+        boxprops=dict(facecolor="#D65F5F", alpha=0.55),
+        whiskerprops=dict(linewidth=0.9),
+        capprops=dict(linewidth=0.9),
+        flierprops=dict(marker="o", markersize=3, markerfacecolor="#D65F5F",
+                        markeredgewidth=0.5, alpha=0.6),
+        manage_ticks=False,
+    )
+    max_pct = max(max(p) for p in misc_pcts) if misc_pcts else 1.0
+    ax_pct.set_ylim(0, max_pct * 1.35)
+    ax_pct.set_ylabel("% misclassified", fontsize=8, color="#D65F5F")
+    ax_pct.tick_params(axis="y", labelsize=7, colors="#D65F5F")
+
     _degree_axis(ax_bot, group_centers, degrees)
-    ax_bot.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
 
     legend_handles = [
         mpatches.Patch(color="#D32F2F", label=_REACH_LABELS["no_train"]),
