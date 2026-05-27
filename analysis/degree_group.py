@@ -499,6 +499,66 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show, run_i
     _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal{run_tag}.png", show)
 
 
+def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir, show):
+    """Boxplot of per-run misclassification rates per reachability bucket.
+
+    One box per bucket; each data point is the misc rate for one run,
+    collapsed across degree.  Only meaningful when len(all_run_results) > 1.
+    """
+    bucket_keys = ["no_train", "no_same_train", "has_same_train"]
+    misc_keys   = ["no_train_misc", "no_same_train_misc", "has_same_train_misc"]
+    n_runs      = len(all_run_results)
+    dataset     = cfg["dataset"]["name"]
+    model       = cfg["model"]["name"]
+
+    run_rates = {bkey: [] for bkey in bucket_keys}
+    for run_result in all_run_results:
+        for bkey, mkey in zip(bucket_keys, misc_keys):
+            total = sum(r[bkey] for r in run_result.values())
+            misc  = sum(r[mkey] for r in run_result.values())
+            run_rates[bkey].append(misc / total if total > 0 else float("nan"))
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    xpos   = np.arange(len(bucket_keys))
+    colors = [_REACH_COLORS[k] for k in bucket_keys]
+
+    box_data = [run_rates[k] for k in bucket_keys]
+    bp = ax.boxplot(box_data, positions=xpos, widths=0.45, patch_artist=True,
+                    medianprops=dict(color="black", linewidth=1.5),
+                    whiskerprops=dict(linewidth=1.0),
+                    capprops=dict(linewidth=1.0),
+                    flierprops=dict(marker="o", markersize=4, linestyle="none",
+                                   markeredgecolor="black", alpha=0.6))
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+
+    # Annotate median above each box
+    for i, k in enumerate(bucket_keys):
+        vals = [v for v in run_rates[k] if not np.isnan(v)]
+        if vals:
+            med = float(np.median(vals))
+            top = float(np.percentile(vals, 75))
+            ax.text(xpos[i], top + 0.015, f"{med:.1%}", ha="center", va="bottom",
+                    fontsize=9, fontweight="bold")
+
+    ax.set_xticks(xpos)
+    ax.set_xticklabels([_REACH_LABELS[k] for k in bucket_keys], fontsize=7,
+                       rotation=15, ha="right")
+    ax.set_ylabel("Misclassification rate", fontsize=11)
+    ax.set_ylim(0, 1.15)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+    ax.set_title(
+        f"Misclassification rate by reachability bucket\n"
+        f"{dataset} · {model} · {k_hops}-hop  ·  "
+        f"boxplot across {n_runs} runs",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    _save(fig, save_dir, f"{dataset}_{model}_misc_rate_marginal_across_runs.png", show)
+
+
 def _load_data_and_train(cfg, device, run_id=None):
     from dataset_utils import load_or_create_split
     split     = cfg.get("split", "random")
@@ -564,6 +624,8 @@ def _run_reachability(cfg, deg_min, deg_max, device, all_degrees=False,
         for run_id, run_result in zip(run_ids, all_run_results):
             _plot_reachability_by_degree([run_result], k_hops, cfg, reach_dir, show, run_id=run_id)
             _plot_misc_rate_marginal([run_result], k_hops, cfg, reach_dir, show, run_id=run_id)
+        if len(all_run_results) > 1:
+            _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, reach_dir, show)
     else:
         _, pred, _ = _load_data_and_train(cfg, device, run_id=run_ids[0])
         results = _compute_reachability(
