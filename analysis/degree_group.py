@@ -500,17 +500,22 @@ def _plot_misc_rate_marginal(all_run_results, k_hops, cfg, save_dir, show, run_i
 
 
 def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir, show):
-    """Boxplot of per-run misclassification rates per reachability bucket.
+    """Two-panel plot per reachability bucket, collapsed across degree.
 
-    One box per bucket; each data point is the misc rate for one run,
-    collapsed across degree.  Only meaningful when len(all_run_results) > 1.
+    Top panel:    Boxplot of per-run misclassification rates (one point per run).
+    Bottom panel: Boxplot of degree distribution of nodes in each bucket
+                  (topology is fixed across runs; uses run 0 counts).
+
+    Only meaningful when len(all_run_results) > 1.
     """
+    import textwrap
     bucket_keys = ["no_train", "no_same_train", "has_same_train"]
     misc_keys   = ["no_train_misc", "no_same_train_misc", "has_same_train_misc"]
     n_runs      = len(all_run_results)
     dataset     = cfg["dataset"]["name"]
     model       = cfg["model"]["name"]
 
+    # ── per-run misc rates (top panel) ──────────────────────────────────────
     run_rates = {bkey: [] for bkey in bucket_keys}
     for run_result in all_run_results:
         for bkey, mkey in zip(bucket_keys, misc_keys):
@@ -518,48 +523,72 @@ def _plot_misc_rate_marginal_across_runs(all_run_results, k_hops, cfg, save_dir,
             misc  = sum(r[mkey] for r in run_result.values())
             run_rates[bkey].append(misc / total if total > 0 else float("nan"))
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    # ── degree distribution per bucket (bottom panel) ───────────────────────
+    # Topology (and therefore bucket membership) is fixed across runs; use run 0.
+    ref_result = all_run_results[0]
+    deg_vals = {bkey: [] for bkey in bucket_keys}
+    for degree, r in ref_result.items():
+        for bkey in bucket_keys:
+            count = r[bkey]
+            if count > 0:
+                deg_vals[bkey].extend([degree] * count)
+
+    # ── layout ──────────────────────────────────────────────────────────────
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(6, 8), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1], "hspace": 0.08},
+    )
     xpos   = np.arange(len(bucket_keys))
     colors = [_REACH_COLORS[k] for k in bucket_keys]
 
-    box_data = [run_rates[k] for k in bucket_keys]
-    bp = ax.boxplot(box_data, positions=xpos, widths=0.35, **_BP_KWARGS)
-    for patch, color in zip(bp["boxes"], colors):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.65)
+    def _draw_bucket_boxes(ax, data_per_bucket, ylabel, pct_fmt=False):
+        bp = ax.boxplot(data_per_bucket, positions=xpos, widths=0.35, **_BP_KWARGS)
+        for patch, color in zip(bp["boxes"], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.65)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
+        ax.spines[["top", "right"]].set_visible(False)
+        if pct_fmt:
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+        return bp
 
-    # Overlay individual run points (jittered)
+    # Top: misc rates
+    _draw_bucket_boxes(ax_top, [run_rates[k] for k in bucket_keys],
+                       "Misclassification rate", pct_fmt=True)
+
     rng = np.random.default_rng(0)
     for i, k in enumerate(bucket_keys):
         vals = np.array([v for v in run_rates[k] if not np.isnan(v)])
         jitter = rng.uniform(-0.08, 0.08, size=len(vals))
-        ax.scatter(xpos[i] + jitter, vals, color=colors[i], s=22,
-                   zorder=3, alpha=0.85, edgecolors="white", linewidths=0.4)
-
-    # Annotate median to the right of each box to avoid overlap
-    for i, k in enumerate(bucket_keys):
-        vals = [v for v in run_rates[k] if not np.isnan(v)]
-        if vals:
+        ax_top.scatter(xpos[i] + jitter, vals, color=colors[i], s=22,
+                       zorder=3, alpha=0.85, edgecolors="white", linewidths=0.4)
+        if len(vals):
             med = float(np.median(vals))
-            ax.text(xpos[i] + 0.22, med, f"{med:.1%}", ha="left", va="center",
-                    fontsize=9, fontweight="bold", color=colors[i])
+            ax_top.text(xpos[i] + 0.22, med, f"{med:.1%}", ha="left", va="center",
+                        fontsize=9, fontweight="bold", color=colors[i])
 
-    import textwrap
-    wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
-    ax.set_xticks(xpos)
-    ax.set_xticklabels(wrapped_labels, fontsize=9, ha="center")
-    ax.set_ylabel("Misclassification rate", fontsize=11)
-
-    # Auto y-limits: tight around the data with a small margin
-    all_vals = [v for k in bucket_keys for v in run_rates[k] if not np.isnan(v)]
+    all_rate_vals = [v for k in bucket_keys for v in run_rates[k] if not np.isnan(v)]
     pad = 0.06
-    ax.set_ylim(max(0.0, min(all_vals) - pad), min(1.0, max(all_vals) + pad))
+    ax_top.set_ylim(max(0.0, min(all_rate_vals) - pad),
+                    min(1.0, max(all_rate_vals) + pad))
 
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.3)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.set_title(
-        f"Misclassification rate by reachability bucket\n"
+    # Bottom: degree distributions
+    _draw_bucket_boxes(ax_bot, [deg_vals[k] for k in bucket_keys], "Node degree")
+
+    for i, k in enumerate(bucket_keys):
+        if deg_vals[k]:
+            med = float(np.median(deg_vals[k]))
+            ax_bot.text(xpos[i] + 0.22, med, f"{med:.0f}", ha="left", va="center",
+                        fontsize=9, fontweight="bold", color=colors[i])
+
+    # Shared x-axis labels (only on bottom panel)
+    wrapped_labels = [textwrap.fill(_REACH_LABELS[k], width=14) for k in bucket_keys]
+    ax_bot.set_xticks(xpos)
+    ax_bot.set_xticklabels(wrapped_labels, fontsize=9, ha="center")
+
+    ax_top.set_title(
+        f"Misclassification rate & degree distribution by reachability bucket\n"
         f"{dataset} · {model} · {k_hops}-hop  ·  {n_runs} runs",
         fontsize=11,
     )
