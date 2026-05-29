@@ -1176,6 +1176,111 @@ def _plot_shap_heatmap(shap_values, X_raw, base_values, feature_names,
         plt.close(fig)
 
 
+def _plot_shap_heatmap_by_degree(
+    shap_values, node_idxs, df, feature_names,
+    dataset, model_name, save_dir, show,
+    target_label="log-odds of misclassification", suffix="",
+):
+    """SHAP heatmap with test nodes grouped by degree and aggregated per feature.
+
+    Unlike ``shap.plots.heatmap`` (one column per node), this collapses the
+    per-node SHAP matrix into one column per *degree group* — every distinct
+    in-degree present among the test nodes — taking the **signed mean** of each
+    feature's SHAP across the nodes in that group.  Signed (not mean-|SHAP|) is
+    deliberate: it preserves the red/blue direction (positive = increases
+    P(misclassified)) that is the actual finding; a magnitude aggregate would
+    discard it.  Features (rows) are ordered by global mean|SHAP| (most
+    important on top).  A top strip shows the node count per degree group, since
+    high-degree columns are averaged over few nodes.
+
+    Returns the aggregated (n_features × n_degrees) DataFrame.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+
+    # Degree of each SHAP row, aligned by node_idx.  Rows follow df_clean order
+    # (post-dropna), NOT the original df order, so join on the key rather than
+    # indexing by position — mirrors the waterfall plot's lookup.
+    deg_per_row = df.set_index("node_idx").loc[node_idxs, "degree"].to_numpy()
+
+    degrees = np.sort(np.unique(deg_per_row))
+    counts  = np.array([int((deg_per_row == d).sum()) for d in degrees])
+
+    # Signed mean SHAP per (feature, degree group).
+    agg = np.empty((len(feature_names), len(degrees)), dtype=float)
+    for j, d in enumerate(degrees):
+        agg[:, j] = np.nanmean(shap_values[deg_per_row == d], axis=0)
+
+    # Order features by global importance (mean|SHAP| over all nodes); top = most important.
+    order         = np.argsort(np.nanmean(np.abs(shap_values), axis=0))[::-1]
+    agg           = agg[order]
+    ordered_names = [feature_names[i] for i in order]
+
+    # ── save aggregated matrix as CSV (one row per feature, one col per degree) ──
+    agg_df = pd.DataFrame(agg, index=ordered_names, columns=[f"deg_{d}" for d in degrees])
+    agg_df.index.name = "feature"
+    if save_dir:
+        sub = os.path.join(save_dir, "shap")
+        os.makedirs(sub, exist_ok=True)
+        csv_path = os.path.join(sub, f"{dataset}_{model_name}_shap_heatmap_by_degree{suffix}.csv")
+        agg_df.to_csv(csv_path)
+        log.info("Saved → %s", csv_path)
+
+    # ── plot ────────────────────────────────────────────────────────────────────
+    m      = float(np.nanmax(np.abs(agg))) or 1.0   # symmetric diverging scale, centred at 0
+    n_feat = len(ordered_names)
+    pos    = np.arange(len(degrees))
+
+    fig = plt.figure(figsize=(max(8.0, 0.32 * len(degrees) + 4.0), max(6.0, n_feat * 0.38 + 2.0)))
+    gs  = GridSpec(2, 1, height_ratios=[1, 9], hspace=0.05, figure=fig)
+
+    # Top strip: node count per degree group (mirrors plot_utils count-bar idiom).
+    ax_cnt = fig.add_subplot(gs[0])
+    ax_cnt.bar(pos, counts, color="lightgrey", width=0.9, zorder=2)
+    ax_cnt.set_xlim(-0.5, len(degrees) - 0.5)
+    ax_cnt.set_ylabel("# nodes", fontsize=7)
+    ax_cnt.tick_params(axis="y", labelsize=6)
+    ax_cnt.set_xticks([])
+    ax_cnt.spines[["top", "right"]].set_visible(False)
+
+    ax = fig.add_subplot(gs[1], sharex=ax_cnt)
+    im = ax.imshow(
+        agg, aspect="auto", cmap="RdBu_r", vmin=-m, vmax=m,
+        extent=(-0.5, len(degrees) - 0.5, n_feat - 0.5, -0.5),
+    )
+    ax.set_yticks(np.arange(n_feat))
+    ax.set_yticklabels(ordered_names, fontsize=7)
+
+    # Thin x tick labels when there are many degrees (mirrors plot_utils._degree_axis).
+    step = max(1, len(degrees) // 30)
+    ax.set_xticks(pos[::step])
+    ax.set_xticklabels(degrees[::step], rotation=55, ha="right", fontsize=7)
+    ax.set_xlabel("Node degree", fontsize=10)
+
+    cbar = fig.colorbar(im, ax=[ax_cnt, ax], fraction=0.025, pad=0.02)
+    cbar.set_label(f"mean SHAP value\n(impact on {target_label})", fontsize=8)
+
+    ax_cnt.set_title(
+        f"{dataset} · {model_name} — SHAP by degree group\n"
+        "columns = degree groups · cell = mean SHAP across nodes of that degree · "
+        "red = increases P(misclassified)",
+        fontsize=9,
+    )
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "shap")
+        path = os.path.join(sub, f"{dataset}_{model_name}_shap_heatmap_by_degree{suffix}.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return agg_df
+
+
 def _plot_shap_decision(shap_values, base_values, feature_names,
                         dataset, model_name, save_dir, show):
     import shap
@@ -1473,6 +1578,11 @@ def run(cfg, checkpoint_path, device, save_dir, skip_influence, skip_embeddings=
                 cfg["dataset"]["name"], cfg["model"]["name"],
                 save_dir, show,
             )
+            _plot_shap_heatmap_by_degree(
+                shap_values, shap_node_idxs, df, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+            )
 
         if shap_nodes:
             _plot_shap_waterfall(
@@ -1683,6 +1793,13 @@ def _run_multi_after_topology(
             )
             _plot_shap_bar(
                 shap_values, feat_names,
+                cfg["dataset"]["name"], cfg["model"]["name"],
+                save_dir, show,
+                target_label="misclassification frequency",
+                suffix="_multi",
+            )
+            _plot_shap_heatmap_by_degree(
+                shap_values, shap_node_idxs, df, feat_names,
                 cfg["dataset"]["name"], cfg["model"]["name"],
                 save_dir, show,
                 target_label="misclassification frequency",
