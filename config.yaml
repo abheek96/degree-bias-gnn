@@ -43,6 +43,8 @@ plot:
   class_accuracy: false          # class-wise degree + accuracy plots; generate once, then disable
   train_degree_distribution: false  # histogram of training-node degrees; generate once, then disable
   influence_analysis: false
+  centrality_vs_degree: true
+  centrality_vs_accuracy: true
   influence_degrees: []          # exact degree values to investigate, e.g. [3, 5, 10]
   similarity_nodes: []           # node indices for per-node layer-wise similarity analysis
   inspect_nodes: []              # node indices to inspect aggregation neighbourhood

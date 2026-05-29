@@ -101,9 +101,11 @@ Builds a per-test-node feature CSV (structural + influence + embedding features)
 
 **Created to:** Quantify which structural factors best predict whether a specific node will be misclassified (the central empirical claim of the project).
 
-**Key flags:** `--run N` / `--checkpoint PATH`, `--no-influence`, `--no-embeddings`, `--features f1,f2,...`, `--plot-roc`, `--shap`, `--shap-nodes 1362,42`
+**Key flags:** `--run N` / `--checkpoint PATH`, `--multi-run`, `--subset-across-runs`, `--no-influence`, `--no-embeddings`, `--features f1,f2,...`, `--feature-selection`, `--plot-roc`, `--shap`, `--shap-nodes 1362,42`
 
 **Outputs:** `{save_dir}/node_feature_table/{dataset}_{model}_node_features_seed{S}.csv`, optional SHAP PNGs, ROC/PR PNGs. `--save-dir` is inferred from the checkpoint path if not set.
+
+**`--subset-across-runs`:** loads all `num_runs` checkpoints, reconstructs a full single-run feature table per run (shared topology features computed once via `_prepare_topology`, run-dependent influence/embedding features per checkpoint), runs the standard PR-AUC subset ablation (`_eval_subsets`) on each, and aggregates each subset's PR-AUC as mean ± std across runs (`_aggregate_subset_across_runs`). Distinct from `--multi-run`, which averages features and predicts misclassification *frequency* via Ridge/Spearman. Outputs `subset_comparison_across_runs.csv` (per-subset `pr_auc_mean`, `pr_auc_std`, per-run columns) and `subset_comparison_across_runs.png` (bar chart with ±std error bars).
 
 ---
 

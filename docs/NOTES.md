@@ -622,4 +622,40 @@ peripherality, and low local homophily — a correlation, not a causal chain.
 
 ---
 
-*Last updated: 2026-04-29*
+---
+
+## Multi-run Reachability Aggregation
+
+### What does `all_run_results` look like?
+
+`all_run_results` is a list of dicts, one per run. Each dict maps an integer degree to a flat dict of 8 counters returned by `_compute_reachability`:
+
+```python
+all_run_results = [
+    # run 1
+    {
+        3: {"total": 12, "n_misc": 8,
+            "no_train": 2,       "no_train_misc": 2,
+            "no_same_train": 5,  "no_same_train_misc": 4,
+            "has_same_train": 5, "has_same_train_misc": 2},
+        4: { ... },
+        ...
+    },
+    # run 2
+    {
+        3: { ... },   # same keys, different *_misc counts
+        ...
+    },
+]
+```
+
+### Which keys actually vary across runs?
+
+The 8 keys split into two groups:
+
+- **Topology-fixed** (`total`, `no_train`, `no_same_train`, `has_same_train`): determined entirely by graph structure and the train mask — identical across all runs. Their median across runs is just the single value repeated N times.
+- **Prediction-dependent** (`n_misc`, `no_train_misc`, `no_same_train_misc`, `has_same_train_misc`): differ per run because different random seeds → different model weights → different per-node predictions.
+
+The multi-run aggregation (median ± IQR) is structurally applied to all keys, but only the four `*_misc` keys carry real variance. This is the correct design: uniform treatment avoids special-casing, and the IQR for topology-fixed keys collapses to zero automatically.
+
+*Last updated: 2026-05-22*

@@ -292,4 +292,19 @@ Move validated results from RESULTS_EMBEDDINGS.md to RESULTS.md once methodology
 
 ---
 
-*Last updated: 2026-05-04*
+## 11. Feature-subset PR-AUC across runs (implemented — needs a run)
+
+**Status:** Code landed. `analysis/node_feature_table.py --subset-across-runs` computes the
+feature-subset PR-AUC ablation (`_eval_subsets`, 5-fold CV logistic regression) on every one
+of the `num_runs` checkpoints and reports each subset's PR-AUC as **mean ± std across runs**
+(`subset_comparison_across_runs.csv` / `.png`). This replaces the single-checkpoint view of
+RESULTS.md §4.−3 with seed-level variance.
+
+**Remaining:** run it on the remote server (Cora · GCN, and other (model, dataset) configs)
+and fold the mean ± std table into RESULTS.md §4.−3. Confirm whether degree's at-baseline
+PR-AUC and the influence-alone-beats-full-model result are stable across seeds or artefacts
+of the single run currently reported.
+
+---
+
+*Last updated: 2026-05-29*

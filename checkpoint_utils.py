@@ -101,7 +101,7 @@ def load_from_checkpoint(cfg, data, device, checkpoint_path: str):
     (``{"model_state": ..., "pred": ..., "seed": ...}``). If ``pred`` is in
     the checkpoint it is used directly; otherwise inference is re-run.
     """
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
     state = ckpt["model_state"] if isinstance(ckpt, dict) and "model_state" in ckpt else ckpt
 
     model = _build_model(cfg, data, device)

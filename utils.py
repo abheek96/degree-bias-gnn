@@ -1348,6 +1348,60 @@ def get_feature_similarity_delta(data, model, k_hops: int = 1) -> list:
 
 
 
+# ── Centrality measures ───────────────────────────────────────────────────────
+
+def get_closeness_centrality(data) -> torch.Tensor:
+    """Closeness centrality for every node.
+
+    Defined as the reciprocal of the sum of shortest-path distances to all
+    other reachable nodes (NetworkX normalised variant).  Returns 0.0 for
+    completely isolated nodes.  O(V*(V+E)) — acceptable for Cora; may take
+    a few minutes on PubMed.
+
+    Parameters
+    ----------
+    data : PyG Data object with edge_index and num_nodes.
+
+    Returns
+    -------
+    FloatTensor [num_nodes]
+    """
+    import networkx as nx
+    from torch_geometric.utils import to_networkx
+
+    G  = to_networkx(data, to_undirected=True)
+    cc = nx.closeness_centrality(G)
+    return torch.tensor([cc[i] for i in range(data.num_nodes)], dtype=torch.float)
+
+
+def get_eigenvector_centrality(data) -> torch.Tensor:
+    """Eigenvector centrality for every node (ARPACK / numpy variant).
+
+    Uses ``nx.eigenvector_centrality_numpy`` (more stable than the default
+    power-iteration variant, which often fails to converge on real datasets).
+    Requires a connected graph for a unique principal eigenvector — safe when
+    ``use_cc: true`` (the project default).  Falls back to NaN for all nodes
+    if the computation fails (e.g. disconnected graph, ARPACK error).
+
+    Parameters
+    ----------
+    data : PyG Data object with edge_index and num_nodes.
+
+    Returns
+    -------
+    FloatTensor [num_nodes]
+    """
+    import networkx as nx
+    from torch_geometric.utils import to_networkx
+
+    G = to_networkx(data, to_undirected=True)
+    try:
+        ec = nx.eigenvector_centrality_numpy(G)
+    except (nx.NetworkXException, nx.PowerIterationFailedConvergence):
+        ec = {i: float("nan") for i in range(data.num_nodes)}
+    return torch.tensor([ec[i] for i in range(data.num_nodes)], dtype=torch.float)
+
+
 # ── Unused functions ──────────────────────────────────────────────────────────
 
 # def index_to_adj(

@@ -20,3 +20,5 @@
 | `pred_label_mode` | Most frequently predicted class across all runs (mode) |
 | `correct_mean` | Fraction of runs in which the node was correctly classified (0.0 = always wrong, 1.0 = always correct) |
 | `correct` | 1 if `correct_mean ≥ 0.5` (correct in the majority of runs), 0 otherwise |
+| `closeness_centrality` | Closeness centrality: reciprocal of the sum of shortest-path distances to all other reachable nodes (NetworkX `closeness_centrality`, undirected graph). Returns 0.0 for isolated nodes. |
+| `eigenvector_centrality` | Eigenvector centrality: principal eigenvector component for the node (NetworkX `eigenvector_centrality_numpy`, undirected graph). NaN if ARPACK computation fails (e.g. disconnected graph). Requires `use_cc: true` for a meaningful result. |

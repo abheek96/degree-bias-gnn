@@ -105,3 +105,17 @@ All research docs are in `docs/`:
 - `docs/COLUMNS.md` — full feature column definitions
 
 `STRUCTURE.md` (root) — full map of every script, its purpose, why it was created, and its outputs.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on this repo. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo — one `CONTEXT.md` + `docs/adr/` at the root. See `docs/agents/domain.md`.
