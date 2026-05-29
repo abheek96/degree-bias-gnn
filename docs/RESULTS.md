@@ -100,6 +100,171 @@ PR-AUC and Lift@k use out-of-fold `predict_proba` scores (no train-set leakage).
 
 ## 4. Results
 
+### 4.−3 Feature-subset ablation (Cora · GCN, PR-AUC)
+
+PR-AUC comparison across feature-group ablations on Cora. Baseline (random ranking)
+PR-AUC equals the misclassification rate (≈ 0.20–0.21).
+
+> **Scope note.** The table below is a **single** GCN checkpoint; the only resampling is
+> the 5-fold stratified CV within that run. To report PR-AUC variance across seeds, use
+> `uv run analysis/node_feature_table.py --subset-across-runs`, which computes this same
+> subset ablation on every one of the `num_runs` checkpoints and reports each subset's
+> PR-AUC as **mean ± std across runs** (`subset_comparison_across_runs.csv` / `.png`).
+> _(Across-runs numbers pending a run on the remote server.)_
+
+| Configuration | Group(s) | PR-AUC | Lift over baseline |
+|---|---|---|---|
+| **Degree (alone)** | single | **0.211** | **≈ 1.0× (at baseline)** |
+| Centrality (alone) | single | 0.260 | 1.24× |
+| Purity (alone) | single | 0.637 | 3.04× |
+| Training proximity (alone) | single | 0.640 | 3.05× |
+| Degree + Purity | combo | 0.632 | 3.01× (no gain over Purity) |
+| Degree + Training proximity | combo | 0.641 | 3.06× (no gain over Training proximity) |
+| All structural (no influence) | combo | 0.715 | 3.41× |
+| **Influence (alone)** | single | **0.748** | **3.57×** (highest) |
+| Full model | all | 0.739 | 3.52× |
+
+**Observations.**
+
+1. **Degree alone is at baseline.** PR-AUC 0.211 ≈ baseline misc rate; degree as a sole
+   feature carries no useful precision lift for identifying misclassified nodes.
+2. **Degree is redundant, not merely weak.** Adding degree to Purity changes PR-AUC by
+   −0.005 (0.637 → 0.632); adding it to Training proximity changes it by +0.001 (0.640 →
+   0.641). Once Purity or Training proximity is in the model, degree contributes no
+   additional precision.
+3. **Influence alone outperforms every other configuration**, including the full model
+   (0.748 vs. 0.739). Jacobian-L1 influence features capture the operative quantity for
+   predicting GCN misclassification on Cora more efficiently than structural features do.
+4. **All-structural (no influence) achieves 96.8% of the full-model PR-AUC** (0.715 / 0.739).
+   When the Jacobian computation is too expensive, structural features alone provide a
+   close substitute.
+5. **Centrality alone (0.260) is only marginally above degree.** The two pure-topology
+   features (degree, centrality) are the weakest single-group predictors by a wide margin.
+
+### 4.−2 Case study: node 1362 (Cora · random split)
+
+Per-node SHAP waterfall decomposition for test node 1362 (Cora, GCN, random split).
+
+| Quantity | Value |
+|---|---|
+| Degree | 22 |
+| `purity_1hop` | 0.77 |
+| Model output `f(x)` (log-odds of misclassification) | +1.229 |
+| Baseline `E[f(X)]` | −1.40 |
+| Actual outcome | **Misclassified** |
+| Predicted P(misc) | ≈ 0.77 |
+
+Top SHAP contributors:
+
+| Feature | Value | SHAP | Direction |
+|---|---|---|---|
+| `degree` | 22 | **−5.18** | Protective (largest single \|SHAP\|) |
+| `diff_train_infl_frac_1hop` | 0.031 | **+3.03** | Failure-promoting |
+| `eigenvector_centrality` | 0.087 | **+2.72** | Failure-promoting |
+| `total_infl_diff_1hop` | 561.24 | +1.48 | Failure-promoting |
+| `total_infl_same_1hop` | 1591.10 | −0.80 | Protective |
+| `n_same_train_2hop` | 4 | −0.76 | Protective |
+| `n_diff_train_1hop` | 2 | −0.71 | Protective |
+| `diff_train_ratio_1hop` | 0.091 | −0.55 | Protective |
+| `total_infl_diff_2hop` | 726.14 | +0.53 | Failure-promoting |
+| 17 other features (aggregate) | — | +1.23 | Net failure-promoting |
+
+**Observations.**
+
+1. **Degree contributes the largest protective signal of any single feature** (−5.18) — the
+   model would predict this node to be correct based on degree alone.
+2. **That protective signal is overwhelmed by three competing features summing to +7.23**:
+   the diff-class influence fraction at 1-hop, eigenvector centrality, and the raw cross-class
+   influence sum.
+3. **Purity features do not rescue the prediction.** `purity_1hop = 0.77` is high, yet
+   purity does not appear among the top contributors — it is absorbed into the "17 other
+   features" residual.
+4. **The model gets it right.** Final log-odds +1.229 → P(misc) ≈ 0.77; the node is in fact
+   misclassified by the GCN.
+5. **Single counterexample to a degree-only account.** A node with degree 22 (well above the
+   high-degree plateau threshold of 11 under the public split) is a confident,
+   correctly-predicted GCN failure under the random split, driven by the class composition of
+   its Jacobian influence budget rather than by any deficit of connectivity.
+
+### 4.−1 SHAP feature importance (Cora · GCN · random split, OOF across 5 folds)
+
+Out-of-fold SHAP values for the full-feature LR (no embeddings) on Cora with stratified
+random splits; positive SHAP increases P(misclassified). Features ordered by mean |SHAP|.
+
+| Rank | Feature | Direction (high value →) | Notes |
+|---|---|---|---|
+| 1 | `total_infl_diff_1hop` | ↑ misc | Raw cross-class influence dominates aggregate ranking |
+| 2 | `total_infl_diff_2hop` | ↑ misc | Same pattern at 2-hop |
+| 3 | `same_train_infl_frac_2hop` | ↓ misc | Protective; long negative tail |
+| 4 | **`degree`** | ↓ misc on average | High variance; high-degree nodes can still be on the positive side |
+| 5 | `same_train_infl_frac_1hop` | ↓ misc | Long negative tail |
+| 6 | `purity_2hop` | ↓ misc | Outranked by 4 influence features |
+| 7 | `same_train_ratio_1hop` | ↓ misc | |
+| 8 | `n_same_train_2hop` | ↓ misc | |
+| 9 | `diff_train_infl_frac_1hop` | ↑ misc | **Largest individual positive SHAP values** (tail to ≈+20) |
+| 10 | `diff_train_infl_frac_2hop` | ↑ misc | |
+| … | … | … | `purity_1hop` ranks last; signal lives in `purity_2hop` |
+
+**Observations.**
+
+1. **Influence features dominate the top of the ranking.** Four of the top five features (and
+   six of the top ten) are Jacobian-L1 influence quantities — either raw totals or fractions
+   of the influence budget contributed by same/diff-class training nodes.
+2. **Degree is in the top tier but not the top.** It ranks 4th by mean |SHAP|, behind two
+   raw-cross-class-influence features and one same-class-influence-fraction feature.
+3. **Degree's effect is heterogeneous.** High-degree nodes (red) cluster slightly left of
+   zero (protective) but the red distribution spans both sides — a non-trivial subset of
+   high-degree nodes receive *positive* SHAP from their degree, meaning their high degree is
+   contributing to (not preventing) their misclassification. This is the SHAP-level fingerprint
+   of the high-degree failure case studies in §4.2.4.
+4. **`diff_train_infl_frac_1hop` is the strongest per-node failure driver.** Its mean |SHAP|
+   rank is only 9, but its individual SHAP values reach ≈+20 — the most extreme single-feature
+   contribution to predicted misclassification probability for any node in the dataset.
+5. **`purity_2hop` ranks 6th, `purity_1hop` ranks last.** The neighbourhood-purity signal is
+   carried entirely by the 2-hop variant; the 1-hop fraction adds almost nothing once 2-hop
+   purity is in the model.
+
+### 4.0 Accuracy vs. node degree across runs (Cora, public vs. random)
+
+Per-degree test accuracy across 10 seeds, Cora · GCN · CC filter, n = 915 test nodes.
+Mean test accuracy is comparable across splits (public 81.3%, random 79.9%), confirming
+that the split does not materially change model quality — only the shape of the
+degree–accuracy relationship.
+
+| Degree | n nodes | Public median acc | Public IQR | Random median acc | Random IQR |
+|---|---|---|---|---|---|
+| 1  | ~125 | 0.74 | 0.72–0.77 | 0.78 | 0.77–0.79 |
+| 2  | ~205 | 0.78 | 0.77–0.79 | 0.78 | 0.77–0.79 |
+| 3  | ~205 | 0.83 | 0.82–0.84 | 0.80 | 0.78–0.81 |
+| 4  | ~130 | 0.86 | 0.84–0.87 | 0.86 | 0.83–0.87 |
+| 5  | ~95  | 0.88 | 0.85–0.89 | 0.87 | 0.84–0.89 |
+| 6  | ~30  | 0.76 | 0.75–0.78 | 0.72 | 0.70–0.75 |
+| 7  | ~15  | 0.79 | 0.76–0.81 | 0.77 | 0.74–0.80 |
+| 8  | ~12  | 0.79 | 0.74–0.83 | 0.91 | 0.85–0.93 |
+| 9–10 | ~10 | 0.71–0.91 (wide) | wide | 0.73 | 0.65–0.82 (wide) |
+| 11–12 | ~5 | ≈1.00 (tight) | tight | 0.67–1.00 (bimodal) | full range |
+| ≥13 | <5 each | ≈1.00 | tight | mostly 1.00; **deg-16 ≈ 0.33** | persistent failure |
+
+**Observations.**
+
+1. **Low-degree rise (1→5) is present in both splits.** Both rise from ~74–78% at degree 1
+   to ~87–88% at degree 5. This is the trend the degree-bias literature reports — and
+   it survives the random split.
+2. **Non-monotonic dip at degree 6 is also present in both splits** (public 76%, random 72%).
+   The dip is therefore a graph property, not a split artefact.
+3. **The high-degree plateau is split-dependent.** Under the public split, every node with
+   degree ≥ 11 is classified correctly in every seed (IQR collapses to 0). Under the random
+   split, this plateau breaks: degree 11–12 and 17 show full-range bimodal outcomes across
+   seeds, and a node at degree 16 is misclassified in every seed (~33% accuracy).
+4. **Mean accuracy is preserved across splits** (81.3% vs. 79.9%): the random split does not
+   produce a worse model, only a less predictable degree–accuracy relationship.
+
+The high-degree plateau under the public split is consistent with the
+training-placement confound hypothesis: with training nodes fixed at the Planetoid
+positions, high-degree hubs sit closer to the training set than they do under random
+placement, so degree becomes a proxy for training-node proximity rather than an
+independent predictor.
+
 ### 4.1 Without embedding features — full test set
 
 Embedding features excluded (all NaN columns dropped automatically).  The LR fits on all test nodes.

@@ -17,7 +17,15 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from node_feature_table import _FEATURE_COLS, _build_rows, _run_logistic_regression
+from node_feature_table import (
+    _FEATURE_COLS,
+    _FEATURE_GROUP_MAP,
+    _SUBSET_SPECS,
+    _aggregate_subset_across_runs,
+    _build_rows,
+    _eval_subsets,
+    _run_logistic_regression,
+)
 from torch_geometric.utils import degree as graph_degree
 
 
@@ -206,3 +214,74 @@ class TestRunLogisticRegression:
         subset = _FEATURE_COLS[:4]
         auroc, acc, pr_auc, coef_df, p_misc, y_misc = _run_logistic_regression(df, feature_cols=subset)
         assert len(coef_df) <= len(subset)
+
+
+# ── _eval_subsets (shared by single-run and across-runs subset comparison) ──────
+
+class TestEvalSubsets:
+    def test_one_row_per_spec_plus_full_model(self):
+        """Every _SUBSET_SPECS entry whose columns exist, plus a Full model row."""
+        df = _make_synthetic_df(n=100)
+        rows = _eval_subsets(df, _FEATURE_GROUP_MAP, metric_fn=lambda cols: float(len(cols)))
+        labels = [r["label"] for r in rows]
+        # All spec labels present (synthetic df has every feature column).
+        for label, _ in _SUBSET_SPECS:
+            assert label in labels
+        assert labels[-1] == "Full model"
+        assert len(rows) == len(_SUBSET_SPECS) + 1
+
+    def test_n_groups_matches_spec(self):
+        df = _make_synthetic_df(n=100)
+        rows = _eval_subsets(df, _FEATURE_GROUP_MAP, metric_fn=lambda cols: 0.0)
+        by_label = {r["label"]: r for r in rows}
+        for label, groups in _SUBSET_SPECS:
+            assert by_label[label]["n_groups"] == len(groups)
+
+    def test_metric_fn_receives_expanded_columns(self):
+        """metric_fn is called with the actual column names of each subset."""
+        df = _make_synthetic_df(n=100)
+        rows = _eval_subsets(df, _FEATURE_GROUP_MAP, metric_fn=lambda cols: float(len(cols)))
+        degree_row = next(r for r in rows if r["label"] == "Degree")
+        assert degree_row["score"] == 1.0  # degree group has exactly one column
+
+    def test_subset_skipped_when_columns_absent(self):
+        """A subset whose columns are all missing from df is dropped."""
+        df = _make_synthetic_df(n=100).drop(columns=["degree"])
+        rows = _eval_subsets(df, _FEATURE_GROUP_MAP, metric_fn=lambda cols: 0.0)
+        assert "Degree" not in [r["label"] for r in rows]
+
+
+# ── _aggregate_subset_across_runs ──────────────────────────────────────────────
+
+class TestAggregateSubsetAcrossRuns:
+    def test_mean_and_std_per_label(self):
+        per_run = [
+            {"Degree": (0.20, 1), "Purity": (0.60, 1)},
+            {"Degree": (0.30, 1), "Purity": (0.70, 1)},
+        ]
+        res = _aggregate_subset_across_runs(per_run, n_runs=2)
+        deg = res[res["label"] == "Degree"].iloc[0]
+        assert deg["pr_auc_mean"] == pytest.approx(0.25)
+        assert deg["pr_auc_std"] == pytest.approx(0.05)  # population std of {0.2, 0.3}
+        assert deg["n_runs_present"] == 2
+        assert deg["pr_auc_run1"] == pytest.approx(0.20)
+        assert deg["pr_auc_run2"] == pytest.approx(0.30)
+
+    def test_sorted_ascending_by_mean(self):
+        per_run = [{"A": (0.9, 1), "B": (0.1, 1)}]
+        res = _aggregate_subset_across_runs(per_run, n_runs=1)
+        assert list(res["label"]) == ["B", "A"]
+
+    def test_missing_run_is_nan_and_excluded_from_stats(self):
+        per_run = [
+            {"Degree": (0.20, 1)},
+            {},  # subset absent in this run
+        ]
+        res = _aggregate_subset_across_runs(per_run, n_runs=2)
+        deg = res[res["label"] == "Degree"].iloc[0]
+        assert deg["n_runs_present"] == 1
+        assert deg["pr_auc_mean"] == pytest.approx(0.20)
+        assert np.isnan(deg["pr_auc_run2"])
+
+    def test_empty_input_returns_empty_frame(self):
+        assert _aggregate_subset_across_runs([], n_runs=3).empty

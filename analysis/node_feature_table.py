@@ -48,6 +48,10 @@ Model source (mutually exclusive)
   --multi-run         load all num_runs checkpoints, average influence features
                       across runs, and predict misclassification frequency
                       (Ridge regression instead of logistic regression)
+  --subset-across-runs
+                      load all num_runs checkpoints, compute the feature-subset
+                      PR-AUC ablation per run, and report each subset's PR-AUC as
+                      mean ± std across runs (CSV + bar chart with error bars)
   (neither)           retrain from scratch with config seed
 
 Usage
@@ -57,6 +61,7 @@ Usage
   uv run analysis/node_feature_table.py \\
       --checkpoint results/.../checkpoints/run01_seed42.pt --save-dir ./output
   uv run analysis/node_feature_table.py --multi-run --shap
+  uv run analysis/node_feature_table.py --subset-across-runs
 """
 
 import argparse
@@ -792,6 +797,44 @@ def _expand_groups(group_names, group_map, df):
     return cols
 
 
+def _eval_subsets(df, group_map, metric_fn):
+    """Evaluate each `_SUBSET_SPECS` entry plus a dynamic "Full model" on `df`.
+
+    Parameters
+    ----------
+    df         : feature table (one row per test node).
+    group_map  : feature-group → column-list mapping (single- or multi-run variant).
+    metric_fn  : callable taking a list of column names and returning a float score.
+
+    Returns a list of dicts with keys ``label``, ``score``, ``n_groups``. Subsets
+    whose columns are all absent (or all-NaN) in `df` are skipped. "Full model" is
+    the union of all available groups, so it reflects the columns actually present.
+    """
+    def _eval(label, groups):
+        cols = [c for c in _expand_groups(groups, group_map, df) if df[c].notna().any()]
+        if not cols:
+            log.info("Skipping subset '%s' (no available columns)", label)
+            return None
+        return {"label": label, "score": float(metric_fn(cols)), "n_groups": len(groups)}
+
+    results = []
+    for label, groups in _SUBSET_SPECS:
+        row = _eval(label, groups)
+        if row is not None:
+            results.append(row)
+
+    # Full model = union of all available groups (added dynamically)
+    avail_groups = [
+        g for g in _GROUP_ORDER
+        if any(c in df.columns and df[c].notna().any() for c in group_map.get(g, []))
+    ]
+    row = _eval("Full model", avail_groups)
+    if row is not None:
+        results.append(row)
+
+    return results
+
+
 def _run_subset_comparison(df, is_multi_run, save_dir, show, dataset, model_name):
     """Evaluate each entry in _SUBSET_SPECS plus a dynamic Full model bar.
 
@@ -813,36 +856,19 @@ def _run_subset_comparison(df, is_multi_run, save_dir, show, dataset, model_name
             _, _, pr_auc, *_ = _run_logistic_regression(df, feature_cols=cols)
             return float(pr_auc)
 
-    def _eval(label, groups):
-        cols = [c for c in _expand_groups(groups, group_map, df) if df[c].notna().any()]
-        if not cols:
-            log.info("Skipping subset '%s' (no available columns)", label)
-            return None
-        score = metric_fn(cols)
-        log.info("  %-35s  %s=%.4f", label, metric_label, score)
-        return {"label": label, metric_label: score, "n_groups": len(groups)}
-
-    results = []
-    for label, groups in _SUBSET_SPECS:
-        row = _eval(label, groups)
-        if row is not None:
-            results.append(row)
-
-    # Full model = union of all available groups (added dynamically)
-    avail_groups = [
-        g for g in _GROUP_ORDER
-        if any(c in df.columns and df[c].notna().any() for c in group_map.get(g, []))
-    ]
-    row = _eval("Full model", avail_groups)
-    if row is not None:
-        results.append(row)
+    results = _eval_subsets(df, group_map, metric_fn)
+    for r in results:
+        log.info("  %-35s  %s=%.4f", r["label"], metric_label, r["score"])
 
     if not results:
         log.warning("No subsets could be evaluated.")
         return pd.DataFrame()
 
     df_res = (
-        pd.DataFrame(results)
+        pd.DataFrame([
+            {"label": r["label"], metric_label: r["score"], "n_groups": r["n_groups"]}
+            for r in results
+        ])
         .sort_values(metric_label, ascending=True)
         .reset_index(drop=True)
     )
@@ -1468,6 +1494,30 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
     embedding features, averages them, and trains a Ridge regression to predict
     misclassification frequency (fraction of runs a node is misclassified).
     """
+    ctx    = _prepare_topology(cfg, device, "Multi-run mode")
+    n_runs = ctx["n_runs"]
+
+    # ── load all runs and compute per-run features ────────────────────────────
+    log.info("Loading %d run checkpoints …", n_runs)
+    runs = _load_all_runs(cfg, ctx["data"], n_runs, device)
+    return _run_multi_after_topology(
+        cfg, device, save_dir, skip_influence, skip_embeddings,
+        feature_cols, compute_shap, shap_nodes, show, feature_selection,
+        ctx, runs,
+    )
+
+
+def _prepare_topology(cfg, device, mode_label):
+    """Load the split and compute run-independent topology features once.
+
+    The topology features (degree, purity, training-proximity, centrality, raw
+    1-hop cosine similarity) do not depend on which run's checkpoint is loaded,
+    so they are computed a single time and reused across all runs. Shared by
+    `run_multi` and `run_subset_across_runs`.
+
+    Returns a dict with: ``data`` (moved to `device`), ``topo_df``, ``y`` (cpu),
+    ``test_idx``, ``train_set``, ``k_hops``, ``n_runs``.
+    """
     n_runs    = cfg.get("num_runs", 1)
     cache_dir = cfg.get("dataset_cache_dir", "dataset_cache")
     data = load_or_create_split(
@@ -1475,8 +1525,8 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
     )
 
     k_hops = cfg["model"]["num_layers"] - 1
-    log.info("Multi-run mode: n_runs=%d  dataset=%s  model=%s  k_hops=%d",
-             n_runs, cfg["dataset"]["name"], cfg["model"]["name"], k_hops)
+    log.info("%s: n_runs=%d  dataset=%s  model=%s  k_hops=%d",
+             mode_label, n_runs, cfg["dataset"]["name"], cfg["model"]["name"], k_hops)
 
     N         = data.num_nodes
     y         = data.y.cpu()
@@ -1548,9 +1598,29 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
 
     topo_df = pd.DataFrame(topo_rows)
 
-    # ── load all runs and compute per-run features ────────────────────────────
-    log.info("Loading %d run checkpoints …", n_runs)
-    runs = _load_all_runs(cfg, data, n_runs, device)
+    return {
+        "data": data, "topo_df": topo_df, "y": y, "test_idx": test_idx,
+        "train_set": train_set, "k_hops": k_hops, "n_runs": n_runs,
+    }
+
+
+def _run_multi_after_topology(
+    cfg, device, save_dir, skip_influence, skip_embeddings,
+    feature_cols, compute_shap, shap_nodes, show, feature_selection,
+    ctx, runs,
+):
+    """Aggregate per-run features into run-averaged columns, fit the Ridge
+    regression against misclassification frequency, and emit the multi-run
+    outputs (CSV, subset comparison, SHAP). Split out of `run_multi` so the
+    topology preparation can be shared with `run_subset_across_runs`.
+    """
+    data      = ctx["data"]
+    topo_df   = ctx["topo_df"]
+    y         = ctx["y"]
+    test_idx  = ctx["test_idx"]
+    train_set = ctx["train_set"]
+    k_hops    = ctx["k_hops"]
+    n_runs    = ctx["n_runs"]
 
     run_features_list = []
     for run_id, (pred_cpu, model) in enumerate(runs, 1):
@@ -1632,6 +1702,184 @@ def run_multi(cfg, device, save_dir, skip_influence, skip_embeddings=False,
     return df
 
 
+def _aggregate_subset_across_runs(per_run_scores, n_runs):
+    """Combine per-run ``{label: (pr_auc, n_groups)}`` dicts into a mean ± std table.
+
+    Returns a DataFrame sorted ascending by ``pr_auc_mean`` with columns
+    ``label, n_groups, pr_auc_mean, pr_auc_std, n_runs_present,
+    pr_auc_run1 … pr_auc_runN``. Per-run columns are aligned to the run index
+    (NaN if a subset was absent in that run); mean/std are over present values.
+    """
+    if not per_run_scores:
+        return pd.DataFrame()
+
+    # Preserve first-seen label order across runs.
+    labels: list[str] = []
+    for d in per_run_scores:
+        for lab in d:
+            if lab not in labels:
+                labels.append(lab)
+
+    rows = []
+    for lab in labels:
+        present  = [(ri, d[lab][0]) for ri, d in enumerate(per_run_scores, 1) if lab in d]
+        vals     = np.asarray([v for _, v in present], dtype=float)
+        n_groups = next(d[lab][1] for d in per_run_scores if lab in d)
+        row = {
+            "label":          lab,
+            "n_groups":       n_groups,
+            "pr_auc_mean":    float(vals.mean()),
+            "pr_auc_std":     float(vals.std()),
+            "n_runs_present": len(present),
+        }
+        for ri in range(1, n_runs + 1):
+            row[f"pr_auc_run{ri}"] = next((v for r, v in present if r == ri), float("nan"))
+        rows.append(row)
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("pr_auc_mean", ascending=True)
+        .reset_index(drop=True)
+    )
+
+
+def _plot_subset_across_runs(df_res, save_dir, show, dataset, model_name, n_runs):
+    """Horizontal bar chart of mean PR-AUC per subset across runs, ±1 std error bars.
+
+    Reuses the single-run subset-comparison styling (single/combination/full
+    colour scheme + degree reference line). Error whiskers are clamped so the
+    lower end never crosses 0.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    _C_SINGLE = "#4878CF"   # individual feature group
+    _C_COMBO  = "#EE854A"   # multi-group combination
+    _C_FULL   = "#333333"   # full model
+
+    def _bar_color(row):
+        if row["label"] == "Full model":
+            return _C_FULL
+        return _C_SINGLE if row["n_groups"] == 1 else _C_COMBO
+
+    colors = [_bar_color(row) for _, row in df_res.iterrows()]
+    means  = df_res["pr_auc_mean"].to_numpy()
+    stds   = df_res["pr_auc_std"].to_numpy()
+
+    # Asymmetric error bars clamped so the lower whisker never crosses 0.
+    lower = np.minimum(stds, means)
+    xerr  = np.vstack([lower, stds])
+
+    fig, ax = plt.subplots(figsize=(7, 0.55 * len(df_res) + 1.0))
+    bars = ax.barh(df_res["label"], means, color=colors, height=0.6, zorder=2,
+                   xerr=xerr, error_kw=dict(ecolor="#555555", elinewidth=1.0, capsize=3))
+
+    x_max = float((means + stds).max())
+    x_min = float((means - stds).min())
+    span  = (x_max - x_min) or 1.0
+    for bar, m, s in zip(bars, means, stds):
+        ax.text(bar.get_width() + s + span * 0.015,
+                bar.get_y() + bar.get_height() / 2,
+                f"{m:.3f}±{s:.3f}", va="center", ha="left", fontsize=7.0)
+
+    # Degree reference line (mean PR-AUC of the degree-only subset)
+    degree_rows = df_res[df_res["label"] == "Degree"]
+    if not degree_rows.empty:
+        deg_score = float(degree_rows["pr_auc_mean"].iloc[0])
+        ax.axvline(deg_score, color="#D65F5F", ls="--", lw=1.2, zorder=3)
+        ax.text(deg_score, len(df_res) - 0.1, f" degree\n ({deg_score:.3f})",
+                color="#D65F5F", fontsize=7.5, va="top", ha="left")
+
+    legend_handles = [
+        Patch(facecolor=_C_SINGLE, label="Single group"),
+        Patch(facecolor=_C_COMBO,  label="Combination"),
+        Patch(facecolor=_C_FULL,   label="Full model"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8, loc="lower right")
+
+    ax.set_xlabel("PR-AUC (mean ± std across runs)")
+    ax.set_xlim(x_min - span * 0.05, x_max + span * 0.22)
+    ax.set_title(f"{dataset} · {model_name} — feature subset comparison "
+                 f"(mean ± std, {n_runs} runs)", fontsize=10)
+    ax.grid(axis="x", lw=0.5, alpha=0.4, zorder=1)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+
+    if save_dir:
+        sub  = os.path.join(save_dir, "node_feature_table")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, "subset_comparison_across_runs.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        log.info("Saved → %s", path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def run_subset_across_runs(cfg, device, save_dir, skip_influence,
+                           skip_embeddings=False, show=False):
+    """Feature-subset PR-AUC comparison computed for every run, reported as mean ± std.
+
+    Unlike `run_multi` (which averages features across runs and predicts
+    misclassification *frequency* via Ridge/Spearman), this reconstructs a
+    complete single-run feature table for each checkpoint, runs the standard
+    PR-AUC subset ablation (5-fold CV logistic regression) on each, and
+    aggregates each subset's PR-AUC across runs.
+    """
+    ctx       = _prepare_topology(cfg, device, "Subset-across-runs mode")
+    data      = ctx["data"]
+    topo_df   = ctx["topo_df"]
+    y         = ctx["y"]
+    test_idx  = ctx["test_idx"]
+    train_set = ctx["train_set"]
+    k_hops    = ctx["k_hops"]
+    n_runs    = ctx["n_runs"]
+
+    log.info("Loading %d run checkpoints …", n_runs)
+    runs = _load_all_runs(cfg, data, n_runs, device)
+
+    per_run_scores = []  # list[dict]: label -> (pr_auc, n_groups)
+    for run_id, (pred_cpu, model) in enumerate(runs, 1):
+        log.info("Run %d/%d: computing features %s…", run_id, n_runs,
+                 "(skipping influence)" if skip_influence else "(with Jacobian influence)")
+        feats  = _compute_run_dependent_features(
+            data=data, model=model, pred=pred_cpu, k_hops=k_hops, device=device,
+            train_set=train_set, y=y, test_idx=test_idx,
+            skip_influence=skip_influence, skip_embeddings=skip_embeddings,
+        )
+        run_df = topo_df.merge(pd.DataFrame(feats), on="node_idx")
+
+        def _pr_auc(cols, _df=run_df):
+            _, _, pr_auc, *_ = _run_logistic_regression(_df, feature_cols=cols)
+            return float(pr_auc)
+
+        rows = _eval_subsets(run_df, _FEATURE_GROUP_MAP, _pr_auc)
+        per_run_scores.append({r["label"]: (r["score"], r["n_groups"]) for r in rows})
+        log.info("Run %d/%d: subset PR-AUCs computed (%d subsets)", run_id, n_runs, len(rows))
+
+    df_res = _aggregate_subset_across_runs(per_run_scores, n_runs)
+    if df_res.empty:
+        log.warning("No subsets could be evaluated across runs.")
+        return df_res
+
+    log.info("Subset PR-AUC across %d runs (mean ± std):", n_runs)
+    for _, r in df_res.iterrows():
+        log.info("  %-35s  %.4f ± %.4f", r["label"], r["pr_auc_mean"], r["pr_auc_std"])
+
+    if save_dir:
+        sub = os.path.join(save_dir, "node_feature_table")
+        os.makedirs(sub, exist_ok=True)
+        path = os.path.join(sub, "subset_comparison_across_runs.csv")
+        df_res.to_csv(path, index=False)
+        log.info("Saved subset comparison (across runs) CSV → %s", path)
+
+    _plot_subset_across_runs(df_res, save_dir, show,
+                             cfg["dataset"]["name"], cfg["model"]["name"], n_runs)
+    return df_res
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -1677,6 +1925,10 @@ def main():
                             help="Load all num_runs checkpoints, average influence features "
                                  "across runs, and predict misclassification frequency "
                                  "(Ridge regression). Mutually exclusive with --run/--checkpoint.")
+    ckpt_group.add_argument("--subset-across-runs", action="store_true",
+                            help="Load all num_runs checkpoints, compute the feature-subset "
+                                 "PR-AUC ablation per run, and report each subset's PR-AUC as "
+                                 "mean ± std across runs. Mutually exclusive with --run/--checkpoint.")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1706,7 +1958,7 @@ def main():
     if args.run is not None and checkpoint_path is not None:
         save_dir = os.path.dirname(os.path.dirname(checkpoint_path))
         log.info("save_dir set to run directory: %s", save_dir)
-    elif args.multi_run:
+    elif args.multi_run or args.subset_across_runs:
         if args.save_dir:
             save_dir = args.save_dir
         else:
@@ -1723,7 +1975,10 @@ def main():
     feature_cols = [f.strip() for f in args.features.split(",")] if args.features else None
     shap_nodes   = [int(n.strip()) for n in args.shap_nodes.split(",")] if args.shap_nodes else None
 
-    if args.multi_run:
+    if args.subset_across_runs:
+        run_subset_across_runs(cfg, device, save_dir, args.no_influence,
+                               args.no_embeddings, show=args.show)
+    elif args.multi_run:
         run_multi(cfg, device, save_dir, args.no_influence, args.no_embeddings,
                   feature_cols=feature_cols, compute_shap=args.shap,
                   shap_nodes=shap_nodes, show=args.show,
