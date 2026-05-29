@@ -11,3 +11,4 @@ results/*
 *.md
 *.tex
 *.csv
+.DS_Store
